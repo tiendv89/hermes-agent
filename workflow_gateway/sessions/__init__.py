@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import secrets
 import time
 from typing import Any, Dict, List, Optional
@@ -19,40 +20,18 @@ from typing import Any, Dict, List, Optional
 import asyncpg
 
 # ---------------------------------------------------------------------------
-# Schema DDL
+# Schema DDL — sourced from the migration file to avoid duplication
 # ---------------------------------------------------------------------------
 
-_CREATE_SESSIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS voyager_sessions_v4 (
-    session_id      TEXT PRIMARY KEY,
-    user_id         TEXT NOT NULL,
-    workspace_id    TEXT NOT NULL DEFAULT '',
-    feature_id      TEXT NOT NULL DEFAULT '',
-    created_at      DOUBLE PRECISION NOT NULL,
-    last_active_at  DOUBLE PRECISION NOT NULL,
-    is_active       BOOLEAN NOT NULL DEFAULT TRUE,
-    metadata        JSONB NOT NULL DEFAULT '{}'
-);
-"""
-
-_CREATE_MESSAGES_TABLE = """
-CREATE TABLE IF NOT EXISTS voyager_messages_v4 (
-    id          BIGSERIAL PRIMARY KEY,
-    session_id  TEXT NOT NULL REFERENCES voyager_sessions_v4(session_id) ON DELETE CASCADE,
-    role        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    created_at  DOUBLE PRECISION NOT NULL,
-    metadata    JSONB NOT NULL DEFAULT '{}'
-);
-CREATE INDEX IF NOT EXISTS idx_vm4_session ON voyager_messages_v4(session_id, created_at);
-"""
+_MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent / "migrations"
 
 
 async def init_db(pool: asyncpg.Pool) -> None:
-    """Create tables if they do not exist."""
+    """Create tables if they do not exist, using the migration SQL file."""
+    sql_path = _MIGRATIONS_DIR / "001_initial_schema.sql"
+    sql = sql_path.read_text(encoding="utf-8")
     async with pool.acquire() as conn:
-        await conn.execute(_CREATE_SESSIONS_TABLE)
-        await conn.execute(_CREATE_MESSAGES_TABLE)
+        await conn.execute(sql)
 
 
 # ---------------------------------------------------------------------------
