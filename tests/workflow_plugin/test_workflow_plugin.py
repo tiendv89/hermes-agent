@@ -5,18 +5,23 @@ Covers:
     - check_workflow_available: returns False when env not set, True when set
     - handle_get_workspace_context: happy path and HTTP error path
     - handle_get_feature_state: happy path and HTTP error path
-    - handle_write_product_spec / handle_write_technical_design: stub returns ok=False
+    - handle_write_product_spec: happy path, no-token error, HTTP error, update (with SHA)
+    - handle_write_technical_design: same pattern
+    - _parse_github_owner_repo: SSH and HTTPS URL parsing
+    - _get_management_repo_github: resolves owner/repo from workspace context
     - _inject_feature_context hook: no-op when workspace_id missing; injects block when set
     - register(ctx): all 4 tools + pre_llm_call hook registered on a mock PluginContext
-    - plugin.yaml: manifest is valid YAML, name == 'workflow'
+    - plugin.yaml: manifest is valid YAML, name == 'workflow', provides_tools list present
     - smoke: plugin is discoverable via PluginManager when workflow_plugin is on the
       search path as a bundled plugin
 """
 
 from __future__ import annotations
 
+import base64
 import importlib
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -124,6 +129,20 @@ class TestPluginManifest:
         assert "version" in manifest
         assert "description" in manifest
 
+    def test_provides_tools_list_present(self):
+        import yaml
+
+        manifest_path = PLUGIN_DIR / "plugin.yaml"
+        with open(manifest_path, encoding="utf-8") as f:
+            manifest = yaml.safe_load(f)
+        assert "provides_tools" in manifest
+        tools = manifest["provides_tools"]
+        assert isinstance(tools, list)
+        assert "workflow_get_workspace_context" in tools
+        assert "workflow_get_feature_state" in tools
+        assert "workflow_write_product_spec" in tools
+        assert "workflow_write_technical_design" in tools
+
 
 # ---------------------------------------------------------------------------
 # check_workflow_available
@@ -205,25 +224,326 @@ class TestHandleGetFeatureState:
 
 
 # ---------------------------------------------------------------------------
-# write tool stubs (T5)
+# GitHub helper unit tests
 # ---------------------------------------------------------------------------
 
-class TestWriteToolStubs:
-    def test_write_product_spec_stub(self):
+class TestParseGithubOwnerRepo:
+    def test_ssh_url(self):
         tools = _load_tools()
-        result = tools.handle_write_product_spec(
-            workspace_id="ws", feature_id="feat", content="# spec"
-        )
-        assert result["ok"] is False
-        assert "T5" in result["error"]
+        owner, repo = tools._parse_github_owner_repo("git@github.com:myorg/myrepo.git")
+        assert owner == "myorg"
+        assert repo == "myrepo"
 
-    def test_write_technical_design_stub(self):
+    def test_ssh_url_no_git_suffix(self):
         tools = _load_tools()
-        result = tools.handle_write_technical_design(
-            workspace_id="ws", feature_id="feat", content="# td"
+        owner, repo = tools._parse_github_owner_repo("git@github.com:myorg/myrepo")
+        assert owner == "myorg"
+        assert repo == "myrepo"
+
+    def test_https_url(self):
+        tools = _load_tools()
+        owner, repo = tools._parse_github_owner_repo("https://github.com/myorg/myrepo.git")
+        assert owner == "myorg"
+        assert repo == "myrepo"
+
+    def test_https_url_no_git_suffix(self):
+        tools = _load_tools()
+        owner, repo = tools._parse_github_owner_repo("https://github.com/myorg/myrepo")
+        assert owner == "myorg"
+        assert repo == "myrepo"
+
+    def test_invalid_url_raises(self):
+        tools = _load_tools()
+        with pytest.raises(ValueError, match="Cannot parse"):
+            tools._parse_github_owner_repo("not-a-github-url")
+
+
+class TestGetManagementRepoGithub:
+    def test_resolves_via_management_repo_id(self):
+        tools = _load_tools()
+        ctx = {
+            "management_repo": "mgmt-repo",
+            "repos": [
+                {"id": "other-repo", "github": "git@github.com:org/other.git"},
+                {"id": "mgmt-repo", "github": "git@github.com:org/management.git"},
+            ],
+        }
+        owner, repo = tools._get_management_repo_github(ctx)
+        assert owner == "org"
+        assert repo == "management"
+
+    def test_fallback_to_management_in_id(self):
+        tools = _load_tools()
+        ctx = {
+            "management_repo": None,
+            "repos": [
+                {"id": "management-repo", "github": "git@github.com:org/workspace.git"},
+            ],
+        }
+        owner, repo = tools._get_management_repo_github(ctx)
+        assert owner == "org"
+        assert repo == "workspace"
+
+    def test_raises_when_no_match(self):
+        tools = _load_tools()
+        ctx = {
+            "management_repo": "missing-id",
+            "repos": [
+                {"id": "some-repo", "github": "git@github.com:org/other.git"},
+            ],
+        }
+        with pytest.raises(ValueError, match="Could not resolve"):
+            tools._get_management_repo_github(ctx)
+
+
+# ---------------------------------------------------------------------------
+# handle_write_product_spec
+# ---------------------------------------------------------------------------
+
+_WORKSPACE_CONTEXT_RESPONSE = {
+    "id": "ws-1",
+    "management_repo": "management-repo",
+    "repos": [
+        {
+            "id": "management-repo",
+            "github": "git@github.com:testorg/testws.git",
+        }
+    ],
+}
+
+_GITHUB_PUT_RESPONSE = {
+    "content": {"path": "docs/features/feat-1/product-spec.md"},
+    "commit": {"sha": "abc123def456"},
+}
+
+
+class TestHandleWriteProductSpec:
+    def test_happy_path_new_file(self, monkeypatch, requests_mock):
+        """Write to a new file (no existing SHA)."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        requests_mock.get(
+            "http://backend/api/workspaces/ws-1",
+            json=_WORKSPACE_CONTEXT_RESPONSE,
+        )
+        # File doesn't exist yet → 404 on GET SHA
+        requests_mock.get(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            status_code=404,
+        )
+        requests_mock.put(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            json=_GITHUB_PUT_RESPONSE,
+            status_code=201,
+        )
+
+        result = tools.handle_write_product_spec(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# Product Spec\n\nContent here.",
+        )
+
+        assert result["ok"] is True
+        assert result["path"] == "docs/features/feat-1/product-spec.md"
+        assert result["commit"] == "abc123def456"
+
+    def test_happy_path_update_existing_file(self, monkeypatch, requests_mock):
+        """Update an existing file — SHA is fetched and included in PUT payload."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        requests_mock.get(
+            "http://backend/api/workspaces/ws-1",
+            json=_WORKSPACE_CONTEXT_RESPONSE,
+        )
+        # File exists → GET returns SHA
+        requests_mock.get(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            json={"sha": "existingsha123"},
+        )
+        requests_mock.put(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            json=_GITHUB_PUT_RESPONSE,
+            status_code=200,
+        )
+
+        result = tools.handle_write_product_spec(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# Updated Spec\n",
+        )
+
+        assert result["ok"] is True
+        # Verify SHA was sent in the PUT body
+        put_request = requests_mock.last_request
+        body = json.loads(put_request.text)
+        assert body["sha"] == "existingsha123"
+        expected_content = base64.b64encode(b"# Updated Spec\n").decode("ascii")
+        assert body["content"] == expected_content
+
+    def test_no_github_token_returns_error(self, monkeypatch):
+        """Missing GITHUB_TOKEN → ok=False without making any HTTP calls."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        tools = _load_tools()
+
+        result = tools.handle_write_product_spec(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# spec",
         )
         assert result["ok"] is False
-        assert "T5" in result["error"]
+        assert "GITHUB_TOKEN" in result["error"]
+
+    def test_github_put_failure_returns_ok_false(self, monkeypatch, requests_mock):
+        """GitHub API 422 → ok=False with error message."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        requests_mock.get(
+            "http://backend/api/workspaces/ws-1",
+            json=_WORKSPACE_CONTEXT_RESPONSE,
+        )
+        requests_mock.get(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            status_code=404,
+        )
+        requests_mock.put(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            status_code=422,
+            json={"message": "Validation Failed"},
+        )
+
+        result = tools.handle_write_product_spec(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# spec",
+        )
+        assert result["ok"] is False
+        assert "error" in result
+
+    def test_custom_commit_message(self, monkeypatch, requests_mock):
+        """commit_message parameter is forwarded to the GitHub API."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        requests_mock.get(
+            "http://backend/api/workspaces/ws-1",
+            json=_WORKSPACE_CONTEXT_RESPONSE,
+        )
+        requests_mock.get(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            status_code=404,
+        )
+        requests_mock.put(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/product-spec.md",
+            json=_GITHUB_PUT_RESPONSE,
+            status_code=201,
+        )
+
+        tools.handle_write_product_spec(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# spec",
+            commit_message="feat: add initial product spec",
+        )
+
+        put_request = requests_mock.last_request
+        body = json.loads(put_request.text)
+        assert body["message"] == "feat: add initial product spec"
+
+
+# ---------------------------------------------------------------------------
+# handle_write_technical_design
+# ---------------------------------------------------------------------------
+
+class TestHandleWriteTechnicalDesign:
+    def test_happy_path_new_file(self, monkeypatch, requests_mock):
+        """Write technical-design.md to a new path."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        requests_mock.get(
+            "http://backend/api/workspaces/ws-1",
+            json=_WORKSPACE_CONTEXT_RESPONSE,
+        )
+        requests_mock.get(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/technical-design.md",
+            status_code=404,
+        )
+        requests_mock.put(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/technical-design.md",
+            json={
+                "content": {"path": "docs/features/feat-1/technical-design.md"},
+                "commit": {"sha": "td_commit_sha"},
+            },
+            status_code=201,
+        )
+
+        result = tools.handle_write_technical_design(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# Technical Design\n\nDetails.",
+        )
+
+        assert result["ok"] is True
+        assert result["path"] == "docs/features/feat-1/technical-design.md"
+        assert result["commit"] == "td_commit_sha"
+
+    def test_no_github_token_returns_error(self, monkeypatch):
+        """Missing GITHUB_TOKEN → ok=False."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        tools = _load_tools()
+
+        result = tools.handle_write_technical_design(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content="# td",
+        )
+        assert result["ok"] is False
+        assert "GITHUB_TOKEN" in result["error"]
+
+    def test_content_is_base64_encoded(self, monkeypatch, requests_mock):
+        """Verify the content field in the PUT body is base64-encoded."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        requests_mock.get(
+            "http://backend/api/workspaces/ws-1",
+            json=_WORKSPACE_CONTEXT_RESPONSE,
+        )
+        requests_mock.get(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/technical-design.md",
+            status_code=404,
+        )
+        requests_mock.put(
+            "https://api.github.com/repos/testorg/testws/contents/docs/features/feat-1/technical-design.md",
+            json={
+                "content": {"path": "docs/features/feat-1/technical-design.md"},
+                "commit": {"sha": "sha999"},
+            },
+            status_code=201,
+        )
+
+        raw_content = "# Technical Design\n\nWith unicode: café\n"
+        tools.handle_write_technical_design(
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            content=raw_content,
+        )
+
+        put_request = requests_mock.last_request
+        body = json.loads(put_request.text)
+        decoded = base64.b64decode(body["content"]).decode("utf-8")
+        assert decoded == raw_content
 
 
 # ---------------------------------------------------------------------------

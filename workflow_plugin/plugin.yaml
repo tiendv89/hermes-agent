@@ -2,5 +2,10 @@ name: workflow
 version: 1.0.0
 description: "Workspace-aware tools for the digital-factory agent: read workspace context, read feature state, write product-spec and technical-design artifacts. Registers a pre_llm_call hook that injects workspace + feature context into every turn."
 author: "NousResearch"
+provides_tools:
+  - workflow_get_workspace_context
+  - workflow_get_feature_state
+  - workflow_write_product_spec
+  - workflow_write_technical_design
 hooks:
   - pre_llm_call
