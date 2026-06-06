@@ -457,6 +457,27 @@ class TestHandleWriteProductSpec:
         body = json.loads(put_request.text)
         assert body["message"] == "feat: add initial product spec"
 
+    @pytest.mark.parametrize("bad_id", [
+        "../../.github/workflows/evil",
+        "../etc/passwd",
+        "feat/1",
+        "feat 1",
+        "feat\x00id",
+    ])
+    def test_path_traversal_feature_id_rejected(self, monkeypatch, bad_id):
+        """Path-traversal or otherwise invalid feature_id values must be rejected."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        result = tools.handle_write_product_spec(
+            workspace_id="ws-1",
+            feature_id=bad_id,
+            content="# spec",
+        )
+        assert result["ok"] is False
+        assert "feature_id" in result["error"].lower() or "invalid" in result["error"].lower()
+
 
 # ---------------------------------------------------------------------------
 # handle_write_technical_design
@@ -544,6 +565,20 @@ class TestHandleWriteTechnicalDesign:
         body = json.loads(put_request.text)
         decoded = base64.b64decode(body["content"]).decode("utf-8")
         assert decoded == raw_content
+
+    def test_path_traversal_feature_id_rejected(self, monkeypatch):
+        """Path-traversal feature_id must be rejected before any HTTP calls."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_testtoken")
+        tools = _load_tools()
+
+        result = tools.handle_write_technical_design(
+            workspace_id="ws-1",
+            feature_id="../../.github/workflows/evil",
+            content="# td",
+        )
+        assert result["ok"] is False
+        assert "feature_id" in result["error"].lower() or "invalid" in result["error"].lower()
 
 
 # ---------------------------------------------------------------------------

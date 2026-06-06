@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import requests
 
-from .client import WorkflowClient
+from .client import WorkflowClient, _validate_id
 
 logger = logging.getLogger(__name__)
 
@@ -244,10 +244,13 @@ def _write_artifact(
 ) -> Dict[str, Any]:
     """Shared logic for both write-artifact handlers.
 
-    1. Verify GITHUB_TOKEN is set.
-    2. Fetch workspace context to resolve management-repo owner/repo.
-    3. PUT the file via the GitHub Contents API.
+    1. Validate feature_id to prevent path traversal.
+    2. Verify GITHUB_TOKEN is set.
+    3. Fetch workspace context to resolve management-repo owner/repo.
+    4. PUT the file via the GitHub Contents API.
     """
+    _validate_id(feature_id, "feature_id")
+
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
