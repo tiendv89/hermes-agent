@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: hermes-agent-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hermes_agent
+      POSTGRES_PASSWORD: hermes_agent
+      POSTGRES_DB: hermes_agent
+    ports:
+      - "25434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes_agent -d hermes_agent"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

@@ -116,9 +116,10 @@ cron = []  # croniter is now a core dependency; this extra kept for back-compat
 slack = ["slack-bolt==1.27.0", "slack-sdk==3.40.1", "aiohttp==3.13.3"]
 matrix = ["mautrix[encryption]==0.21.0", "aiosqlite==0.22.1", "asyncpg==0.31.0", "aiohttp-socks==0.11.0"]
 # workflow-gateway: FastAPI gateway for the digital-factory M3 agent chat.
-# asyncpg==0.31.0 — Postgres session store (voyager_sessions_v4 / voyager_messages_v4).
+# asyncpg==0.31.0 — asyncpg driver used by SQLAlchemy async engine.
+# sqlalchemy[asyncio] — ORM + async session for Postgres session store.
 # anthropic==0.86.0 — Claude API (re-exported from the anthropic extra for convenience).
-workflow-gateway = ["asyncpg==0.31.0", "hermes-agent[anthropic]"]
+workflow-gateway = ["asyncpg==0.31.0", "sqlalchemy[asyncio]>=2.0,<3", "psycopg[binary]==3.3.4", "hermes-agent[anthropic]"]
 # WeCom callback-mode adapter — parses untrusted XML POST bodies from
 # WeCom-controlled callback endpoints, so we use defusedxml (drop-in
 # replacement for stdlib xml.etree.ElementTree) to block billion-laughs
