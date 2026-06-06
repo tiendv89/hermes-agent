@@ -71,13 +71,19 @@ class TestSseHelper:
 
 
 class TestHermesSSETranslator:
-    def _collect_sync(self, translator, action_fn):
-        """Run action_fn then drain the translator queue synchronously."""
+    def _collect_sync(self, streaming, make_events):
+        """Create translator in async context, run make_events, drain stream.
+
+        HermesSSETranslator must be instantiated inside an async context
+        because __init__ calls asyncio.get_running_loop().
+        make_events(translator) is called with the newly created translator.
+        """
         chunks = []
 
         async def _run():
-            action_fn()
-            async for chunk in translator.stream():
+            t = streaming.HermesSSETranslator()
+            make_events(t)
+            async for chunk in t.stream():
                 if chunk.startswith("data: [DONE]"):
                     break
                 chunks.append(chunk)
@@ -87,13 +93,12 @@ class TestHermesSSETranslator:
 
     def test_on_delta(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_delta("hello")
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         assert len(chunks) == 1
         data = _parse_sse(chunks[0])
         assert data["type"] == "message_output_partial"
@@ -101,13 +106,12 @@ class TestHermesSSETranslator:
 
     def test_on_tool_start(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_tool_start("my_tool", call_id="cid-1")
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         assert len(chunks) == 1
         data = _parse_sse(chunks[0])
         assert data["type"] == "tool_call_item"
@@ -117,13 +121,12 @@ class TestHermesSSETranslator:
 
     def test_on_tool_complete_no_artifact(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_tool_complete("some_tool", call_id="cid-2", output={"result": "ok"})
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         assert len(chunks) == 1
         data = _parse_sse(chunks[0])
         assert data["type"] == "function_call_output"
@@ -131,9 +134,8 @@ class TestHermesSSETranslator:
 
     def test_on_tool_complete_write_tool_ok_emits_artifact_saved(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_tool_complete(
                 "workflow_write_product_spec",
                 call_id="cid-3",
@@ -141,7 +143,7 @@ class TestHermesSSETranslator:
             )
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         assert len(chunks) == 2
         types_seen = [_parse_sse(c)["type"] for c in chunks]
         assert "function_call_output" in types_seen
@@ -151,9 +153,8 @@ class TestHermesSSETranslator:
 
     def test_on_tool_complete_write_tool_not_ok_no_artifact_saved(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_tool_complete(
                 "workflow_write_product_spec",
                 call_id="cid-4",
@@ -161,19 +162,18 @@ class TestHermesSSETranslator:
             )
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         types_seen = [_parse_sse(c)["type"] for c in chunks]
         assert "artifact_saved" not in types_seen
 
     def test_on_usage(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_usage(input_tokens=100, output_tokens=50, cached_tokens=10)
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         assert len(chunks) == 1
         data = _parse_sse(chunks[0])
         assert data["type"] == "usage"
@@ -183,13 +183,12 @@ class TestHermesSSETranslator:
 
     def test_on_error(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
 
-        def do():
+        def do(t):
             t.on_error("something went wrong")
             t.done()
 
-        chunks = self._collect_sync(t, do)
+        chunks = self._collect_sync(streaming, do)
         assert len(chunks) == 1
         data = _parse_sse(chunks[0])
         assert data["type"] == "error"
@@ -197,10 +196,10 @@ class TestHermesSSETranslator:
 
     def test_done_terminates_stream(self):
         streaming = _load_streaming()
-        t = streaming.HermesSSETranslator()
         collected = []
 
         async def _run():
+            t = streaming.HermesSSETranslator()
             t.on_delta("first")
             t.done()
             async for chunk in t.stream():

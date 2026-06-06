@@ -57,6 +57,11 @@ class HermesSSETranslator:
     def __init__(self) -> None:
         import asyncio
 
+        # Capture the running loop now (we are always constructed inside an
+        # async endpoint).  _put() can then be called safely from any thread
+        # via call_soon_threadsafe without relying on get_event_loop(), which
+        # returns a brand-new non-running loop in Python 3.12+ worker threads.
+        self._loop = asyncio.get_running_loop()
         self._queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
 
     # ------------------------------------------------------------------
@@ -65,13 +70,7 @@ class HermesSSETranslator:
 
     def _put(self, chunk: str) -> None:
         """Thread-safe enqueue of an SSE chunk."""
-        import asyncio
-
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.call_soon_threadsafe(self._queue.put_nowait, chunk)
-        else:
-            self._queue.put_nowait(chunk)
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, chunk)
 
     def on_delta(self, delta: str, **_kwargs: Any) -> None:
         """Handle a streaming text delta from the LLM."""
