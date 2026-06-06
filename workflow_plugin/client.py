@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Dict, Optional
 
 import requests
@@ -15,6 +16,14 @@ import requests
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30
+
+_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _validate_id(value: str, name: str) -> None:
+    """Raise ValueError if value contains characters unsafe for URL path interpolation."""
+    if not _ID_RE.match(value):
+        raise ValueError(f"Invalid {name}: {value!r}")
 
 
 class WorkflowClient:
@@ -34,6 +43,7 @@ class WorkflowClient:
 
     def get_workspace_context(self, workspace_id: str) -> Dict[str, Any]:
         """GET /api/workspaces/{workspace_id} — returns workspace metadata."""
+        _validate_id(workspace_id, "workspace_id")
         url = f"{self.base_url}/api/workspaces/{workspace_id}"
         resp = requests.get(url, timeout=_DEFAULT_TIMEOUT)
         resp.raise_for_status()
@@ -45,6 +55,8 @@ class WorkflowClient:
 
     def get_feature_detail(self, workspace_id: str, feature_id: str) -> Dict[str, Any]:
         """GET /api/workspaces/{workspace_id}/features/{feature_id} — returns feature metadata."""
+        _validate_id(workspace_id, "workspace_id")
+        _validate_id(feature_id, "feature_id")
         url = f"{self.base_url}/api/workspaces/{workspace_id}/features/{feature_id}"
         resp = requests.get(url, timeout=_DEFAULT_TIMEOUT)
         resp.raise_for_status()
