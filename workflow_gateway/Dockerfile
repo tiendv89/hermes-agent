@@ -29,7 +29,7 @@ COPY workflow_gateway/ workflow_gateway/
 COPY workflow_plugin/ workflow_plugin/
 COPY hermes_home/ /root/.hermes/
 
-RUN uv pip install --system -e ".[workflow-gateway]"
+RUN uv pip install --system --break-system-packages -e ".[workflow-gateway]"
 
 EXPOSE 8000
 
