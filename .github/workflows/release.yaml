@@ -64,7 +64,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile
+          file: workflow_gateway/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
           tags: |
@@ -73,8 +73,8 @@ jobs:
           build-args: |
             HERMES_GIT_SHA=${{ github.sha }}
             VERSION=${{ env.VERSION_TAG }}
-          cache-from: type=gha,scope=release
-          cache-to: type=gha,mode=max,scope=release
+          cache-from: type=gha,scope=workflow-gateway-release
+          cache-to: type=gha,mode=max,scope=workflow-gateway-release
 
   release:
     needs:

@@ -10,16 +10,16 @@ on:
       - "**/*.py"
       - "pyproject.toml"
       - "uv.lock"
-      - "Dockerfile"
-      - "docker/**"
+      - "workflow_gateway/Dockerfile"
+      - "workflow_gateway/**"
       - ".github/workflows/ci.yaml"
   pull_request:
     paths:
       - "**/*.py"
       - "pyproject.toml"
       - "uv.lock"
-      - "Dockerfile"
-      - "docker/**"
+      - "workflow_gateway/Dockerfile"
+      - "workflow_gateway/**"
       - ".github/workflows/ci.yaml"
 
 env:
@@ -60,8 +60,8 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: Dockerfile
+          file: workflow_gateway/Dockerfile
           push: false
           platforms: linux/amd64
-          cache-from: type=gha,scope=ci
-          cache-to: type=gha,mode=max,scope=ci
+          cache-from: type=gha,scope=workflow-gateway-ci
+          cache-to: type=gha,mode=max,scope=workflow-gateway-ci

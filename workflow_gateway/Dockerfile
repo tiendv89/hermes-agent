@@ -9,8 +9,8 @@ RUN apt-get update && \
     ca-certificates python3 python-is-python3 python3-venv python3-dev gcc git && \
     rm -rf /var/lib/apt/lists/*
 
-COPY --from=uv_source /uv /usr/local/bin/uv
-COPY --from=uv_source /uvx /usr/local/bin/uvx
+COPY --from=uv_source /usr/local/bin/uv /usr/local/bin/uv
+RUN ln -s /usr/local/bin/uv /usr/local/bin/uvx
 
 WORKDIR /app
 
