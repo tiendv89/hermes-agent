@@ -65,8 +65,8 @@ async def create_session(
     now = time.time()
     session = Session(
         id=_new_session_id(),
-        source="workflow-gateway",
-        user_id=user_id or None,
+        source="hermes-agent",
+        user_id=user_id,
         workspace_id=workspace_id,
         feature_id=feature_id,
         started_at=now,
