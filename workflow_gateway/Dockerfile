@@ -21,6 +21,8 @@ COPY run_agent.py hermes_constants.py hermes_logging.py hermes_state.py \
      toolset_distributions.py trajectory_compressor.py ./
 
 COPY agent/ agent/
+COPY cron/ cron/
+COPY gateway/ gateway/
 COPY hermes_cli/ hermes_cli/
 COPY tools/ tools/
 COPY plugins/ plugins/
