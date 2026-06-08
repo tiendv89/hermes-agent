@@ -68,15 +68,23 @@ def _parse_sse_events(body: bytes) -> list:
 
 @pytest.fixture
 def stream_chat_app():
-    """Minimal FastAPI app with the workflow_gateway router and a dummy db_pool."""
+    """Minimal FastAPI app with the workflow_gateway router and a dummy db_session."""
     _inject_mock_run_agent()
+
+    from contextlib import asynccontextmanager
 
     from fastapi import FastAPI
     from workflow_gateway.api.router import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v5")
-    app.state.db_pool = MagicMock()
+
+    # db_session must be an async context manager factory (async with db_session() as s)
+    @asynccontextmanager
+    async def _db_session():
+        yield MagicMock()
+
+    app.state.db_session = _db_session
     return app
 
 
@@ -85,12 +93,20 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
     """POST /api/v5/stream_chat → ≥1 message_output_partial event + [DONE] sentinel."""
     from httpx import ASGITransport, AsyncClient
 
-    session_row = {"session_id": "sess_test_t1", "user_id": "user-1"}
+    # Use MagicMock so attribute access (session.title) works correctly.
+    session_mock = MagicMock()
+    session_mock.title = "existing title"  # non-null → auto-title skipped
 
     with (
-        patch("workflow_gateway.api.router.get_session", AsyncMock(return_value=session_row)),
-        patch("workflow_gateway.api.router.get_messages", AsyncMock(return_value=[])),
-        patch("workflow_gateway.api.router.append_message", AsyncMock(return_value=1)),
+        patch(
+            "workflow_gateway.api.router.get_session",
+            AsyncMock(return_value=session_mock),
+        ),
+        patch(
+            "workflow_gateway.api.router.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch("workflow_gateway.api.router.set_session_title", AsyncMock()),
         patch("workflow_gateway.api.router.touch_session", AsyncMock()),
     ):
         async with AsyncClient(
@@ -108,7 +124,9 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
                 timeout=15.0,
             )
 
-    assert resp.status_code == 200, f"Unexpected status: {resp.status_code} — {resp.text}"
+    assert resp.status_code == 200, (
+        f"Unexpected status: {resp.status_code} — {resp.text}"
+    )
     assert "text/event-stream" in resp.headers.get("content-type", ""), (
         f"Expected text/event-stream, got: {resp.headers.get('content-type')}"
     )
