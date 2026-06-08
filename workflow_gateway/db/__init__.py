@@ -14,6 +14,7 @@ from workflow_gateway.db.store import (
     set_session_archived,
     append_message,
     get_messages_as_conversation,
+    get_session_messages,
     list_sessions,
 )
 
@@ -35,5 +36,6 @@ __all__ = [
     "set_session_archived",
     "append_message",
     "get_messages_as_conversation",
+    "get_session_messages",
     "list_sessions",
 ]

@@ -26,24 +26,24 @@ _GITHUB_HTTPS_RE = re.compile(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$"
 WRITE_SPEC_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
-        "workspace_id": {"type": "string", "description": "The workspace identifier."},
-        "feature_id": {"type": "string", "description": "The feature identifier."},
+        "workspace_id": {"type": "string", "description": "Workspace identifier. Omit to use the current workspace from context."},
+        "feature_id": {"type": "string", "description": "Feature identifier. Omit to use the current feature from context."},
         "content": {"type": "string", "description": "Full Markdown content to write to product-spec.md."},
         "commit_message": {"type": "string", "description": "Git commit message (optional)."},
     },
-    "required": ["workspace_id", "feature_id", "content"],
+    "required": ["content"],
     "additionalProperties": False,
 }
 
 WRITE_TD_SCHEMA: Dict[str, Any] = {
     "type": "object",
     "properties": {
-        "workspace_id": {"type": "string", "description": "The workspace identifier."},
-        "feature_id": {"type": "string", "description": "The feature identifier."},
+        "workspace_id": {"type": "string", "description": "Workspace identifier. Omit to use the current workspace from context."},
+        "feature_id": {"type": "string", "description": "Feature identifier. Omit to use the current feature from context."},
         "content": {"type": "string", "description": "Full Markdown content to write to technical-design.md."},
         "commit_message": {"type": "string", "description": "Git commit message (optional)."},
     },
-    "required": ["workspace_id", "feature_id", "content"],
+    "required": ["content"],
     "additionalProperties": False,
 }
 
@@ -130,29 +130,41 @@ def _write_artifact(
 # Handlers
 # ---------------------------------------------------------------------------
 
+def _resolve_ids(workspace_id: str, feature_id: str) -> tuple[str, str]:
+    from ..context import get_feature_id, get_workspace_id
+
+    return workspace_id or get_workspace_id(), feature_id or get_feature_id()
+
+
 def handle_write_product_spec(
-    workspace_id: str,
-    feature_id: str,
     content: str,
+    workspace_id: str = "",
+    feature_id: str = "",
     commit_message: str = "docs: update product spec",
     **_: Any,
 ) -> Dict[str, Any]:
+    wid, fid = _resolve_ids(workspace_id, feature_id)
+    if not wid or not fid:
+        return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
     try:
-        return _write_artifact(workspace_id, feature_id, "product-spec.md", content, commit_message)
+        return _write_artifact(wid, fid, "product-spec.md", content, commit_message)
     except Exception as exc:
         logger.warning("workflow_write_product_spec failed: %s", exc)
         return {"ok": False, "error": str(exc)}
 
 
 def handle_write_technical_design(
-    workspace_id: str,
-    feature_id: str,
     content: str,
+    workspace_id: str = "",
+    feature_id: str = "",
     commit_message: str = "docs: update technical design",
     **_: Any,
 ) -> Dict[str, Any]:
+    wid, fid = _resolve_ids(workspace_id, feature_id)
+    if not wid or not fid:
+        return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
     try:
-        return _write_artifact(workspace_id, feature_id, "technical-design.md", content, commit_message)
+        return _write_artifact(wid, fid, "technical-design.md", content, commit_message)
     except Exception as exc:
         logger.warning("workflow_write_technical_design failed: %s", exc)
         return {"ok": False, "error": str(exc)}

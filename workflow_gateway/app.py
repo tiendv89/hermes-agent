@@ -16,6 +16,22 @@ from dotenv import load_dotenv
 
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 
+# Register the workflow plugin before anything else imports model_tools.
+# workflow_plugin/ sits at the project root, outside the plugins/ directory
+# the general scanner covers, so it must be wired up explicitly here.
+try:
+    import workflow_plugin as _workflow_plugin
+    from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
+
+    _wf_manifest = PluginManifest(name="workflow", source="bundled", kind="backend")
+    _wf_ctx = PluginContext(_wf_manifest, get_plugin_manager())
+    _workflow_plugin.register(_wf_ctx)
+except Exception as _exc:
+    import logging as _logging
+    _logging.getLogger(__name__).warning(
+        "workflow_gateway: failed to register workflow plugin: %s", _exc
+    )
+
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 

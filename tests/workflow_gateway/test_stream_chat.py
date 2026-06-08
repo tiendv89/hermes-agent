@@ -6,7 +6,7 @@ Covers the second half of the T1 smoke-test subtask from tasks.md:
 Uses a minimal FastAPI test app (no Postgres lifespan) with mocked session
 functions and a stub AIAgent. Verifies that:
   - the endpoint returns HTTP 200 with content-type text/event-stream
-  - at least one message_output_partial SSE event is emitted
+  - at least one OpenAI chat.completion.chunk carrying delta.content is emitted
   - the stream terminates with a [DONE] sentinel
 """
 
@@ -132,13 +132,59 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
     )
 
     events = _parse_sse_events(resp.content)
-    partial_events = [e for e in events if e.get("type") == "message_output_partial"]
+
+    def _content(e: dict) -> str | None:
+        if e.get("object") != "chat.completion.chunk":
+            return None
+        choices = e.get("choices") or [{}]
+        return choices[0].get("delta", {}).get("content")
+
+    content_events = [e for e in events if _content(e)]
     done_events = [e for e in events if e.get("type") == "[DONE]"]
 
-    assert len(partial_events) >= 1, (
-        f"Expected ≥1 message_output_partial event, got events: {events}"
+    assert len(content_events) >= 1, (
+        f"Expected ≥1 chat.completion.chunk with delta.content, got events: {events}"
     )
     assert len(done_events) >= 1, (
         f"Expected [DONE] sentinel in stream, got events: {events}"
     )
-    assert partial_events[0].get("content") == "Hello from mock agent"
+    assert _content(content_events[0]) == "Hello from mock agent"
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
+    """A second stream_chat for a session already running returns 409 — this is
+    what stops the transcript from being double-persisted on reconnect."""
+    from httpx import ASGITransport, AsyncClient
+    from workflow_gateway.api import router as router_mod
+
+    session_mock = MagicMock()
+    session_mock.title = "existing title"
+
+    # Pretend a run for this session is already in flight.
+    router_mod._active_runs.add("sess_busy")
+    try:
+        with (
+            patch(
+                "workflow_gateway.api.router.get_session",
+                AsyncMock(return_value=session_mock),
+            ),
+            patch(
+                "workflow_gateway.api.router.get_messages_as_conversation",
+                AsyncMock(return_value=[]),
+            ),
+            patch("workflow_gateway.api.router.set_session_title", AsyncMock()),
+            patch("workflow_gateway.api.router.touch_session", AsyncMock()),
+        ):
+            async with AsyncClient(
+                transport=ASGITransport(app=stream_chat_app),
+                base_url="http://testserver",
+            ) as client:
+                resp = await client.post(
+                    "/api/v5/stream_chat",
+                    json={"session_id": "sess_busy", "message": "Hello"},
+                    timeout=15.0,
+                )
+        assert resp.status_code == 409, f"Expected 409, got {resp.status_code}"
+    finally:
+        router_mod._active_runs.discard("sess_busy")

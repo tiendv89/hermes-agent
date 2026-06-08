@@ -7,5 +7,8 @@ provides_tools:
   - workflow_get_feature_state
   - workflow_write_product_spec
   - workflow_write_technical_design
+  - workflow_get_tasks
+  - workflow_query_gitnexus
+  - workflow_query_rag
 hooks:
   - pre_llm_call

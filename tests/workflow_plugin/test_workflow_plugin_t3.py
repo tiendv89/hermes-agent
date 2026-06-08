@@ -140,10 +140,11 @@ class TestWorkflowQueryGitnexus:
             result = await handle(query="where is register() defined", tool="query")
         assert result["ok"] is True
         assert result["results"] == fake_results
+        # GitNexus's `query` tool takes `q`, not `query`.
         mock_call.assert_awaited_once_with(
             "http://gitnexus:8002/sse",
             "query",
-            {"query": "where is register() defined"},
+            {"q": "where is register() defined"},
         )
 
     @pytest.mark.asyncio
@@ -158,7 +159,7 @@ class TestWorkflowQueryGitnexus:
 
             await handle(query="find X")
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "query", {"query": "find X"}
+            "http://gitnexus:8002/sse", "query", {"q": "find X"}
         )
 
     @pytest.mark.asyncio
@@ -171,9 +172,41 @@ class TestWorkflowQueryGitnexus:
         ) as mock_call:
             from workflow_plugin.tools.gitnexus import handle
 
-            await handle(query="what calls register()", tool="context")
+            await handle(query="register", tool="context")
+        # `context` and `impact` take `symbol`.
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "context", {"query": "what calls register()"}
+            "http://gitnexus:8002/sse", "context", {"symbol": "register"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_detect_changes_passes_file_list(self, monkeypatch):
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
+        with patch(
+            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from workflow_plugin.tools.gitnexus import handle
+
+            await handle(query="a.py, b.py", tool="detect_changes")
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002/sse", "detect_changes", {"files": ["a.py", "b.py"]}
+        )
+
+    @pytest.mark.asyncio
+    async def test_list_repos_needs_no_query(self, monkeypatch):
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
+        with patch(
+            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from workflow_plugin.tools.gitnexus import handle
+
+            result = await handle(tool="list_repos")
+        assert result["ok"] is True
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002/sse", "list_repos", {}
         )
 
     @pytest.mark.asyncio
@@ -443,17 +476,28 @@ class TestInjectContextT3:
     def _make_fake_feature_result(self):
         return {"ok": True, "feature": {"stage": "in_implementation"}}
 
+    def _call_inject(self, workspace_id="ws-1", feature_id="feat-1") -> str:
+        """Set session context, call inject_context, return the context string."""
+        from workflow_plugin.context import set_context
+        from workflow_plugin.hooks import inject_context
+
+        session_id = "sess-test"
+        set_context(session_id, workspace_id, feature_id)
+        result = inject_context(session_id=session_id)
+        return result["context"] if result else ""
+
     def _make_tasks_with_blocked(self):
         return {
             "ok": True,
             "tasks": [
-                {"task_name": "T1", "status": "done", "blocked_reason": None},
+                {"task_name": "T1", "title": "Setup DB", "status": "done", "blocked_reason": None},
                 {
                     "task_name": "T2",
+                    "title": "API endpoints",
                     "status": "blocked",
                     "blocked_reason": "db_unreachable",
                 },
-                {"task_name": "T3", "status": "in_progress", "blocked_reason": None},
+                {"task_name": "T3", "title": "Frontend", "status": "in_progress", "blocked_reason": None},
             ],
         }
 
@@ -461,175 +505,93 @@ class TestInjectContextT3:
         return {
             "ok": True,
             "tasks": [
-                {"task_name": "T1", "status": "done", "blocked_reason": None},
-                {"task_name": "T2", "status": "in_progress", "blocked_reason": None},
+                {"task_name": "T1", "title": "Setup DB", "status": "done", "blocked_reason": None},
+                {"task_name": "T2", "title": "API endpoints", "status": "in_progress", "blocked_reason": None},
             ],
         }
 
     def test_task_summary_block_injected(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
-        from workflow_plugin.hooks import inject_context
-
         with (
             patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch(
-                "workflow_plugin.tools.workspace.handle",
-                return_value=self._make_fake_workspace_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.feature.handle",
-                return_value=self._make_fake_feature_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.tasks.handle",
-                return_value=self._make_tasks_no_blocked(),
-            ),
+            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("workflow_plugin.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
         ):
-            messages = []
-            inject_context(
-                messages, context_vars={"workspace_id": "ws-1", "feature_id": "feat-1"}
-            )
-        content = messages[0]["content"]
-        assert "task_counts:" in content
+            content = self._call_inject()
+        assert "tasks:" in content
+        assert "T1" in content
+        assert "T2" in content
 
     def test_blocked_tasks_block_included_when_blocked(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
-        from workflow_plugin.hooks import inject_context
-
         with (
             patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch(
-                "workflow_plugin.tools.workspace.handle",
-                return_value=self._make_fake_workspace_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.feature.handle",
-                return_value=self._make_fake_feature_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.tasks.handle",
-                return_value=self._make_tasks_with_blocked(),
-            ),
+            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("workflow_plugin.tools.tasks.handle", return_value=self._make_tasks_with_blocked()),
         ):
-            messages = []
-            inject_context(
-                messages, context_vars={"workspace_id": "ws-1", "feature_id": "feat-1"}
-            )
-        content = messages[0]["content"]
-        assert "blocked_tasks:" in content
+            content = self._call_inject()
+        assert "T2" in content
+        assert "blocked" in content
         assert "db_unreachable" in content
 
     def test_blocked_tasks_absent_when_none_blocked(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
-        from workflow_plugin.hooks import inject_context
-
         with (
             patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch(
-                "workflow_plugin.tools.workspace.handle",
-                return_value=self._make_fake_workspace_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.feature.handle",
-                return_value=self._make_fake_feature_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.tasks.handle",
-                return_value=self._make_tasks_no_blocked(),
-            ),
+            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("workflow_plugin.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
         ):
-            messages = []
-            inject_context(
-                messages, context_vars={"workspace_id": "ws-1", "feature_id": "feat-1"}
-            )
-        content = messages[0]["content"]
-        assert "blocked_tasks:" not in content
+            content = self._call_inject()
+        assert "blocked:" not in content
+        assert "T1" in content
+        assert "T2" in content
 
     def test_capability_advertisement_includes_workflow_get_tasks(self):
-        from workflow_plugin.hooks import inject_context
-
-        with patch(
-            "workflow_plugin.hooks.check_workflow_available", return_value=False
-        ):
-            messages = []
-            inject_context(messages, context_vars={"workspace_id": "ws-1"})
-        content = messages[0]["content"]
+        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+            content = self._call_inject(feature_id="")
         assert "workflow_get_tasks" in content
 
     def test_gitnexus_advertised_when_url_set(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
-        from workflow_plugin.hooks import inject_context
-
-        with patch(
-            "workflow_plugin.hooks.check_workflow_available", return_value=False
-        ):
-            messages = []
-            inject_context(messages, context_vars={"workspace_id": "ws-1"})
-        content = messages[0]["content"]
+        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+            content = self._call_inject(feature_id="")
         assert "workflow_query_gitnexus" in content
 
     def test_gitnexus_not_advertised_when_url_unset(self):
-        from workflow_plugin.hooks import inject_context
-
-        with patch(
-            "workflow_plugin.hooks.check_workflow_available", return_value=False
-        ):
-            messages = []
-            inject_context(messages, context_vars={"workspace_id": "ws-1"})
-        content = messages[0]["content"]
+        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+            content = self._call_inject(feature_id="")
         assert "workflow_query_gitnexus" not in content
 
     def test_rag_advertised_when_url_set(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
-        from workflow_plugin.hooks import inject_context
-
-        with patch(
-            "workflow_plugin.hooks.check_workflow_available", return_value=False
-        ):
-            messages = []
-            inject_context(messages, context_vars={"workspace_id": "ws-1"})
-        content = messages[0]["content"]
+        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+            content = self._call_inject(feature_id="")
         assert "workflow_query_rag" in content
 
     def test_rag_not_advertised_when_url_unset(self):
-        from workflow_plugin.hooks import inject_context
-
-        with patch(
-            "workflow_plugin.hooks.check_workflow_available", return_value=False
-        ):
-            messages = []
-            inject_context(messages, context_vars={"workspace_id": "ws-1"})
-        content = messages[0]["content"]
+        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+            content = self._call_inject(feature_id="")
         assert "workflow_query_rag" not in content
 
-    def test_task_summary_counts_by_status(self, monkeypatch):
+    def test_task_summary_lists_all_tasks(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
-        from workflow_plugin.hooks import inject_context
-
         tasks_result = {
             "ok": True,
             "tasks": [
-                {"task_name": "T1", "status": "done", "blocked_reason": None},
-                {"task_name": "T2", "status": "done", "blocked_reason": None},
-                {"task_name": "T3", "status": "in_progress", "blocked_reason": None},
+                {"task_name": "T1", "title": "Setup DB", "status": "done", "blocked_reason": None},
+                {"task_name": "T2", "title": "API layer", "status": "done", "blocked_reason": None},
+                {"task_name": "T3", "title": "Frontend", "status": "in_progress", "blocked_reason": None},
             ],
         }
         with (
             patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch(
-                "workflow_plugin.tools.workspace.handle",
-                return_value=self._make_fake_workspace_result(),
-            ),
-            patch(
-                "workflow_plugin.tools.feature.handle",
-                return_value=self._make_fake_feature_result(),
-            ),
+            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
             patch("workflow_plugin.tools.tasks.handle", return_value=tasks_result),
         ):
-            messages = []
-            inject_context(
-                messages, context_vars={"workspace_id": "ws-1", "feature_id": "feat-1"}
-            )
-        content = messages[0]["content"]
-        assert "done=2" in content
-        assert "in_progress=1" in content
+            content = self._call_inject()
+        assert "T1" in content and "Setup DB" in content and "done" in content
+        assert "T3" in content and "Frontend" in content and "in_progress" in content

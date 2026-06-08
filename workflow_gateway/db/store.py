@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import pathlib
 import secrets
@@ -293,11 +294,55 @@ async def get_messages_as_conversation(
         if msg.tool_name:
             entry["tool_name"] = msg.tool_name
         if msg.tool_calls:
-            entry["tool_calls"] = msg.tool_calls
+            # Stored as a JSON string; the agent (and repair_message_sequence)
+            # expect a parsed list of tool-call dicts. Returning the raw string
+            # makes tool-call-id matching fail, which drops the historical tool
+            # message, shrinks the in-place messages list, and desyncs the
+            # session-DB flush cursor — silently dropping the next user turn.
+            try:
+                entry["tool_calls"] = json.loads(msg.tool_calls)
+            except (ValueError, TypeError):
+                entry["tool_calls"] = msg.tool_calls
         if msg.finish_reason:
             entry["finish_reason"] = msg.finish_reason
         if msg.reasoning:
             entry["reasoning"] = msg.reasoning
+        messages.append(entry)
+    return messages
+
+
+async def get_session_messages(
+    db: AsyncSession,
+    session_id: str,
+) -> list[Dict[str, Any]]:
+    """Return active messages for a session in UI-friendly form, oldest-first.
+
+    Unlike :func:`get_messages_as_conversation` (which builds OpenAI request
+    context), this is shaped for rendering a chat transcript: each entry carries
+    a stable ``id`` and ``tool_calls`` is parsed back into JSON when present.
+    """
+    result = await db.execute(
+        select(Message)
+        .where(Message.session_id == session_id, Message.active == True)  # noqa: E712
+        .order_by(Message.created_at, Message.id)
+    )
+    messages = []
+    for msg in result.scalars().all():
+        entry: Dict[str, Any] = {
+            "id": str(msg.id),
+            "role": msg.role,
+            "content": msg.content or "",
+            "created_at": msg.created_at,
+        }
+        if msg.tool_name:
+            entry["tool_name"] = msg.tool_name
+        if msg.tool_call_id:
+            entry["tool_call_id"] = msg.tool_call_id
+        if msg.tool_calls:
+            try:
+                entry["tool_calls"] = json.loads(msg.tool_calls)
+            except (ValueError, TypeError):
+                entry["tool_calls"] = msg.tool_calls
         messages.append(entry)
     return messages
 

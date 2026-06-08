@@ -334,6 +334,109 @@ async def test_get_sessions_endpoint_requires_feature_id(gateway_app):
 
 
 # ---------------------------------------------------------------------------
+# get_messages_as_conversation — tool_calls must be parsed back to a list
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_messages_as_conversation_parses_tool_calls():
+    """tool_calls is stored as a JSON string but must be returned as a list.
+
+    Regression for the silent user-message-drop bug: a raw string makes
+    repair_message_sequence fail to match tool-call ids, drop the historical
+    tool message, and desync the session-DB flush cursor.
+    """
+    import json as _json
+
+    from workflow_gateway.db.store import get_messages_as_conversation
+
+    tool_calls = [
+        {"id": "call_1", "type": "function", "function": {"name": "foo", "arguments": "{}"}}
+    ]
+
+    asst = MagicMock()
+    asst.role, asst.content = "assistant", ""
+    asst.tool_call_id, asst.tool_name = None, None
+    asst.tool_calls = _json.dumps(tool_calls)  # stored as a JSON STRING
+    asst.finish_reason, asst.reasoning = "tool_calls", None
+
+    scalars = MagicMock()
+    scalars.all.return_value = [asst]
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+
+    convo = await get_messages_as_conversation(db, "sess_1")
+
+    assert convo[0]["tool_calls"] == tool_calls  # parsed list, not a string
+    assert isinstance(convo[0]["tool_calls"], list)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v5/sessions/{session_id}/messages
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_session_messages_endpoint_returns_transcript(gateway_app):
+    """GET /sessions/{id}/messages returns {session_id, messages: [...]}."""
+    from httpx import ASGITransport, AsyncClient
+
+    fake_messages = [
+        {"id": "1", "role": "user", "content": "hi", "created_at": 1.0},
+        {
+            "id": "2",
+            "role": "assistant",
+            "content": "hello!",
+            "created_at": 2.0,
+            "tool_calls": [{"id": "c1", "function": {"name": "search"}}],
+        },
+    ]
+
+    with (
+        patch(
+            "workflow_gateway.api.router.get_session",
+            AsyncMock(return_value=MagicMock()),
+        ),
+        patch(
+            "workflow_gateway.api.router.get_session_messages",
+            AsyncMock(return_value=fake_messages),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=gateway_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/api/v5/sessions/sess_a/messages")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["session_id"] == "sess_a"
+    assert len(body["messages"]) == 2
+    assert body["messages"][0]["role"] == "user"
+    assert body["messages"][1]["tool_calls"][0]["function"]["name"] == "search"
+
+
+@pytest.mark.asyncio
+async def test_get_session_messages_endpoint_404_when_session_missing(gateway_app):
+    """GET /sessions/{id}/messages returns 404 for an unknown session."""
+    from httpx import ASGITransport, AsyncClient
+
+    with patch(
+        "workflow_gateway.api.router.get_session",
+        AsyncMock(return_value=None),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=gateway_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get("/api/v5/sessions/nope/messages")
+
+    assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
 # Docker-compose integration test — real Postgres
 # ---------------------------------------------------------------------------
 

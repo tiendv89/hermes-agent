@@ -1,4 +1,4 @@
-"""pre_llm_call hook — injects workspace/feature context into the system prompt."""
+"""pre_llm_call hook — returns workspace/feature context for injection into the user message."""
 
 from __future__ import annotations
 
@@ -6,27 +6,31 @@ import logging
 import os
 from typing import Any
 
+from .context import get_context_for_session
 from .db import check_workflow_available
 
 logger = logging.getLogger(__name__)
 
 
-def inject_context(messages: list, **kwargs: Any) -> None:
-    """Prepend a workspace/feature context block to the system prompt each turn.
+def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
+    """Build a workspace/feature context block and return it for injection.
 
-    Reads workspace_id and feature_id from the agent's context_vars (injected
-    by the gateway). No-op when workspace_id is absent so the agent works
-    outside the gateway too.
+    The conversation loop appends the returned {"context": "..."} string to the
+    current turn's user message.  workspace_id and feature_id are resolved from
+    the per-session store the gateway router populates before each
+    agent.run_conversation() call (keyed by the session_id the hook receives).
     """
-    context_vars: dict = kwargs.get("context_vars") or {}
-    workspace_id: str = context_vars.get("workspace_id", "")
-    feature_id: str = context_vars.get("feature_id", "")
+    workspace_id, feature_id = get_context_for_session(session_id)
 
     if not workspace_id:
-        return
+        logger.info(
+            "workflow inject_context: no workspace context for session=%s — skipping injection",
+            session_id,
+        )
+        return None
 
     parts = [
-        "## Workflow context (injected by workflow plugin)",
+        "## Workflow context",
         f"workspace_id: {workspace_id}",
     ]
     if feature_id:
@@ -50,27 +54,32 @@ def inject_context(messages: list, **kwargs: Any) -> None:
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
             if feat.get("ok"):
-                parts.append(
-                    f"feature_stage: {feat.get('feature', {}).get('stage', 'unknown')}"
-                )
+                f = feat["feature"]
+                if f.get("title"):
+                    parts.append(f"feature_title: {f['title']}")
+                if f.get("feature_name"):
+                    parts.append(f"feature_name: {f['feature_name']}")
+                parts.append(f"feature_stage: {f.get('stage', 'unknown')}")
+                parts.append(f"feature_status: {f.get('status', 'unknown')}")
+                if f.get("next_action"):
+                    parts.append(f"next_action: {f['next_action']}")
 
             from .tools.tasks import handle as get_tasks
 
             result = get_tasks(workspace_id=workspace_id, feature_id=feature_id)
             if result.get("ok"):
                 t_list = result["tasks"]
-                by_status: dict[str, int] = {}
-                blocked: list[str] = []
+                task_lines: list[str] = []
                 for t in t_list:
-                    by_status[t["status"]] = by_status.get(t["status"], 0) + 1
+                    name = t.get("task_name", "")
+                    title = t.get("title", "")
+                    status = t.get("status", "")
+                    line = f"  {name}: {title} [{status}]"
                     if t["status"] == "blocked" and t.get("blocked_reason"):
-                        blocked.append(f"  {t['task_name']}: {t['blocked_reason']}")
-                summary = "task_counts: " + ", ".join(
-                    f"{k}={v}" for k, v in by_status.items()
-                )
-                parts.append(summary)
-                if blocked:
-                    parts.append("blocked_tasks:\n" + "\n".join(blocked))
+                        line += f" — blocked: {t['blocked_reason']}"
+                    task_lines.append(line)
+                if task_lines:
+                    parts.append("tasks:\n" + "\n".join(task_lines))
 
     caps = ["workflow_get_tasks (live task status)"]
     if os.environ.get("GITNEXUS_MCP_URL"):
@@ -80,18 +89,7 @@ def inject_context(messages: list, **kwargs: Any) -> None:
     parts.append(
         "Before answering questions about task status, code structure, or prior decisions, "
         "use the workflow tools rather than guessing: " + "; ".join(caps) + ". "
-        "Draft artifacts through the write tools; never advance lifecycle state directly."
+        "Workspace and feature IDs are already set in context — omit them when calling tools."
     )
 
-    block = "\n".join(parts)
-
-    for msg in messages:
-        if isinstance(msg, dict) and msg.get("role") == "system":
-            existing = msg.get("content", "")
-            if isinstance(existing, str):
-                msg["content"] = block + "\n\n" + existing
-            elif isinstance(existing, list):
-                existing.insert(0, {"type": "text", "text": block + "\n\n"})
-            return
-
-    messages.insert(0, {"role": "system", "content": block})
+    return {"context": "\n".join(parts)}

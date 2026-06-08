@@ -1,8 +1,10 @@
 """FastAPI router for the workflow gateway.
 
 Routes:
-    POST /create_session  — create a new session
-    POST /stream_chat     — run one agent turn and stream SSE back
+    POST /create_session                 — create a new session
+    GET  /sessions                       — list sessions for a workspace+feature
+    GET  /sessions/{session_id}/messages — load a session's transcript
+    POST /stream_chat                    — run one agent turn and stream SSE back
 
 The router is mounted at ``/api/v5`` in ``workflow_gateway/app.py``.
 """
@@ -12,7 +14,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, AsyncIterator, Dict
+import threading
+from typing import Any, AsyncIterator, Dict, Set
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -23,6 +26,7 @@ from workflow_gateway.db import (
     create_session,
     get_messages_as_conversation,
     get_session,
+    get_session_messages,
     list_sessions,
     set_session_title,
     touch_session,
@@ -31,6 +35,14 @@ from workflow_gateway.db.session_db_proxy import make_gateway_session_db
 from workflow_gateway.streaming import HermesSSETranslator
 
 logger = logging.getLogger(__name__)
+
+# Sessions with an agent run currently in flight. A second stream_chat for the
+# same session (e.g. a reconnect or double-submit) must not start a second run
+# — both would mirror the same messages to Postgres and the transcript would
+# duplicate. Guarded by a lock because the marker is removed from the agent's
+# worker thread.
+_active_runs: Set[str] = set()
+_active_runs_lock = threading.Lock()
 
 router = APIRouter()
 
@@ -108,6 +120,24 @@ async def list_sessions_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# GET /sessions/{session_id}/messages
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions/{session_id}/messages")
+async def get_session_messages_endpoint(
+    session_id: str,
+    db: AsyncSession = Depends(_get_db),
+) -> JSONResponse:
+    """Return the full transcript for a session, oldest-first."""
+    session = await get_session(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    messages = await get_session_messages(db, session_id)
+    return JSONResponse({"session_id": session_id, "messages": messages})
+
+
+# ---------------------------------------------------------------------------
 # POST /stream_chat
 # ---------------------------------------------------------------------------
 
@@ -122,6 +152,16 @@ async def stream_chat_endpoint(
     session = await get_session(db, body.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
+
+    # Reject a second concurrent run for this session: it would re-run the agent
+    # and double-persist every message (duplicated transcript on reload).
+    with _active_runs_lock:
+        if body.session_id in _active_runs:
+            raise HTTPException(
+                status_code=409,
+                detail="A response is already streaming for this session.",
+            )
+        _active_runs.add(body.session_id)
 
     # Auto-title: set the session title to the first 60 chars of the message
     # when the session has no title yet.
@@ -139,17 +179,32 @@ async def stream_chat_endpoint(
         feature_id=body.feature_id,
     )
 
-    translator = HermesSSETranslator()
-    context_vars = {"workspace_id": body.workspace_id, "feature_id": body.feature_id}
+    model = os.environ.get("HERMES_MODEL", "claude-sonnet-4-6")
+    translator = HermesSSETranslator(model=model)
+    # Prefer the values stored on the session (set at create_session time).
+    # The request body may omit them; the session row is the authoritative source.
+    workspace_id = session.workspace_id or body.workspace_id
+    feature_id = session.feature_id or body.feature_id
+    context_vars = {"workspace_id": workspace_id, "feature_id": feature_id}
+    logger.info(
+        "stream_chat session=%s resolved workspace_id=%r feature_id=%r "
+        "(session row: %r/%r, request body: %r/%r)",
+        body.session_id, workspace_id, feature_id,
+        session.workspace_id, session.feature_id,
+        body.workspace_id, body.feature_id,
+    )
     loop = asyncio.get_event_loop()
     db_factory = request.app.state.db_session
+
+    # Mutable handle so the SSE generator (event loop) can interrupt the agent
+    # (worker thread) when the client disconnects.
+    agent_ref: list = [None]
 
     def _run_agent() -> None:
         """Blocking agent run — executed in a thread pool."""
         try:
             from run_agent import AIAgent
 
-            model = os.environ.get("HERMES_MODEL", "claude-sonnet-4-6")
             provider = os.environ.get("HERMES_PROVIDER", "anthropic")
 
             # GatewaySessionDB mirrors every append_message / update_token_counts
@@ -165,8 +220,18 @@ async def stream_chat_endpoint(
                 tool_start_callback=translator.on_tool_start,
                 tool_complete_callback=translator.on_tool_complete,
             )
+            agent_ref[0] = agent
 
             agent._context_vars = context_vars  # type: ignore[attr-defined]
+
+            # Publish workspace/feature IDs so the workflow plugin can resolve
+            # them: the pre_llm_call hook looks them up by session_id, and tool
+            # handlers fall back to the thread-local — both set here.
+            try:
+                from workflow_plugin.context import set_context
+                set_context(body.session_id, workspace_id, feature_id)
+            except Exception:
+                logger.warning("Failed to set workflow context", exc_info=True)
 
             agent.run_conversation(
                 body.message,
@@ -177,12 +242,36 @@ async def stream_chat_endpoint(
             logger.exception("Agent run failed for session %s", body.session_id)
             translator.on_error(str(exc))
         finally:
+            try:
+                from workflow_plugin.context import clear_context
+                clear_context(body.session_id)
+            except Exception:
+                pass
+            with _active_runs_lock:
+                _active_runs.discard(body.session_id)
             translator.done()
 
     loop.run_in_executor(None, _run_agent)
 
+    async def _sse_body() -> AsyncIterator[str]:
+        """Forward translator frames; interrupt the agent if the client leaves."""
+        try:
+            async for chunk in translator.stream():
+                yield chunk
+        finally:
+            # Normal completion: the agent is already done, interrupt is a no-op.
+            # Client disconnect (GeneratorExit): stop the still-running agent so
+            # it doesn't keep working and re-persist a transcript nobody is
+            # watching.
+            agent = agent_ref[0]
+            if agent is not None and hasattr(agent, "interrupt"):
+                try:
+                    agent.interrupt("SSE client disconnected")
+                except Exception:
+                    logger.debug("agent.interrupt failed", exc_info=True)
+
     return StreamingResponse(
-        translator.stream(),
+        _sse_body(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )

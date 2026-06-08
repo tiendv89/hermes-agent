@@ -14,17 +14,22 @@ SCHEMA: Dict[str, Any] = {
     "properties": {
         "workspace_id": {
             "type": "string",
-            "description": "The workspace identifier (slug or UUID).",
+            "description": "Workspace identifier (slug or UUID). Omit to use the current workspace from context.",
         },
     },
-    "required": ["workspace_id"],
+    "required": [],
     "additionalProperties": False,
 }
 
 
-def handle(workspace_id: str, **_: Any) -> Dict[str, Any]:
+def handle(workspace_id: str = "", **_: Any) -> Dict[str, Any]:
+    from ..context import get_workspace_id
+
+    wid = workspace_id or get_workspace_id()
+    if not wid:
+        return {"ok": False, "error": "workspace_id is required but was not provided and no workspace context is set."}
     try:
-        return {"ok": True, "workspace": get_workspace_context(workspace_id)}
+        return {"ok": True, "workspace": get_workspace_context(wid)}
     except Exception as exc:
         logger.warning("workflow_get_workspace_context failed: %s", exc)
         return {"ok": False, "error": str(exc)}

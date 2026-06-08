@@ -65,11 +65,11 @@ def get_workspace_context(workspace_id: str) -> Dict[str, Any]:
 
 
 def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:
-    """Return feature lifecycle state for the given workspace + feature."""
+    """Return feature metadata and lifecycle state for the given workspace + feature."""
     with _conn() as conn:
         row = conn.execute(
             """
-            SELECT f.current_stage, f.feature_status, f.next_action
+            SELECT f.feature_name, f.title, f.current_stage, f.feature_status, f.next_action
             FROM workspace_features f
             JOIN workspaces w ON w.id = f.workspace_id
             WHERE (w.slug = %s OR w.id::text = %s)
@@ -85,6 +85,8 @@ def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:
         )
 
     return {
+        "feature_name": row["feature_name"],
+        "title": row["title"],
         "stage": row["current_stage"],
         "status": row["feature_status"],
         "next_action": row["next_action"],
