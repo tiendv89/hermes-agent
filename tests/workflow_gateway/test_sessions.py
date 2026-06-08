@@ -3,50 +3,24 @@
 Covers the T1 test plan from tasks.md:
   - Unit: 3 sessions seeded (1 archived) → returns 2 ordered by last_active_at DESC
   - Unit: auto-title sets title to first 60 chars on a null-title session
-  - Integration: GET /api/v5/sessions route returns correct JSON shape
+  - Integration: GET /api/v5/sessions against the docker-compose test Postgres
 """
 
 from __future__ import annotations
 
+import pathlib
 import sys
 import time
 import types
+import uuid
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-REPO_ROOT = __file__
-import pathlib
-
 REPO_ROOT_PATH = pathlib.Path(__file__).resolve().parents[2]
 if str(REPO_ROOT_PATH) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT_PATH))
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_session(
-    id: str,
-    workspace_id: str,
-    feature_id: str,
-    title: str | None,
-    started_at: float,
-    last_active_at: float,
-    archived: bool = False,
-) -> MagicMock:
-    s = MagicMock()
-    s.id = id
-    s.workspace_id = workspace_id
-    s.feature_id = feature_id
-    s.title = title
-    s.started_at = started_at
-    s.last_active_at = last_active_at
-    s.archived = archived
-    return s
 
 
 # ---------------------------------------------------------------------------
@@ -60,14 +34,6 @@ async def test_list_sessions_excludes_archived_and_orders_by_last_active():
     from workflow_gateway.db.store import list_sessions
 
     now = time.time()
-    # Two non-archived sessions + one archived; newer session has higher last_active_at
-    sess_newer = MagicMock(
-        id="sess_1", title="Newer", started_at=now - 100, last_active_at=now - 10
-    )
-    sess_older = MagicMock(
-        id="sess_2", title="Older", started_at=now - 200, last_active_at=now - 100
-    )
-
     # db.execute mock: returns a result whose .all() gives (id, title, started_at, last_active_at) rows
     row_newer = MagicMock(
         id="sess_1", title="Newer", started_at=now - 100, last_active_at=now - 10
@@ -365,3 +331,131 @@ async def test_get_sessions_endpoint_requires_feature_id(gateway_app):
         )
 
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# Docker-compose integration test — real Postgres
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_get_sessions_endpoint_real_postgres():
+    """Integration: GET /api/v5/sessions against docker-compose test Postgres.
+
+    Seeds 3 sessions (2 active, 1 archived) and one assistant message.
+    Verifies ordering, archived exclusion, and excerpt population.
+    """
+    import os
+
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from workflow_gateway.api.router import router
+    from workflow_gateway.db import init_db
+    from workflow_gateway.db.models import Message, Session
+
+    raw_url = os.environ.get(
+        "TEST_DATABASE_URL",
+        "postgresql://hermes_agent:hermes_agent@localhost:25434/hermes_agent",
+    )
+    if raw_url.startswith("postgresql://"):
+        raw_url = raw_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    engine = create_async_engine(raw_url, echo=False)
+    await init_db(engine)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    # Unique identifiers isolate this test from any pre-existing data.
+    ws_id = f"test-ws-{uuid.uuid4().hex[:8]}"
+    feat_id = f"test-feat-{uuid.uuid4().hex[:8]}"
+    now = time.time()
+
+    id_newer = f"sess-new-{uuid.uuid4().hex[:8]}"
+    id_older = f"sess-old-{uuid.uuid4().hex[:8]}"
+    id_archived = f"sess-arc-{uuid.uuid4().hex[:8]}"
+
+    try:
+        async with session_factory() as db:
+            db.add(Session(
+                id=id_newer,
+                source="test",
+                workspace_id=ws_id,
+                feature_id=feat_id,
+                started_at=now - 100,
+                last_active_at=now - 10,
+            ))
+            db.add(Session(
+                id=id_older,
+                source="test",
+                workspace_id=ws_id,
+                feature_id=feat_id,
+                started_at=now - 500,
+                last_active_at=now - 100,
+            ))
+            db.add(Session(
+                id=id_archived,
+                source="test",
+                workspace_id=ws_id,
+                feature_id=feat_id,
+                started_at=now - 300,
+                last_active_at=now - 50,
+                archived=True,
+            ))
+            await db.commit()
+
+            # Add one assistant message to the newer session.
+            db.add(Message(
+                session_id=id_newer,
+                role="assistant",
+                content="Integration test assistant reply",
+                active=True,
+                created_at=now - 5,
+            ))
+            await db.commit()
+
+        # Build the app backed by the real session factory.
+        _inject_mock_run_agent()
+
+        app = FastAPI()
+        app.include_router(router, prefix="/api/v5")
+        app.state.db_session = session_factory
+
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get(
+                "/api/v5/sessions",
+                params={"workspace_id": ws_id, "feature_id": feat_id},
+            )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert "sessions" in body
+        sessions = body["sessions"]
+
+        # Exactly 2 non-archived sessions.
+        assert len(sessions) == 2, f"Expected 2 sessions, got {len(sessions)}: {sessions}"
+
+        # Descending last_active_at order — newer first.
+        assert sessions[0]["id"] == id_newer, "Newest session must come first"
+        assert sessions[1]["id"] == id_older
+
+        # Archived session must be absent.
+        ids_returned = {s["id"] for s in sessions}
+        assert id_archived not in ids_returned, "Archived session must not appear"
+
+        # Excerpt populated only for the session that has an assistant message.
+        assert sessions[0]["last_message_excerpt"] == "Integration test assistant reply"
+        assert sessions[1]["last_message_excerpt"] == ""
+
+    finally:
+        async with session_factory() as db:
+            for sid in [id_newer, id_older, id_archived]:
+                obj = await db.get(Session, sid)
+                if obj is not None:
+                    await db.delete(obj)
+            await db.commit()
+        await engine.dispose()
