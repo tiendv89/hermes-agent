@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 from .db import check_workflow_available
@@ -39,19 +40,47 @@ def inject_context(messages: list, **kwargs: Any) -> None:
         if ws.get("ok"):
             repos = ws.get("workspace", {}).get("repos", [])
             if repos:
-                parts.append("repos: " + ", ".join(
-                    r.get("id", r) if isinstance(r, dict) else str(r) for r in repos
-                ))
+                parts.append(
+                    "repos: "
+                    + ", ".join(
+                        r.get("id", r) if isinstance(r, dict) else str(r) for r in repos
+                    )
+                )
 
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
             if feat.get("ok"):
-                parts.append(f"feature_stage: {feat.get('feature', {}).get('stage', 'unknown')}")
+                parts.append(
+                    f"feature_stage: {feat.get('feature', {}).get('stage', 'unknown')}"
+                )
 
+            from .tools.tasks import handle as get_tasks
+
+            result = get_tasks(workspace_id=workspace_id, feature_id=feature_id)
+            if result.get("ok"):
+                t_list = result["tasks"]
+                by_status: dict[str, int] = {}
+                blocked: list[str] = []
+                for t in t_list:
+                    by_status[t["status"]] = by_status.get(t["status"], 0) + 1
+                    if t["status"] == "blocked" and t.get("blocked_reason"):
+                        blocked.append(f"  {t['task_name']}: {t['blocked_reason']}")
+                summary = "task_counts: " + ", ".join(
+                    f"{k}={v}" for k, v in by_status.items()
+                )
+                parts.append(summary)
+                if blocked:
+                    parts.append("blocked_tasks:\n" + "\n".join(blocked))
+
+    caps = ["workflow_get_tasks (live task status)"]
+    if os.environ.get("GITNEXUS_MCP_URL"):
+        caps.append("workflow_query_gitnexus (code structure / call graph / impact)")
+    if os.environ.get("RAG_MCP_URL"):
+        caps.append("workflow_query_rag (semantic recall over past specs/designs/logs)")
     parts.append(
-        "Instructions: Draft artifacts through the workflow tools. "
-        "Never advance lifecycle state directly. "
-        "The human approves via the existing approval flow."
+        "Before answering questions about task status, code structure, or prior decisions, "
+        "use the workflow tools rather than guessing: " + "; ".join(caps) + ". "
+        "Draft artifacts through the write tools; never advance lifecycle state directly."
     )
 
     block = "\n".join(parts)
