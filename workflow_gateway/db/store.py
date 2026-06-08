@@ -41,7 +41,9 @@ async def init_db(engine: AsyncEngine) -> None:
                 if stmt:
                     await conn.execute(text(stmt))
             await conn.execute(
-                text("INSERT INTO schema_migrations (filename, applied_at) VALUES (:f, :t)"),
+                text(
+                    "INSERT INTO schema_migrations (filename, applied_at) VALUES (:f, :t)"
+                ),
                 {"f": path.name, "t": time.time()},
             )
             logger.info("workflow_gateway: applied migration %s", path.name)
@@ -50,6 +52,7 @@ async def init_db(engine: AsyncEngine) -> None:
 # ---------------------------------------------------------------------------
 # Session CRUD
 # ---------------------------------------------------------------------------
+
 
 def _new_session_id() -> str:
     return "sess_" + secrets.token_hex(16)
@@ -121,13 +124,13 @@ async def update_token_counts(
     model: Optional[str] = None,
 ) -> None:
     values: Dict[str, Any] = {
-        "input_tokens":       Session.input_tokens       + input_tokens,
-        "output_tokens":      Session.output_tokens      + output_tokens,
-        "cache_read_tokens":  Session.cache_read_tokens  + cache_read_tokens,
+        "input_tokens": Session.input_tokens + input_tokens,
+        "output_tokens": Session.output_tokens + output_tokens,
+        "cache_read_tokens": Session.cache_read_tokens + cache_read_tokens,
         "cache_write_tokens": Session.cache_write_tokens + cache_write_tokens,
-        "reasoning_tokens":   Session.reasoning_tokens   + reasoning_tokens,
-        "api_call_count":     Session.api_call_count     + api_call_count,
-        "last_active_at":     time.time(),
+        "reasoning_tokens": Session.reasoning_tokens + reasoning_tokens,
+        "api_call_count": Session.api_call_count + api_call_count,
+        "last_active_at": time.time(),
     }
     if estimated_cost_usd is not None:
         values["estimated_cost_usd"] = estimated_cost_usd
@@ -156,6 +159,7 @@ async def update_token_counts(
 # Session lifecycle / metadata updates
 # ---------------------------------------------------------------------------
 
+
 async def end_session(db: AsyncSession, session_id: str, end_reason: str) -> None:
     await db.execute(
         update(Session)
@@ -183,9 +187,13 @@ async def update_session_meta(
     await db.commit()
 
 
-async def update_system_prompt(db: AsyncSession, session_id: str, system_prompt: str) -> None:
+async def update_system_prompt(
+    db: AsyncSession, session_id: str, system_prompt: str
+) -> None:
     await db.execute(
-        update(Session).where(Session.id == session_id).values(system_prompt=system_prompt)
+        update(Session)
+        .where(Session.id == session_id)
+        .values(system_prompt=system_prompt)
     )
     await db.commit()
 
@@ -198,11 +206,15 @@ async def update_session_model(db: AsyncSession, session_id: str, model: str) ->
 
 
 async def set_session_title(db: AsyncSession, session_id: str, title: str) -> None:
-    await db.execute(update(Session).where(Session.id == session_id).values(title=title))
+    await db.execute(
+        update(Session).where(Session.id == session_id).values(title=title)
+    )
     await db.commit()
 
 
-async def set_session_archived(db: AsyncSession, session_id: str, archived: bool) -> None:
+async def set_session_archived(
+    db: AsyncSession, session_id: str, archived: bool
+) -> None:
     await db.execute(
         update(Session).where(Session.id == session_id).values(archived=archived)
     )
@@ -212,6 +224,7 @@ async def set_session_archived(db: AsyncSession, session_id: str, archived: bool
 # ---------------------------------------------------------------------------
 # Message CRUD
 # ---------------------------------------------------------------------------
+
 
 async def append_message(
     db: AsyncSession,
@@ -287,3 +300,63 @@ async def get_messages_as_conversation(
             entry["reasoning"] = msg.reasoning
         messages.append(entry)
     return messages
+
+
+# ---------------------------------------------------------------------------
+# Session listing
+# ---------------------------------------------------------------------------
+
+
+async def _last_assistant_excerpt(db: AsyncSession, session_id: str) -> str:
+    """Return first 120 chars of the last active assistant message in the session."""
+    result = await db.execute(
+        select(Message.content)
+        .where(
+            Message.session_id == session_id,
+            Message.role == "assistant",
+            Message.active == True,  # noqa: E712
+            Message.content.isnot(None),
+        )
+        .order_by(Message.created_at.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        return ""
+    return row[:120]
+
+
+async def list_sessions(
+    db: AsyncSession,
+    workspace_id: str,
+    feature_id: str,
+    limit: int = 50,
+) -> list[Dict[str, Any]]:
+    """Return non-archived sessions for a workspace+feature, newest-first."""
+    result = await db.execute(
+        select(
+            Session.id,
+            Session.title,
+            Session.started_at,
+            Session.last_active_at,
+        )
+        .where(
+            Session.workspace_id == workspace_id,
+            Session.feature_id == feature_id,
+            Session.archived == False,  # noqa: E712
+        )
+        .order_by(Session.last_active_at.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    out = []
+    for row in rows:
+        excerpt = await _last_assistant_excerpt(db, row.id)
+        out.append({
+            "id": row.id,
+            "title": row.title or "(untitled)",
+            "started_at": row.started_at,
+            "last_active_at": row.last_active_at,
+            "last_message_excerpt": excerpt,
+        })
+    return out

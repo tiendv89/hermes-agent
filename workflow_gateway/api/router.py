@@ -14,8 +14,8 @@ import logging
 import os
 from typing import Any, AsyncIterator, Dict
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +23,8 @@ from workflow_gateway.db import (
     create_session,
     get_messages_as_conversation,
     get_session,
+    list_sessions,
+    set_session_title,
     touch_session,
 )
 from workflow_gateway.db.session_db_proxy import make_gateway_session_db
@@ -37,6 +39,7 @@ router = APIRouter()
 # DB dependency
 # ---------------------------------------------------------------------------
 
+
 async def _get_db(request: Request) -> AsyncIterator[AsyncSession]:
     async with request.app.state.db_session() as session:
         yield session
@@ -45,6 +48,7 @@ async def _get_db(request: Request) -> AsyncIterator[AsyncSession]:
 # ---------------------------------------------------------------------------
 # Request / response models
 # ---------------------------------------------------------------------------
+
 
 class CreateSessionRequest(BaseModel):
     user_id: str
@@ -68,6 +72,7 @@ class StreamChatRequest(BaseModel):
 # POST /create_session
 # ---------------------------------------------------------------------------
 
+
 @router.post("/create_session", response_model=CreateSessionResponse)
 async def create_session_endpoint(
     body: CreateSessionRequest,
@@ -84,8 +89,28 @@ async def create_session_endpoint(
 
 
 # ---------------------------------------------------------------------------
+# GET /sessions
+# ---------------------------------------------------------------------------
+
+
+@router.get("/sessions")
+async def list_sessions_endpoint(
+    workspace_id: str = Query(..., description="Workspace slug or ID"),
+    feature_id: str = Query(..., description="Feature slug or ID"),
+    limit: int = Query(50, ge=1, le=200, description="Max sessions to return"),
+    db: AsyncSession = Depends(_get_db),
+) -> JSONResponse:
+    """Return non-archived sessions for a workspace+feature, newest-first."""
+    sessions = await list_sessions(
+        db, workspace_id=workspace_id, feature_id=feature_id, limit=limit
+    )
+    return JSONResponse({"sessions": sessions})
+
+
+# ---------------------------------------------------------------------------
 # POST /stream_chat
 # ---------------------------------------------------------------------------
+
 
 @router.post("/stream_chat")
 async def stream_chat_endpoint(
@@ -98,8 +123,21 @@ async def stream_chat_endpoint(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
 
+    # Auto-title: set the session title to the first 60 chars of the message
+    # when the session has no title yet.
+    if not session.title and body.message:
+        await set_session_title(db, body.session_id, body.message[:60])
+        # Refresh the session object so downstream code sees the updated title.
+        session = await get_session(db, body.session_id)
+
     conversation_history = await get_messages_as_conversation(db, body.session_id)
-    await touch_session(db, body.session_id, user_id=body.user_id, workspace_id=body.workspace_id, feature_id=body.feature_id)
+    await touch_session(
+        db,
+        body.session_id,
+        user_id=body.user_id,
+        workspace_id=body.workspace_id,
+        feature_id=body.feature_id,
+    )
 
     translator = HermesSSETranslator()
     context_vars = {"workspace_id": body.workspace_id, "feature_id": body.feature_id}
