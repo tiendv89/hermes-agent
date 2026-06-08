@@ -80,10 +80,31 @@ def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:
         ).fetchone()
 
     if row is None:
-        raise ValueError(f"Feature {feature_id!r} not found in workspace {workspace_id!r}")
+        raise ValueError(
+            f"Feature {feature_id!r} not found in workspace {workspace_id!r}"
+        )
 
     return {
         "stage": row["current_stage"],
         "status": row["feature_status"],
         "next_action": row["next_action"],
     }
+
+
+def get_feature_tasks(workspace_id: str, feature_id: str) -> list[dict]:
+    """Return all tasks for the given workspace + feature, ordered by task_name."""
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.task_name, t.title, t.status, t.blocked_reason,
+                   t.depends_on, t.pr, t.execution
+            FROM workspace_tasks t
+            JOIN workspace_features f ON f.id = t.feature_id
+            JOIN workspaces w ON w.id = f.workspace_id
+            WHERE (w.slug = %s OR w.id::text = %s)
+              AND (f.feature_name = %s OR f.feature_id::text = %s)
+            ORDER BY t.task_name
+            """,
+            (workspace_id, workspace_id, feature_id, feature_id),
+        ).fetchall()
+    return [dict(r) for r in rows]
