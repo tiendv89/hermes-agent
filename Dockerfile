@@ -24,7 +24,7 @@ COPY vendor/hermes-agent/ vendor/hermes-agent/
 COPY src/ src/
 COPY plugins/ plugins/
 COPY migrations/ migrations/
-COPY hermes_home/ /root/.hermes/
+COPY configs/ /root/.hermes/
 
 # Install the vendored agent first (editable, with the anthropic extra), then
 # the gateway project. The gateway's hermes-agent[anthropic] requirement is then
