@@ -8,8 +8,89 @@ from typing import Any
 
 from .context import get_context_for_session
 from .db import check_workflow_available
+from .skills import get_index
 
 logger = logging.getLogger(__name__)
+
+# Repo-ID fragments → knowledge skill names (heuristic stack matching for G10).
+# Matches on substrings of the repo id (case-insensitive).
+_STACK_SKILL_MAP: list[tuple[str, list[str]]] = [
+    ("ui",          ["typescript-best-practices", "nextjs-best-practices", "heroui-react", "frontend-engineer"]),
+    ("frontend",    ["typescript-best-practices", "nextjs-best-practices", "frontend-engineer"]),
+    ("web",         ["typescript-best-practices", "nextjs-best-practices", "frontend-engineer"]),
+    ("next",        ["nextjs-best-practices", "typescript-best-practices"]),
+    ("react",       ["heroui-react", "typescript-best-practices", "frontend-engineer"]),
+    ("mobile",      ["react-native-mobile-engineer", "typescript-best-practices"]),
+    ("backend",     ["backend-engineer"]),
+    ("api",         ["backend-engineer"]),
+    ("service",     ["backend-engineer"]),
+    ("hermes",      ["python-best-practices", "backend-engineer"]),
+    ("workflow",    ["go-best-practices", "backend-engineer"]),
+    ("go",          ["go-best-practices"]),
+    ("python",      ["python-best-practices"]),
+    ("data",        ["python-data", "data-engineer"]),
+    ("postgres",    ["postgres-best-practices"]),
+    ("nestjs",      ["nestjs-best-practices", "typescript-best-practices"]),
+    ("directus",    ["directus-vue-engineer", "typescript-best-practices"]),
+]
+
+
+def _skills_for_repos(repo_ids: list[str]) -> list[str]:
+    """Return an ordered, deduplicated list of skill names that match the given repo IDs."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for repo_id in repo_ids:
+        lower = repo_id.lower()
+        for fragment, skills in _STACK_SKILL_MAP:
+            if fragment in lower:
+                for s in skills:
+                    if s not in seen:
+                        seen.add(s)
+                        result.append(s)
+    return result
+
+
+def _build_skills_block(feature_id: str, feature_stage: str, repo_ids: list[str]) -> str | None:
+    """Build the skills injection block.
+
+    For the technical-design stage, surface stack-matched technical_skills
+    prominently (G10). For all stages, list available skills.
+    """
+    index = get_index()
+    if not index:
+        return None
+
+    knowledge = {name: e for name, e in index.items() if not e.is_authoring}
+    authoring = {name: e for name, e in index.items() if e.is_authoring}
+
+    lines: list[str] = ["## Available skills (call workflow_load_skill to load full content)"]
+
+    # For the technical-design stage, surface matched technical_skills first.
+    if feature_stage == "technical_design" and repo_ids:
+        matched_names = _skills_for_repos(repo_ids)
+        matched = [(n, knowledge[n]) for n in matched_names if n in knowledge]
+        if matched:
+            lines.append("\n### Stack-matched skills for this feature's repos (load these first)")
+            for name, entry in matched:
+                lines.append(f"  {name}: {entry.description}")
+
+        remaining = [(n, e) for n, e in sorted(knowledge.items()) if n not in {m[0] for m in matched}]
+        if remaining:
+            lines.append("\n### Other knowledge skills")
+            for name, entry in remaining:
+                lines.append(f"  {name}: {entry.description}")
+    else:
+        if knowledge:
+            lines.append("\n### Knowledge skills")
+            for name, entry in sorted(knowledge.items()):
+                lines.append(f"  {name}: {entry.description}")
+
+    if authoring:
+        lines.append("\n### Authoring skills (workflow guidance)")
+        for name, entry in sorted(authoring.items()):
+            lines.append(f"  {name}: {entry.description}")
+
+    return "\n".join(lines)
 
 
 def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
@@ -36,6 +117,9 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
     if feature_id:
         parts.append(f"feature_id: {feature_id}")
 
+    repo_ids: list[str] = []
+    feature_stage: str = "unknown"
+
     if check_workflow_available():
         from .tools.workspace import handle as get_workspace
         from .tools.feature import handle as get_feature
@@ -43,13 +127,9 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
         ws = get_workspace(workspace_id=workspace_id)
         if ws.get("ok"):
             repos = ws.get("workspace", {}).get("repos", [])
+            repo_ids = [r.get("id", "") if isinstance(r, dict) else str(r) for r in repos]
             if repos:
-                parts.append(
-                    "repos: "
-                    + ", ".join(
-                        r.get("id", r) if isinstance(r, dict) else str(r) for r in repos
-                    )
-                )
+                parts.append("repos: " + ", ".join(r for r in repo_ids if r))
 
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
@@ -59,7 +139,8 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                     parts.append(f"feature_title: {f['title']}")
                 if f.get("feature_name"):
                     parts.append(f"feature_name: {f['feature_name']}")
-                parts.append(f"feature_stage: {f.get('stage', 'unknown')}")
+                feature_stage = f.get("stage", "unknown")
+                parts.append(f"feature_stage: {feature_stage}")
                 parts.append(f"feature_status: {f.get('status', 'unknown')}")
                 if f.get("next_action"):
                     parts.append(f"next_action: {f['next_action']}")
@@ -81,11 +162,18 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                 if task_lines:
                     parts.append("tasks:\n" + "\n".join(task_lines))
 
+    # Inject skill descriptions (G10)
+    skills_block = _build_skills_block(feature_id, feature_stage, repo_ids)
+    if skills_block:
+        parts.append(skills_block)
+
     caps = ["workflow_get_tasks (live task status)"]
     if os.environ.get("GITNEXUS_MCP_URL"):
         caps.append("workflow_query_gitnexus (code structure / call graph / impact)")
     if os.environ.get("RAG_MCP_URL"):
         caps.append("workflow_query_rag (semantic recall over past specs/designs/logs)")
+    if os.environ.get("WORKFLOW_GITHUB_REPO"):
+        caps.append("workflow_load_skill (load full skill guidance on demand)")
     parts.append(
         "Before answering questions about task status, code structure, or prior decisions, "
         "use the workflow tools rather than guessing: " + "; ".join(caps) + ". "
