@@ -1,65 +1,131 @@
-# hermes-workflow-gateway
+# src
 
-FastAPI **workflow gateway** and Hermes **workflow plugin** for the digital-factory
-M3 agent chat. This repository contains only the workflow-specific code; the
-upstream [Hermes Agent](https://github.com/nousresearch/hermes-agent) codebase is
-vendored as a git submodule and consumed as a dependency.
+FastAPI server that wraps hermes as a workspace-aware AI agent, exposing an SSE chat API consumed by digital-factory-ui.
 
-## Layout
+## Requirements
 
-```
-.
-├── vendor/hermes-agent/   # git submodule → nousresearch/hermes-agent (pinned)
-├── workflow_gateway/      # FastAPI gateway: sessions, SSE streaming, Postgres store
-├── workflow_plugin/       # Hermes plugin: tools, hooks, RAG/artifact/task helpers
-├── hermes_home/           # config.yaml mounted into the agent home (~/.hermes)
-├── tests/                 # workflow_gateway + workflow_plugin test suites
-└── pyproject.toml         # depends on hermes-agent via [tool.uv.sources] path
-```
-
-The gateway and plugin import upstream modules directly (`run_agent`,
-`hermes_state`, `hermes_cli.plugins`), so `hermes-agent` is installed from the
-submodule as an editable path dependency.
+- Python 3.13+
+- PostgreSQL
+- `uv`
 
 ## Setup
 
-Clone with the submodule:
-
 ```bash
-git clone --recurse-submodules <this-repo-url>
-# or, if already cloned:
-git submodule update --init --recursive
+cp .env.example .env
+# fill in the values in .env
 ```
 
-Install (uv resolves `hermes-agent` from `vendor/hermes-agent`):
+## Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `DATABASE_URL` | yes | Postgres connection string |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key |
+| `WORKFLOW_BACKEND_URL` | yes | Base URL of workflow-backend |
+| `GITHUB_TOKEN` | write tools | PAT with `contents:write` — for artifact writes |
+| `HERMES_MODEL` | no | Model (default: `claude-sonnet-4-6`) |
+| `HERMES_PROVIDER` | no | Provider (default: `anthropic`) |
+
+## Run locally
 
 ```bash
-uv sync --extra workflow-gateway
-# or with pip:
-pip install -e ".[workflow-gateway]"
+# 1. Start Postgres
+docker run -d --name hermes-agent-db \
+  -e POSTGRES_USER=hermes \
+  -e POSTGRES_PASSWORD=hermes \
+  -e POSTGRES_DB=hermes_gateway \
+  -p 5432:5432 postgres:16
+
+# 2. Install and start
+make install
+make dev
 ```
 
-## Run the gateway
+Migrations run automatically on startup.
+
+## Run with Docker Compose
 
 ```bash
-uvicorn workflow_gateway.app:app --host 0.0.0.0 --port 8000
+make up       # start gateway + postgres
+make logs     # follow gateway logs
+make restart  # rebuild and restart
+make down     # stop everything
 ```
 
-See `workflow_gateway/README.md` for gateway configuration and
-`.env.example` for the workflow-specific environment variables.
+Postgres data is persisted in the `postgres_data` Docker volume.
 
-## Updating the vendored agent
+## Makefile targets
 
-The submodule is pinned to a specific upstream commit. To move to a newer one:
+| Target | Description |
+|---|---|
+| `make install` | Install Python dependencies |
+| `make dev` | Start with auto-reload |
+| `make run` | Start in production mode |
+| `make up` | Docker Compose — start all services |
+| `make down` | Docker Compose — stop all services |
+| `make logs` | Follow gateway container logs |
+| `make restart` | Rebuild image and restart gateway |
+| `make shell` | Shell inside gateway container |
+| `make db-shell` | psql inside postgres container |
 
-```bash
-cd vendor/hermes-agent
-git fetch origin
-git checkout <new-commit-or-tag>
-cd ../..
-git add vendor/hermes-agent
-git commit -m "chore: bump hermes-agent submodule"
+## API
+
+All routes are mounted at `/api/v1`. The caller identity comes from the
+BFF-injected `X-User-Id` header (gated by the shared service token), not the
+request body.
+
+### `POST /api/v1/session`
+
+**Body**
+```json
+{ "workspace_id": "my-workspace", "feature_id": "search" }
 ```
 
-Re-run the test suite after bumping — the workflow code depends on upstream
-module APIs that can change between commits.
+**Response**
+```json
+{ "session_id": "sess_abc123..." }
+```
+
+### `POST /api/v1/chat`
+
+**Body**
+```json
+{
+  "session_id": "sess_abc123...",
+  "message": "Draft a product spec for the search feature",
+  "workspace_id": "my-workspace",
+  "feature_id": "search"
+}
+```
+
+Response is an SSE stream.
+
+**Event types**
+
+| Type | Payload | Description |
+|---|---|---|
+| `message_output_partial` | `{ content }` | Streamed text delta |
+| `tool_call_item` | `{ call_id, name, status }` | Tool invocation started |
+| `function_call_output` | `{ call_id, name, output }` | Tool result |
+| `artifact_saved` | `{ artifact }` | Write tool succeeded |
+| `usage` | `{ input, output, cached }` | Token counts at turn end |
+| `error` | `{ message }` | Stream error |
+| `[DONE]` | — | End of stream |
+
+### `GET /health`
+
+Returns `{ "status": "ok" }`.
+
+## Project structure
+
+```
+src/                  — FastAPI gateway package (uvicorn src.app:app)
+  app.py              — app factory + lifespan (DB pool, migrations)
+  api/router.py       — route handlers
+  db/store.py         — Postgres session/message CRUD + migration runner
+  streaming/sse.py    — AIAgent callbacks → SSE translation
+plugins/              — hermes workflow plugin (tools, hooks, context)
+migrations/           — SQL migrations, applied on startup
+  001_initial_schema.sql
+vendor/hermes-agent/  — upstream agent (git submodule, editable dependency)
+```

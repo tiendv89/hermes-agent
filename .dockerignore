@@ -1,0 +1,15 @@
+# Keep the build context small. The submodule source is copied explicitly in
+# the Dockerfile; its .git directory and local virtualenvs must not be.
+**/.git
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+.env
+**/.env
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.idea
+.vscode
+*.egg-info

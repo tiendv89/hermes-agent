@@ -1,8 +1,3 @@
-# Parent project for the workflow gateway + plugin. The upstream hermes-agent
-# codebase is vendored as a git submodule at ./vendor/hermes-agent and consumed
-# as an editable path dependency (see [tool.uv.sources] below). Our code imports
-# hermes top-level modules directly (run_agent, hermes_state, hermes_cli.*), so
-# hermes-agent must be installed for those imports to resolve.
 [build-system]
 requires = ["setuptools>=77.0,<83"]
 build-backend = "setuptools.build_meta"
@@ -16,32 +11,24 @@ requires-python = ">=3.11,<3.14"
 license = "MIT"
 license-files = ["LICENSE"]
 dependencies = [
-  # Upstream agent, pulled from the vendored submodule (see [tool.uv.sources]).
-  # The [anthropic] extra provides the Claude API client used by the gateway.
   "hermes-agent[anthropic]",
-  # Web server stack for workflow_gateway/app.py (uvicorn workflow_gateway.app:app).
   "fastapi",
   "uvicorn[standard]",
 ]
 
 [project.optional-dependencies]
-# Installed by workflow_gateway/Dockerfile via `uv pip install -e ".[workflow-gateway]"`.
-# Mirrors the original monorepo `workflow-gateway` extra.
-#   asyncpg            — asyncpg driver used by the SQLAlchemy async engine.
-#   sqlalchemy[asyncio]— ORM + async session for the Postgres session store.
-#   psycopg[binary]    — sync Postgres driver used by the session_db_proxy.
-#   mcp                — Model Context Protocol client used by workflow_plugin.
 workflow-gateway = [
   "asyncpg==0.31.0",
   "sqlalchemy[asyncio]>=2.0,<3",
   "psycopg[binary]==3.3.4",
-  "mcp==1.26.0",
+  "mcp==1.27.2",
 ]
 
 [tool.setuptools.packages.find]
-include = ["workflow_gateway*", "workflow_plugin*"]
+include = ["src*", "plugins*"]
 
-# Resolve the hermes-agent dependency from the vendored submodule rather than
-# PyPI. Editable so changes inside the submodule are picked up without reinstall.
+[tool.uv]
+constraint-dependencies = ["pygments>=2.20.0"]
+
 [tool.uv.sources]
 hermes-agent = { path = "vendor/hermes-agent", editable = true }

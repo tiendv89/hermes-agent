@@ -35,7 +35,7 @@ def _conn() -> psycopg.Connection:
 
 
 def get_workspace_context(workspace_id: str) -> Dict[str, Any]:
-    """Return workspace metadata shaped for workflow_plugin tool consumers.
+    """Return workspace metadata shaped for plugins tool consumers.
 
     Queries by slug first (the common case), falls back to UUID match.
     """

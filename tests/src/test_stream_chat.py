@@ -68,13 +68,13 @@ def _parse_sse_events(body: bytes) -> list:
 
 @pytest.fixture
 def stream_chat_app():
-    """Minimal FastAPI app with the workflow_gateway router and a dummy db_session."""
+    """Minimal FastAPI app with the src router and a dummy db_session."""
     _inject_mock_run_agent()
 
     from contextlib import asynccontextmanager
 
     from fastapi import FastAPI
-    from workflow_gateway.api.router import router
+    from src.api.router import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v5")
@@ -99,15 +99,15 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
 
     with (
         patch(
-            "workflow_gateway.api.router.get_session",
+            "src.api.router.get_session",
             AsyncMock(return_value=session_mock),
         ),
         patch(
-            "workflow_gateway.api.router.get_messages_as_conversation",
+            "src.api.router.get_messages_as_conversation",
             AsyncMock(return_value=[]),
         ),
-        patch("workflow_gateway.api.router.set_session_title", AsyncMock()),
-        patch("workflow_gateway.api.router.touch_session", AsyncMock()),
+        patch("src.api.router.set_session_title", AsyncMock()),
+        patch("src.api.router.touch_session", AsyncMock()),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=stream_chat_app),
@@ -156,7 +156,7 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     """A second stream_chat for a session already running returns 409 — this is
     what stops the transcript from being double-persisted on reconnect."""
     from httpx import ASGITransport, AsyncClient
-    from workflow_gateway.api import router as router_mod
+    from src.api import router as router_mod
 
     session_mock = MagicMock()
     session_mock.title = "existing title"
@@ -166,15 +166,15 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     try:
         with (
             patch(
-                "workflow_gateway.api.router.get_session",
+                "src.api.router.get_session",
                 AsyncMock(return_value=session_mock),
             ),
             patch(
-                "workflow_gateway.api.router.get_messages_as_conversation",
+                "src.api.router.get_messages_as_conversation",
                 AsyncMock(return_value=[]),
             ),
-            patch("workflow_gateway.api.router.set_session_title", AsyncMock()),
-            patch("workflow_gateway.api.router.touch_session", AsyncMock()),
+            patch("src.api.router.set_session_title", AsyncMock()),
+            patch("src.api.router.touch_session", AsyncMock()),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=stream_chat_app),

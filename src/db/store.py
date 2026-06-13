@@ -16,7 +16,8 @@ from .models import Message, Session
 
 logger = logging.getLogger(__name__)
 
-_MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent / "migrations"
+# migrations/ lives at the repo root (src/db/store.py -> src -> repo root).
+_MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parent.parent.parent / "migrations"
 
 _CREATE_MIGRATIONS_TABLE = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -47,7 +48,7 @@ async def init_db(engine: AsyncEngine) -> None:
                 ),
                 {"f": path.name, "t": time.time()},
             )
-            logger.info("workflow_gateway: applied migration %s", path.name)
+            logger.info("src: applied migration %s", path.name)
 
 
 # ---------------------------------------------------------------------------

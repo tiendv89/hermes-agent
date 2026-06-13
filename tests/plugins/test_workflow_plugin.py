@@ -1,4 +1,4 @@
-"""Tests for workflow_plugin — tool schemas, handlers, registration, and hook.
+"""Tests for plugins — tool schemas, handlers, registration, and hook.
 
 Covers:
     - tool schema shape (required fields present)
@@ -12,7 +12,7 @@ Covers:
     - _inject_feature_context hook: no-op when workspace_id missing; injects block when set
     - register(ctx): all 4 tools + pre_llm_call hook registered on a mock PluginContext
     - plugin.yaml: manifest is valid YAML, name == 'workflow', provides_tools list present
-    - smoke: plugin is discoverable via PluginManager when workflow_plugin is on the
+    - smoke: plugin is discoverable via PluginManager when plugins is on the
       search path as a bundled plugin
 """
 
@@ -31,7 +31,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-PLUGIN_DIR = REPO_ROOT / "workflow_plugin"
+PLUGIN_DIR = REPO_ROOT / "plugins"
 
 
 # ---------------------------------------------------------------------------
@@ -39,47 +39,47 @@ PLUGIN_DIR = REPO_ROOT / "workflow_plugin"
 # ---------------------------------------------------------------------------
 
 def _load_client():
-    """Import workflow_plugin.client in isolation."""
+    """Import plugins.client in isolation."""
     spec = importlib.util.spec_from_file_location(
-        "workflow_plugin.client",
+        "plugins.client",
         PLUGIN_DIR / "client.py",
         submodule_search_locations=[str(PLUGIN_DIR)],
     )
     mod = importlib.util.module_from_spec(spec)
-    mod.__package__ = "workflow_plugin"
-    sys.modules["workflow_plugin.client"] = mod
+    mod.__package__ = "plugins"
+    sys.modules["plugins.client"] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
 def _load_tools():
-    """Import workflow_plugin.tools (depends on client)."""
+    """Import plugins.tools (depends on client)."""
     _load_client()
     spec = importlib.util.spec_from_file_location(
-        "workflow_plugin.tools",
+        "plugins.tools",
         PLUGIN_DIR / "tools.py",
         submodule_search_locations=[str(PLUGIN_DIR)],
     )
     mod = importlib.util.module_from_spec(spec)
-    mod.__package__ = "workflow_plugin"
-    sys.modules["workflow_plugin.tools"] = mod
+    mod.__package__ = "plugins"
+    sys.modules["plugins.tools"] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
 def _load_plugin_init(tools_mod=None):
-    """Import workflow_plugin.__init__ (depends on tools)."""
+    """Import plugins.__init__ (depends on tools)."""
     if tools_mod is None:
         tools_mod = _load_tools()
     spec = importlib.util.spec_from_file_location(
-        "workflow_plugin",
+        "plugins",
         PLUGIN_DIR / "__init__.py",
         submodule_search_locations=[str(PLUGIN_DIR)],
     )
     mod = importlib.util.module_from_spec(spec)
-    mod.__package__ = "workflow_plugin"
+    mod.__package__ = "plugins"
     mod.__path__ = [str(PLUGIN_DIR)]
-    sys.modules["workflow_plugin"] = mod
+    sys.modules["plugins"] = mod
     spec.loader.exec_module(mod)
     return mod
 
@@ -90,12 +90,12 @@ def _load_plugin_init(tools_mod=None):
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    """Remove workflow_plugin modules between tests."""
-    keys = [k for k in sys.modules if k.startswith("workflow_plugin")]
+    """Remove plugins modules between tests."""
+    keys = [k for k in sys.modules if k.startswith("plugins")]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("workflow_plugin")]
+    keys = [k for k in sys.modules if k.startswith("plugins")]
     for k in keys:
         del sys.modules[k]
 

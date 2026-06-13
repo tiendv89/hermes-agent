@@ -2,7 +2,7 @@
 
 The workflow-bff authenticates the browser session and forwards the resolved
 identity as headers (``X-User-Id`` / ``X-Org-Id``), gated by a shared service
-token presented as ``Authorization: Bearer <token>``. workflow_gateway trusts
+token presented as ``Authorization: Bearer <token>``. src trusts
 those headers as authoritative — it never sees the browser cookie and must not
 trust a ``user_id`` supplied in the request body.
 

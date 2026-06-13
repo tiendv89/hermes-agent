@@ -1,4 +1,4 @@
-"""Tests for T3 additions to workflow_plugin.
+"""Tests for T3 additions to plugins.
 
 Covers:
   - workflow_get_tasks: parametrisation, happy path, db error
@@ -29,12 +29,12 @@ sys.path.insert(0, str(REPO_ROOT))
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    """Remove workflow_plugin modules between tests to avoid cross-test pollution."""
-    keys = [k for k in sys.modules if k.startswith("workflow_plugin")]
+    """Remove plugins modules between tests to avoid cross-test pollution."""
+    keys = [k for k in sys.modules if k.startswith("plugins")]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("workflow_plugin")]
+    keys = [k for k in sys.modules if k.startswith("plugins")]
     for k in keys:
         del sys.modules[k]
 
@@ -75,8 +75,8 @@ class TestWorkflowGetTasks:
                 "execution": {},
             },
         ]
-        with patch("workflow_plugin.db.get_feature_tasks", return_value=fake_tasks):
-            from workflow_plugin.tools.tasks import handle
+        with patch("plugins.db.get_feature_tasks", return_value=fake_tasks):
+            from plugins.tools.tasks import handle
 
             result = handle(workspace_id="ws-1", feature_id="feat-1")
         assert result["ok"] is True
@@ -84,9 +84,9 @@ class TestWorkflowGetTasks:
 
     def test_db_error_returns_ok_false(self):
         with patch(
-            "workflow_plugin.db.get_feature_tasks", side_effect=RuntimeError("db down")
+            "plugins.db.get_feature_tasks", side_effect=RuntimeError("db down")
         ):
-            from workflow_plugin.tools.tasks import handle
+            from plugins.tools.tasks import handle
 
             result = handle(workspace_id="ws-1", feature_id="feat-1")
         assert result["ok"] is False
@@ -104,15 +104,15 @@ class TestWorkflowGetTasks:
         ],
     )
     def test_passes_args_to_get_feature_tasks(self, workspace_id, feature_id):
-        with patch("workflow_plugin.db.get_feature_tasks", return_value=[]) as mock_fn:
-            from workflow_plugin.tools.tasks import handle
+        with patch("plugins.db.get_feature_tasks", return_value=[]) as mock_fn:
+            from plugins.tools.tasks import handle
 
             handle(workspace_id=workspace_id, feature_id=feature_id)
         mock_fn.assert_called_once_with(workspace_id, feature_id)
 
     def test_extra_kwargs_ignored(self):
-        with patch("workflow_plugin.db.get_feature_tasks", return_value=[]):
-            from workflow_plugin.tools.tasks import handle
+        with patch("plugins.db.get_feature_tasks", return_value=[]):
+            from plugins.tools.tasks import handle
 
             result = handle(
                 workspace_id="ws-1", feature_id="feat-1", extra_param="ignored"
@@ -131,11 +131,11 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         fake_results = [{"type": "text", "text": "symbol found"}]
         with patch(
-            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=fake_results,
         ) as mock_call:
-            from workflow_plugin.tools.gitnexus import handle
+            from plugins.tools.gitnexus import handle
 
             result = await handle(query="where is register() defined", tool="query")
         assert result["ok"] is True
@@ -151,11 +151,11 @@ class TestWorkflowQueryGitnexus:
     async def test_default_tool_is_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
-            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_call:
-            from workflow_plugin.tools.gitnexus import handle
+            from plugins.tools.gitnexus import handle
 
             await handle(query="find X")
         mock_call.assert_awaited_once_with(
@@ -166,11 +166,11 @@ class TestWorkflowQueryGitnexus:
     async def test_non_default_tool_forwarded(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
-            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_call:
-            from workflow_plugin.tools.gitnexus import handle
+            from plugins.tools.gitnexus import handle
 
             await handle(query="register", tool="context")
         # `context` and `impact` take `symbol`.
@@ -182,11 +182,11 @@ class TestWorkflowQueryGitnexus:
     async def test_detect_changes_passes_file_list(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
-            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_call:
-            from workflow_plugin.tools.gitnexus import handle
+            from plugins.tools.gitnexus import handle
 
             await handle(query="a.py, b.py", tool="detect_changes")
         mock_call.assert_awaited_once_with(
@@ -197,11 +197,11 @@ class TestWorkflowQueryGitnexus:
     async def test_list_repos_needs_no_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
-            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_call:
-            from workflow_plugin.tools.gitnexus import handle
+            from plugins.tools.gitnexus import handle
 
             result = await handle(tool="list_repos")
         assert result["ok"] is True
@@ -213,30 +213,30 @@ class TestWorkflowQueryGitnexus:
     async def test_error_returns_ok_false(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
-            "workflow_plugin.tools.gitnexus.call_mcp_tool",
+            "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
             side_effect=ConnectionError("refused"),
         ):
-            from workflow_plugin.tools.gitnexus import handle
+            from plugins.tools.gitnexus import handle
 
             result = await handle(query="anything")
         assert result["ok"] is False
         assert "refused" in result["error"]
 
     def test_check_available_false_when_unset(self):
-        from workflow_plugin.tools.gitnexus import check_available
+        from plugins.tools.gitnexus import check_available
 
         assert check_available() is False
 
     def test_check_available_true_when_set(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
-        from workflow_plugin.tools.gitnexus import check_available
+        from plugins.tools.gitnexus import check_available
 
         assert check_available() is True
 
     def test_check_available_false_for_blank(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "   ")
-        from workflow_plugin.tools.gitnexus import check_available
+        from plugins.tools.gitnexus import check_available
 
         assert check_available() is False
 
@@ -252,11 +252,11 @@ class TestWorkflowQueryRag:
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
         fake_results = [{"type": "text", "text": "matching doc"}]
         with patch(
-            "workflow_plugin.tools.rag.call_mcp_tool",
+            "plugins.tools.rag.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=fake_results,
         ) as mock_call:
-            from workflow_plugin.tools.rag import handle
+            from plugins.tools.rag import handle
 
             result = await handle(
                 query="prior auth decisions", workspace_id="ws-1", top_k=3
@@ -273,11 +273,11 @@ class TestWorkflowQueryRag:
     async def test_default_top_k_is_5(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
         with patch(
-            "workflow_plugin.tools.rag.call_mcp_tool",
+            "plugins.tools.rag.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_call:
-            from workflow_plugin.tools.rag import handle
+            from plugins.tools.rag import handle
 
             await handle(query="q", workspace_id="ws-1")
         called_args = mock_call.await_args[0]
@@ -287,11 +287,11 @@ class TestWorkflowQueryRag:
     async def test_workspace_id_always_forwarded(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
         with patch(
-            "workflow_plugin.tools.rag.call_mcp_tool",
+            "plugins.tools.rag.call_mcp_tool",
             new_callable=AsyncMock,
             return_value=[],
         ) as mock_call:
-            from workflow_plugin.tools.rag import handle
+            from plugins.tools.rag import handle
 
             await handle(query="q", workspace_id="specific-ws")
         called_args = mock_call.await_args[0]
@@ -301,24 +301,24 @@ class TestWorkflowQueryRag:
     async def test_error_returns_ok_false(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
         with patch(
-            "workflow_plugin.tools.rag.call_mcp_tool",
+            "plugins.tools.rag.call_mcp_tool",
             new_callable=AsyncMock,
             side_effect=TimeoutError("timeout"),
         ):
-            from workflow_plugin.tools.rag import handle
+            from plugins.tools.rag import handle
 
             result = await handle(query="q", workspace_id="ws-1")
         assert result["ok"] is False
         assert "timeout" in result["error"]
 
     def test_check_available_false_when_unset(self):
-        from workflow_plugin.tools.rag import check_available
+        from plugins.tools.rag import check_available
 
         assert check_available() is False
 
     def test_check_available_true_when_set(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
-        from workflow_plugin.tools.rag import check_available
+        from plugins.tools.rag import check_available
 
         assert check_available() is True
 
@@ -331,25 +331,25 @@ class TestWorkflowQueryRag:
 class TestCheckAvailableGating:
     def test_gitnexus_excluded_from_definitions_when_url_unset(self):
         """When GITNEXUS_MCP_URL is unset, gitnexus.check_available() returns False."""
-        from workflow_plugin.tools.gitnexus import check_available
+        from plugins.tools.gitnexus import check_available
 
         assert check_available() is False
 
     def test_rag_excluded_from_definitions_when_url_unset(self):
         """When RAG_MCP_URL is unset, rag.check_available() returns False."""
-        from workflow_plugin.tools.rag import check_available
+        from plugins.tools.rag import check_available
 
         assert check_available() is False
 
     def test_gitnexus_included_when_url_set(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
-        from workflow_plugin.tools.gitnexus import check_available
+        from plugins.tools.gitnexus import check_available
 
         assert check_available() is True
 
     def test_rag_included_when_url_set(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
-        from workflow_plugin.tools.rag import check_available
+        from plugins.tools.rag import check_available
 
         assert check_available() is True
 
@@ -361,14 +361,14 @@ class TestCheckAvailableGating:
 
 class TestRegisterT3:
     def test_registers_7_tools(self):
-        from workflow_plugin import register, _TOOLS
+        from plugins import register, _TOOLS
 
         ctx = MagicMock()
         register(ctx)
         assert ctx.register_tool.call_count == 7
 
     def test_all_7_tool_names_registered(self):
-        from workflow_plugin import register
+        from plugins import register
 
         ctx = MagicMock()
         register(ctx)
@@ -388,7 +388,7 @@ class TestRegisterT3:
         assert names == expected
 
     def test_gitnexus_registered_with_is_async_true(self):
-        from workflow_plugin import register
+        from plugins import register
 
         ctx = MagicMock()
         register(ctx)
@@ -400,7 +400,7 @@ class TestRegisterT3:
         assert gitnexus_call.kwargs.get("is_async") is True
 
     def test_rag_registered_with_is_async_true(self):
-        from workflow_plugin import register
+        from plugins import register
 
         ctx = MagicMock()
         register(ctx)
@@ -412,7 +412,7 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("is_async") is True
 
     def test_non_mcp_tools_not_async(self):
-        from workflow_plugin import register
+        from plugins import register
 
         ctx = MagicMock()
         register(ctx)
@@ -429,8 +429,8 @@ class TestRegisterT3:
                 assert not call.kwargs.get("is_async"), f"{name} should not be async"
 
     def test_gitnexus_uses_own_check_fn(self):
-        from workflow_plugin import register
-        from workflow_plugin.tools import gitnexus
+        from plugins import register
+        from plugins.tools import gitnexus
 
         ctx = MagicMock()
         register(ctx)
@@ -442,8 +442,8 @@ class TestRegisterT3:
         assert gitnexus_call.kwargs.get("check_fn") is gitnexus.check_available
 
     def test_rag_uses_own_check_fn(self):
-        from workflow_plugin import register
-        from workflow_plugin.tools import rag
+        from plugins import register
+        from plugins.tools import rag
 
         ctx = MagicMock()
         register(ctx)
@@ -455,7 +455,7 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("check_fn") is rag.check_available
 
     def test_registers_pre_llm_call_hook(self):
-        from workflow_plugin import register
+        from plugins import register
 
         ctx = MagicMock()
         register(ctx)
@@ -478,8 +478,8 @@ class TestInjectContextT3:
 
     def _call_inject(self, workspace_id="ws-1", feature_id="feat-1") -> str:
         """Set session context, call inject_context, return the context string."""
-        from workflow_plugin.context import set_context
-        from workflow_plugin.hooks import inject_context
+        from plugins.context import set_context
+        from plugins.hooks import inject_context
 
         session_id = "sess-test"
         set_context(session_id, workspace_id, feature_id)
@@ -513,10 +513,10 @@ class TestInjectContextT3:
     def test_task_summary_block_injected(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         with (
-            patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("workflow_plugin.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
+            patch("plugins.hooks.check_workflow_available", return_value=True),
+            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("plugins.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
         ):
             content = self._call_inject()
         assert "tasks:" in content
@@ -526,10 +526,10 @@ class TestInjectContextT3:
     def test_blocked_tasks_block_included_when_blocked(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         with (
-            patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("workflow_plugin.tools.tasks.handle", return_value=self._make_tasks_with_blocked()),
+            patch("plugins.hooks.check_workflow_available", return_value=True),
+            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("plugins.tools.tasks.handle", return_value=self._make_tasks_with_blocked()),
         ):
             content = self._call_inject()
         assert "T2" in content
@@ -539,10 +539,10 @@ class TestInjectContextT3:
     def test_blocked_tasks_absent_when_none_blocked(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         with (
-            patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("workflow_plugin.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
+            patch("plugins.hooks.check_workflow_available", return_value=True),
+            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("plugins.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
         ):
             content = self._call_inject()
         assert "blocked:" not in content
@@ -550,29 +550,29 @@ class TestInjectContextT3:
         assert "T2" in content
 
     def test_capability_advertisement_includes_workflow_get_tasks(self):
-        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+        with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
         assert "workflow_get_tasks" in content
 
     def test_gitnexus_advertised_when_url_set(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
-        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+        with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
         assert "workflow_query_gitnexus" in content
 
     def test_gitnexus_not_advertised_when_url_unset(self):
-        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+        with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
         assert "workflow_query_gitnexus" not in content
 
     def test_rag_advertised_when_url_set(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
-        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+        with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
         assert "workflow_query_rag" in content
 
     def test_rag_not_advertised_when_url_unset(self):
-        with patch("workflow_plugin.hooks.check_workflow_available", return_value=False):
+        with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
         assert "workflow_query_rag" not in content
 
@@ -587,10 +587,10 @@ class TestInjectContextT3:
             ],
         }
         with (
-            patch("workflow_plugin.hooks.check_workflow_available", return_value=True),
-            patch("workflow_plugin.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("workflow_plugin.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("workflow_plugin.tools.tasks.handle", return_value=tasks_result),
+            patch("plugins.hooks.check_workflow_available", return_value=True),
+            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
+            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch("plugins.tools.tasks.handle", return_value=tasks_result),
         ):
             content = self._call_inject()
         assert "T1" in content and "Setup DB" in content and "done" in content

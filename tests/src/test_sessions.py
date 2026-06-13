@@ -31,7 +31,7 @@ if str(REPO_ROOT_PATH) not in sys.path:
 @pytest.mark.asyncio
 async def test_list_sessions_excludes_archived_and_orders_by_last_active():
     """3 sessions (1 archived) → returns 2 ordered by last_active_at DESC."""
-    from workflow_gateway.db.store import list_sessions
+    from src.db.store import list_sessions
 
     now = time.time()
     # db.execute mock: returns a result whose .all() gives (id, title, started_at, last_active_at) rows
@@ -50,7 +50,7 @@ async def test_list_sessions_excludes_archived_and_orders_by_last_active():
 
     # _last_assistant_excerpt returns empty string for both
     with patch(
-        "workflow_gateway.db.store._last_assistant_excerpt", AsyncMock(return_value="")
+        "src.db.store._last_assistant_excerpt", AsyncMock(return_value="")
     ):
         sessions = await list_sessions(db, workspace_id="ws-1", feature_id="feat-1")
 
@@ -64,7 +64,7 @@ async def test_list_sessions_excludes_archived_and_orders_by_last_active():
 @pytest.mark.asyncio
 async def test_list_sessions_uses_untitled_fallback():
     """Sessions with NULL title fall back to '(untitled)'."""
-    from workflow_gateway.db.store import list_sessions
+    from src.db.store import list_sessions
 
     now = time.time()
     row = MagicMock(id="sess_x", title=None, started_at=now, last_active_at=now)
@@ -76,7 +76,7 @@ async def test_list_sessions_uses_untitled_fallback():
     db.execute = AsyncMock(return_value=result_mock)
 
     with patch(
-        "workflow_gateway.db.store._last_assistant_excerpt", AsyncMock(return_value="")
+        "src.db.store._last_assistant_excerpt", AsyncMock(return_value="")
     ):
         sessions = await list_sessions(db, workspace_id="ws-1", feature_id="feat-1")
 
@@ -86,7 +86,7 @@ async def test_list_sessions_uses_untitled_fallback():
 @pytest.mark.asyncio
 async def test_last_assistant_excerpt_returns_up_to_120_chars():
     """_last_assistant_excerpt returns first 120 chars of last assistant message."""
-    from workflow_gateway.db.store import _last_assistant_excerpt
+    from src.db.store import _last_assistant_excerpt
 
     long_content = "x" * 200
     result_mock = MagicMock()
@@ -103,7 +103,7 @@ async def test_last_assistant_excerpt_returns_up_to_120_chars():
 @pytest.mark.asyncio
 async def test_last_assistant_excerpt_returns_empty_when_no_message():
     """_last_assistant_excerpt returns '' when session has no assistant messages."""
-    from workflow_gateway.db.store import _last_assistant_excerpt
+    from src.db.store import _last_assistant_excerpt
 
     result_mock = MagicMock()
     result_mock.scalar_one_or_none.return_value = None
@@ -141,7 +141,7 @@ def gateway_app():
     _inject_mock_run_agent()
 
     from fastapi import FastAPI
-    from workflow_gateway.api.router import router
+    from src.api.router import router
 
     app = FastAPI()
     app.include_router(router, prefix="/api/v5")
@@ -171,15 +171,15 @@ async def test_auto_title_set_on_null_title_session(gateway_app):
 
     with (
         patch(
-            "workflow_gateway.api.router.get_session",
+            "src.api.router.get_session",
             AsyncMock(side_effect=[null_title_session, updated_session]),
         ),
         patch(
-            "workflow_gateway.api.router.get_messages_as_conversation",
+            "src.api.router.get_messages_as_conversation",
             AsyncMock(return_value=[]),
         ),
-        patch("workflow_gateway.api.router.set_session_title", set_title_mock),
-        patch("workflow_gateway.api.router.touch_session", AsyncMock()),
+        patch("src.api.router.set_session_title", set_title_mock),
+        patch("src.api.router.touch_session", AsyncMock()),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=gateway_app),
@@ -218,15 +218,15 @@ async def test_auto_title_not_set_when_title_exists(gateway_app):
 
     with (
         patch(
-            "workflow_gateway.api.router.get_session",
+            "src.api.router.get_session",
             AsyncMock(return_value=existing_session),
         ),
         patch(
-            "workflow_gateway.api.router.get_messages_as_conversation",
+            "src.api.router.get_messages_as_conversation",
             AsyncMock(return_value=[]),
         ),
-        patch("workflow_gateway.api.router.set_session_title", set_title_mock),
-        patch("workflow_gateway.api.router.touch_session", AsyncMock()),
+        patch("src.api.router.set_session_title", set_title_mock),
+        patch("src.api.router.touch_session", AsyncMock()),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=gateway_app),
@@ -278,7 +278,7 @@ async def test_get_sessions_endpoint_returns_json(gateway_app):
     ]
 
     with patch(
-        "workflow_gateway.api.router.list_sessions",
+        "src.api.router.list_sessions",
         AsyncMock(return_value=fake_sessions),
     ):
         async with AsyncClient(
@@ -348,7 +348,7 @@ async def test_get_messages_as_conversation_parses_tool_calls():
     """
     import json as _json
 
-    from workflow_gateway.db.store import get_messages_as_conversation
+    from src.db.store import get_messages_as_conversation
 
     tool_calls = [
         {"id": "call_1", "type": "function", "function": {"name": "foo", "arguments": "{}"}}
@@ -396,11 +396,11 @@ async def test_get_session_messages_endpoint_returns_transcript(gateway_app):
 
     with (
         patch(
-            "workflow_gateway.api.router.get_session",
+            "src.api.router.get_session",
             AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "workflow_gateway.api.router.get_session_messages",
+            "src.api.router.get_session_messages",
             AsyncMock(return_value=fake_messages),
         ),
     ):
@@ -424,7 +424,7 @@ async def test_get_session_messages_endpoint_404_when_session_missing(gateway_ap
     from httpx import ASGITransport, AsyncClient
 
     with patch(
-        "workflow_gateway.api.router.get_session",
+        "src.api.router.get_session",
         AsyncMock(return_value=None),
     ):
         async with AsyncClient(
@@ -455,9 +455,9 @@ async def test_get_sessions_endpoint_real_postgres():
     from httpx import ASGITransport, AsyncClient
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-    from workflow_gateway.api.router import router
-    from workflow_gateway.db import init_db
-    from workflow_gateway.db.models import Message, Session
+    from src.api.router import router
+    from src.db import init_db
+    from src.db.models import Message, Session
 
     raw_url = os.environ.get(
         "TEST_DATABASE_URL",

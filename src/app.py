@@ -1,7 +1,7 @@
 """FastAPI application factory for the workflow gateway.
 
 Entry point:
-    uvicorn workflow_gateway.app:app --host 0.0.0.0 --port 8000
+    uvicorn src.app:app --host 0.0.0.0 --port 8000
 """
 
 from __future__ import annotations
@@ -17,26 +17,26 @@ from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 
 # Register the workflow plugin before anything else imports model_tools.
-# workflow_plugin/ sits at the project root, outside the plugins/ directory
-# the general scanner covers, so it must be wired up explicitly here.
+# Our workflow plugin (the top-level plugins/ package) is not on the agent's
+# plugin search path, so it must be wired up explicitly here.
 try:
-    import workflow_plugin as _workflow_plugin
+    import plugins as _plugins
     from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
 
     _wf_manifest = PluginManifest(name="workflow", source="bundled", kind="backend")
     _wf_ctx = PluginContext(_wf_manifest, get_plugin_manager())
-    _workflow_plugin.register(_wf_ctx)
+    _plugins.register(_wf_ctx)
 except Exception as _exc:
     import logging as _logging
     _logging.getLogger(__name__).warning(
-        "workflow_gateway: failed to register workflow plugin: %s", _exc
+        "src: failed to register workflow plugin: %s", _exc
     )
 
 from fastapi import FastAPI
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from workflow_gateway.api.router import router
-from workflow_gateway.db import init_db
+from src.api.router import router
+from src.db import init_db
 
 logger = logging.getLogger(__name__)
 
@@ -58,12 +58,12 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     await init_db(engine)
 
     app.state.db_session = async_sessionmaker(engine, expire_on_commit=False)
-    logger.info("workflow_gateway: database ready")
+    logger.info("src: database ready")
 
     yield
 
     await engine.dispose()
-    logger.info("workflow_gateway: database connection closed")
+    logger.info("src: database connection closed")
 
 
 def create_app() -> FastAPI:

@@ -1,4 +1,4 @@
--- workflow_gateway initial schema
+-- src initial schema
 -- sessions mirrors hermes SessionDB (hermes_state.py SCHEMA_SQL) with
 -- gateway-specific columns (workspace_id, feature_id, last_active_at, metadata).
 

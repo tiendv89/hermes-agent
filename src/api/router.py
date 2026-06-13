@@ -6,7 +6,7 @@ Routes:
     GET /sessions/{session_id}/messages — load a session's transcript
     POST /chat — run one agent turn and stream SSE back
 
-The router is mounted at ``/api/v1`` in ``workflow_gateway/app.py``.
+The router is mounted at ``/api/v1`` in ``src/app.py``.
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from workflow_gateway.db import (
+from src.db import (
     create_session,
     get_messages_as_conversation,
     get_session,
@@ -31,9 +31,9 @@ from workflow_gateway.db import (
     set_session_title,
     touch_session,
 )
-from workflow_gateway.api.identity import Identity, require_identity
-from workflow_gateway.db.session_db_proxy import make_gateway_session_db
-from workflow_gateway.streaming import HermesSSETranslator
+from src.api.identity import Identity, require_identity
+from src.db.session_db_proxy import make_gateway_session_db
+from src.streaming import HermesSSETranslator
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +236,7 @@ async def stream_chat_endpoint(
             # them: the pre_llm_call hook looks them up by session_id, and tool
             # handlers fall back to the thread-local — both set here.
             try:
-                from workflow_plugin.context import set_context
+                from plugins.context import set_context
                 set_context(body.session_id, workspace_id, feature_id)
             except Exception:
                 logger.warning("Failed to set workflow context", exc_info=True)
@@ -251,7 +251,7 @@ async def stream_chat_endpoint(
             translator.on_error(str(exc))
         finally:
             try:
-                from workflow_plugin.context import clear_context
+                from plugins.context import clear_context
                 clear_context(body.session_id)
             except Exception:
                 pass

@@ -34,7 +34,7 @@ def make_gateway_session_db(
 ):
     """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres."""
     from hermes_state import SessionDB
-    from workflow_gateway.db.store import (
+    from src.db.store import (
         append_message as pg_append,
         update_token_counts as pg_update_tokens,
         end_session as pg_end_session,

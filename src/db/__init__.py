@@ -1,5 +1,5 @@
-from workflow_gateway.db.models import Base, Message, Session
-from workflow_gateway.db.store import (
+from src.db.models import Base, Message, Session
+from src.db.store import (
     init_db,
     create_session,
     get_session,

@@ -1,4 +1,4 @@
-"""Tests for workflow_gateway.streaming — OpenAI chat-completions SSE translation.
+"""Tests for src.streaming — OpenAI chat-completions SSE translation.
 
 The translator emits hermes's native /v1/chat/completions streaming format:
     - a leading role chunk (delta.role = "assistant")
@@ -24,29 +24,29 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-STREAMING_DIR = REPO_ROOT / "workflow_gateway" / "streaming"
+STREAMING_DIR = REPO_ROOT / "src" / "streaming"
 
 
 def _load_streaming():
-    """Import workflow_gateway.streaming in isolation."""
+    """Import src.streaming in isolation."""
     spec = importlib.util.spec_from_file_location(
-        "workflow_gateway.streaming",
+        "src.streaming",
         STREAMING_DIR / "__init__.py",
     )
     mod = importlib.util.module_from_spec(spec)
-    mod.__package__ = "workflow_gateway.streaming"
-    sys.modules["workflow_gateway.streaming"] = mod
+    mod.__package__ = "src.streaming"
+    sys.modules["src.streaming"] = mod
     spec.loader.exec_module(mod)
     return mod
 
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    keys = [k for k in sys.modules if k.startswith("workflow_gateway")]
+    keys = [k for k in sys.modules if k.startswith("src")]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("workflow_gateway")]
+    keys = [k for k in sys.modules if k.startswith("src")]
     for k in keys:
         del sys.modules[k]
 
@@ -233,7 +233,7 @@ class TestHermesSSETranslator:
         streaming = _load_streaming()
         # _KEEPALIVE_SECONDS lives in the sse submodule; stream() reads it as a
         # module global at call time, so patch it there to speed up the test.
-        sse_mod = sys.modules["workflow_gateway.streaming.sse"]
+        sse_mod = sys.modules["src.streaming.sse"]
         sse_mod._KEEPALIVE_SECONDS = 0.02
 
         raw_chunks = []
