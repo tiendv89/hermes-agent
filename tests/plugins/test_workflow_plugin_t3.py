@@ -11,7 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -361,7 +360,7 @@ class TestCheckAvailableGating:
 
 class TestRegisterT3:
     def test_registers_7_tools(self):
-        from plugins import register, _TOOLS
+        from plugins import register
 
         ctx = MagicMock()
         register(ctx)

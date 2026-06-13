@@ -2,14 +2,18 @@
 export
 PORT   ?= 8000
 
-.PHONY: help submodules install run dev
+.PHONY: help submodules install lint run dev
 help:
 	@echo "Usage: make <target>"
 	@echo ""
 	@echo "  submodules  Sync git submodules to the pinned commits"
 	@echo "  install     Install dependencies (gateway + vendored hermes-agent)"
+	@echo "  lint        Run ruff over the project (vendor excluded)"
 	@echo "  dev         Start with auto-reload"
 	@echo "  run         Start in production mode"
+
+lint:
+	uvx ruff check .
 
 submodules:
 	scripts/sync-submodules.sh

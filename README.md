@@ -1,72 +1,77 @@
-# src
+# hermes-workflow-gateway
 
-FastAPI server that wraps hermes as a workspace-aware AI agent, exposing an SSE chat API consumed by digital-factory-ui.
+FastAPI gateway and Hermes plugin that wrap the [Hermes Agent](https://github.com/nousresearch/hermes-agent)
+as a workspace-aware AI agent, exposing an SSE chat API consumed by digital-factory-ui.
+
+The upstream agent is vendored as a git submodule at `vendor/hermes-agent` and
+consumed as an editable dependency; this repo contains only the gateway (`src/`)
+and the workflow plugin (`plugins/`).
 
 ## Requirements
 
-- Python 3.13+
+- Python 3.11–3.13
 - PostgreSQL
 - `uv`
+- `git` (for the submodule)
 
 ## Setup
 
 ```bash
-cp .env.example .env
-# fill in the values in .env
+# Clone with the vendored agent:
+git clone --recurse-submodules <repo-url>
+# (already cloned? pull the submodule in:)
+make submodules
+
+# Configure and install:
+cp .env.example .env       # then fill in the values
+make install               # installs the vendored agent + gateway
 ```
 
 ## Environment variables
 
+See `.env.example` for the full list. Key variables:
+
 | Variable | Required | Description |
 |---|---|---|
-| `DATABASE_URL` | yes | Postgres connection string |
-| `ANTHROPIC_API_KEY` | yes | Anthropic API key |
-| `WORKFLOW_BACKEND_URL` | yes | Base URL of workflow-backend |
-| `GITHUB_TOKEN` | write tools | PAT with `contents:write` — for artifact writes |
+| `DATABASE_URL` | yes | Postgres connection string for the gateway session store |
+| `WORKFLOW_DATABASE_URL` | yes | Postgres connection string for the workflow-backend DB |
+| `ANTHROPIC_API_KEY` | yes | Anthropic API key (used when `HERMES_PROVIDER=anthropic`) |
+| `GITHUB_TOKEN` | write tools | PAT with `contents:write` — for artifact write tools |
+| `GATEWAY_SERVICE_TOKEN` | no | Shared token gating BFF-injected identity headers; unset = local/direct mode |
 | `HERMES_MODEL` | no | Model (default: `claude-sonnet-4-6`) |
 | `HERMES_PROVIDER` | no | Provider (default: `anthropic`) |
+| `GITNEXUS_MCP_URL` / `RAG_MCP_URL` | no | MCP endpoints used by plugin tools |
 
 ## Run locally
 
 ```bash
-# 1. Start Postgres
-docker run -d --name hermes-agent-db \
-  -e POSTGRES_USER=hermes \
-  -e POSTGRES_PASSWORD=hermes \
-  -e POSTGRES_DB=hermes_gateway \
-  -p 5432:5432 postgres:16
+# 1. Start Postgres (compose brings it up on localhost:25434)
+docker compose up -d
 
-# 2. Install and start
-make install
-make dev
+# 2. Make sure DATABASE_URL in .env points at that Postgres, then:
+make dev          # auto-reload on port 8000
+# or
+make run          # production mode
 ```
 
-Migrations run automatically on startup.
+Migrations in `migrations/` are applied automatically on startup.
 
-## Run with Docker Compose
+## Run with Docker
 
 ```bash
-make up       # start gateway + postgres
-make logs     # follow gateway logs
-make restart  # rebuild and restart
-make down     # stop everything
+docker build -t hermes-workflow-gateway .
+docker run --rm -p 8000:8000 --env-file .env hermes-workflow-gateway
 ```
-
-Postgres data is persisted in the `postgres_data` Docker volume.
 
 ## Makefile targets
 
 | Target | Description |
 |---|---|
-| `make install` | Install Python dependencies |
+| `make submodules` | Sync git submodules to the pinned commits |
+| `make install` | Install the vendored agent + gateway dependencies |
+| `make lint` | Run ruff over the project (vendor excluded) |
 | `make dev` | Start with auto-reload |
 | `make run` | Start in production mode |
-| `make up` | Docker Compose — start all services |
-| `make down` | Docker Compose — stop all services |
-| `make logs` | Follow gateway container logs |
-| `make restart` | Rebuild image and restart gateway |
-| `make shell` | Shell inside gateway container |
-| `make db-shell` | psql inside postgres container |
 
 ## API
 
@@ -127,5 +132,18 @@ src/                  — FastAPI gateway package (uvicorn src.app:app)
 plugins/              — hermes workflow plugin (tools, hooks, context)
 migrations/           — SQL migrations, applied on startup
   001_initial_schema.sql
+configs/              — agent home (config.yaml), copied to ~/.hermes in Docker
 vendor/hermes-agent/  — upstream agent (git submodule, editable dependency)
 ```
+
+## Updating the vendored agent
+
+The submodule is pinned to a specific upstream commit. To advance it:
+
+```bash
+scripts/sync-submodules.sh --remote     # fetch + move to upstream latest
+git add vendor/hermes-agent && git commit -m "chore: bump hermes-agent submodule"
+```
+
+Re-run `make lint` and the test suite after bumping — the gateway depends on
+upstream module APIs that drift between commits.

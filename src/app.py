@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 from dotenv import load_dotenv
+from fastapi import FastAPI
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 
@@ -32,17 +34,15 @@ except Exception as _exc:
         "src: failed to register workflow plugin: %s", _exc
     )
 
-from fastapi import FastAPI
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-
-from src.api.router import router
-from src.db import init_db
-
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
+    # Imported lazily: src.db pulls in model_tools, which must not load until
+    # after the workflow plugin is registered (at module import, above).
+    from src.db import init_db
+
     database_url = os.environ.get("DATABASE_URL", "")
     if not database_url:
         raise RuntimeError(
@@ -67,6 +67,9 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
+    # Imported lazily for the same reason as init_db (see _lifespan).
+    from src.api.router import router
+
     app = FastAPI(
         title="hermes workflow gateway",
         description="Workspace-aware AI agent gateway (digital-factory / M3)",
