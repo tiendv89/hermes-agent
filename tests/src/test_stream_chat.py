@@ -1,4 +1,4 @@
-"""Integration test: POST /api/v5/stream_chat returns SSE events.
+"""Integration test: POST /api/v5/chat returns SSE events.
 
 Covers the second half of the T1 smoke-test subtask from tasks.md:
     "stream_chat returns SSE for a simple query"
@@ -90,7 +90,7 @@ def stream_chat_app():
 
 @pytest.mark.asyncio
 async def test_stream_chat_returns_sse_events(stream_chat_app):
-    """POST /api/v5/stream_chat → ≥1 message_output_partial event + [DONE] sentinel."""
+    """POST /api/v5/chat → ≥1 message_output_partial event + [DONE] sentinel."""
     from httpx import ASGITransport, AsyncClient
 
     # Use MagicMock so attribute access (session.title) works correctly.
@@ -99,22 +99,23 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
 
     with (
         patch(
-            "src.api.router.get_session",
+            "src.api.routers.chat.get_session",
             AsyncMock(return_value=session_mock),
         ),
         patch(
-            "src.api.router.get_messages_as_conversation",
+            "src.api.routers.chat.get_messages_as_conversation",
             AsyncMock(return_value=[]),
         ),
-        patch("src.api.router.set_session_title", AsyncMock()),
-        patch("src.api.router.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.set_session_title", AsyncMock()),
+        patch("src.api.routers.chat.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.update_session_model", AsyncMock()),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=stream_chat_app),
             base_url="http://testserver",
         ) as client:
             resp = await client.post(
-                "/api/v5/stream_chat",
+                "/api/v5/chat",
                 json={
                     "session_id": "sess_test_t1",
                     "message": "Hello",
@@ -166,22 +167,22 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     try:
         with (
             patch(
-                "src.api.router.get_session",
+                "src.api.routers.chat.get_session",
                 AsyncMock(return_value=session_mock),
             ),
             patch(
-                "src.api.router.get_messages_as_conversation",
+                "src.api.routers.chat.get_messages_as_conversation",
                 AsyncMock(return_value=[]),
             ),
-            patch("src.api.router.set_session_title", AsyncMock()),
-            patch("src.api.router.touch_session", AsyncMock()),
+            patch("src.api.routers.chat.set_session_title", AsyncMock()),
+            patch("src.api.routers.chat.touch_session", AsyncMock()),
         ):
             async with AsyncClient(
                 transport=ASGITransport(app=stream_chat_app),
                 base_url="http://testserver",
             ) as client:
                 resp = await client.post(
-                    "/api/v5/stream_chat",
+                    "/api/v5/chat",
                     json={"session_id": "sess_busy", "message": "Hello"},
                     timeout=15.0,
                 )

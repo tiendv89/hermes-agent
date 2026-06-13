@@ -171,22 +171,23 @@ async def test_auto_title_set_on_null_title_session(gateway_app):
 
     with (
         patch(
-            "src.api.router.get_session",
+            "src.api.routers.chat.get_session",
             AsyncMock(side_effect=[null_title_session, updated_session]),
         ),
         patch(
-            "src.api.router.get_messages_as_conversation",
+            "src.api.routers.chat.get_messages_as_conversation",
             AsyncMock(return_value=[]),
         ),
-        patch("src.api.router.set_session_title", set_title_mock),
-        patch("src.api.router.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.set_session_title", set_title_mock),
+        patch("src.api.routers.chat.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.update_session_model", AsyncMock()),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=gateway_app),
             base_url="http://testserver",
         ) as client:
             resp = await client.post(
-                "/api/v5/stream_chat",
+                "/api/v5/chat",
                 json={
                     "session_id": "sess_null_title",
                     "message": long_message,
@@ -218,22 +219,23 @@ async def test_auto_title_not_set_when_title_exists(gateway_app):
 
     with (
         patch(
-            "src.api.router.get_session",
+            "src.api.routers.chat.get_session",
             AsyncMock(return_value=existing_session),
         ),
         patch(
-            "src.api.router.get_messages_as_conversation",
+            "src.api.routers.chat.get_messages_as_conversation",
             AsyncMock(return_value=[]),
         ),
-        patch("src.api.router.set_session_title", set_title_mock),
-        patch("src.api.router.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.set_session_title", set_title_mock),
+        patch("src.api.routers.chat.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.update_session_model", AsyncMock()),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=gateway_app),
             base_url="http://testserver",
         ) as client:
             resp = await client.post(
-                "/api/v5/stream_chat",
+                "/api/v5/chat",
                 json={
                     "session_id": "sess_has_title",
                     "message": "Hello world",
@@ -278,7 +280,7 @@ async def test_get_sessions_endpoint_returns_json(gateway_app):
     ]
 
     with patch(
-        "src.api.router.list_sessions",
+        "src.api.routers.sessions.list_sessions",
         AsyncMock(return_value=fake_sessions),
     ):
         async with AsyncClient(
@@ -421,11 +423,11 @@ async def test_get_session_messages_endpoint_returns_transcript(gateway_app):
 
     with (
         patch(
-            "src.api.router.get_session",
+            "src.api.routers.sessions.get_session",
             AsyncMock(return_value=MagicMock()),
         ),
         patch(
-            "src.api.router.get_session_messages",
+            "src.api.routers.sessions.get_session_messages",
             AsyncMock(return_value=fake_messages),
         ),
     ):
@@ -449,7 +451,7 @@ async def test_get_session_messages_endpoint_404_when_session_missing(gateway_ap
     from httpx import ASGITransport, AsyncClient
 
     with patch(
-        "src.api.router.get_session",
+        "src.api.routers.sessions.get_session",
         AsyncMock(return_value=None),
     ):
         async with AsyncClient(
