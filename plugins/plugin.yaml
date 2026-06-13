@@ -6,6 +6,7 @@ provides_tools:
   - workflow_get_workspace_context
   - workflow_get_feature_state
   - workflow_write_product_spec
+  - workflow_edit_document
   - workflow_write_technical_design
   - workflow_get_tasks
   - workflow_query_gitnexus

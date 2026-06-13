@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import importlib.util
 import sys
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -19,6 +20,24 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
+
+
+def _load_plugins_register():
+    """Load plugins/__init__.py directly from REPO_ROOT to avoid the
+    tests/plugins/ shadow package masking the real implementation.
+    """
+    init_path = REPO_ROOT / "plugins" / "__init__.py"
+    spec = importlib.util.spec_from_file_location(
+        "plugins",
+        init_path,
+        submodule_search_locations=[str(REPO_ROOT / "plugins")],
+    )
+    mod = importlib.util.module_from_spec(spec)
+    mod.__package__ = "plugins"
+    mod.__path__ = [str(REPO_ROOT / "plugins")]
+    sys.modules["plugins"] = mod
+    spec.loader.exec_module(mod)
+    return mod
 
 
 # ---------------------------------------------------------------------------
@@ -354,23 +373,21 @@ class TestCheckAvailableGating:
 
 
 # ---------------------------------------------------------------------------
-# register() — 7 tools, 2 MCP tools with is_async=True
+# register() — 8 tools (7 original + workflow_edit_document), 2 MCP async
 # ---------------------------------------------------------------------------
 
 
 class TestRegisterT3:
-    def test_registers_7_tools(self):
-        from plugins import register
-
+    def test_registers_8_tools(self):
+        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        register(ctx)
-        assert ctx.register_tool.call_count == 7
+        plugins_mod.register(ctx)
+        assert ctx.register_tool.call_count == 8
 
-    def test_all_7_tool_names_registered(self):
-        from plugins import register
-
+    def test_all_8_tool_names_registered(self):
+        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         names = {
             call.kwargs.get("name") or call.args[0]
             for call in ctx.register_tool.call_args_list
@@ -379,6 +396,7 @@ class TestRegisterT3:
             "workflow_get_workspace_context",
             "workflow_get_feature_state",
             "workflow_write_product_spec",
+            "workflow_edit_document",
             "workflow_write_technical_design",
             "workflow_get_tasks",
             "workflow_query_gitnexus",
@@ -387,10 +405,9 @@ class TestRegisterT3:
         assert names == expected
 
     def test_gitnexus_registered_with_is_async_true(self):
-        from plugins import register
-
+        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         gitnexus_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -399,10 +416,9 @@ class TestRegisterT3:
         assert gitnexus_call.kwargs.get("is_async") is True
 
     def test_rag_registered_with_is_async_true(self):
-        from plugins import register
-
+        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         rag_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -411,14 +427,14 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("is_async") is True
 
     def test_non_mcp_tools_not_async(self):
-        from plugins import register
-
+        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         sync_names = {
             "workflow_get_workspace_context",
             "workflow_get_feature_state",
             "workflow_write_product_spec",
+            "workflow_edit_document",
             "workflow_write_technical_design",
             "workflow_get_tasks",
         }
@@ -428,11 +444,11 @@ class TestRegisterT3:
                 assert not call.kwargs.get("is_async"), f"{name} should not be async"
 
     def test_gitnexus_uses_own_check_fn(self):
-        from plugins import register
+        plugins_mod = _load_plugins_register()
         from plugins.tools import gitnexus
 
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         gitnexus_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -441,11 +457,11 @@ class TestRegisterT3:
         assert gitnexus_call.kwargs.get("check_fn") is gitnexus.check_available
 
     def test_rag_uses_own_check_fn(self):
-        from plugins import register
+        plugins_mod = _load_plugins_register()
         from plugins.tools import rag
 
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         rag_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -454,10 +470,9 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("check_fn") is rag.check_available
 
     def test_registers_pre_llm_call_hook(self):
-        from plugins import register
-
+        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        register(ctx)
+        plugins_mod.register(ctx)
         ctx.register_hook.assert_called_once()
         hook_name = ctx.register_hook.call_args[0][0]
         assert hook_name == "pre_llm_call"

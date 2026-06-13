@@ -1,20 +1,21 @@
 """workflow_write_product_spec / workflow_write_technical_design tools.
 
-Writes Markdown artifacts directly to the management repo via the GitHub
-Contents API. Requires GITHUB_TOKEN in the environment.
+Full-rewrite handlers: read the current document SHA, replace the entire
+content, and commit to the feature branch via the document_repo pipeline.
+This replaces the old direct-to-main Contents PUT and fixes the
+"no direct push to main" rule violation.
 """
 
 from __future__ import annotations
 
-import base64
 import logging
 import os
 import re
 from typing import Any, Dict, Optional, Tuple
 
-import requests
 
 from ..db import _validate_id, get_workspace_context
+from ..document_repo import StaleBaseError, read_document, write_document
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +50,7 @@ WRITE_TD_SCHEMA: Dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# GitHub helpers
+# GitHub helpers — kept for backward compat and use in document_repo resolution
 # ---------------------------------------------------------------------------
 
 def _parse_github_owner_repo(github_url: str) -> Tuple[str, str]:
@@ -79,33 +80,9 @@ def _resolve_management_repo(workspace_context: Dict[str, Any]) -> Tuple[str, st
     )
 
 
-def _github_headers(token: str) -> Dict[str, str]:
-    return {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-
-
-def _get_file_sha(owner: str, repo: str, path: str, token: str) -> Optional[str]:
-    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
-    resp = requests.get(url, headers=_github_headers(token), timeout=_DEFAULT_TIMEOUT)
-    if resp.status_code == 404:
-        return None
-    resp.raise_for_status()
-    return resp.json().get("sha")
-
-
-def _put_file(owner: str, repo: str, path: str, content: str, commit_message: str, token: str) -> Dict[str, Any]:
-    sha = _get_file_sha(owner, repo, path, token)
-    payload: Dict[str, Any] = {
-        "message": commit_message,
-        "content": base64.b64encode(content.encode()).decode("ascii"),
-    }
-    if sha:
-        payload["sha"] = sha
-    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
-    resp = requests.put(url, headers={**_github_headers(token), "Content-Type": "application/json"},
-                        json=payload, timeout=_DEFAULT_TIMEOUT)
-    resp.raise_for_status()
-    return resp.json()
-
+# ---------------------------------------------------------------------------
+# Internal write pipeline
+# ---------------------------------------------------------------------------
 
 def _write_artifact(
     workspace_id: str,
@@ -114,6 +91,7 @@ def _write_artifact(
     content: str,
     commit_message: str,
 ) -> Dict[str, Any]:
+    """Full-rewrite path: read current SHA then write to feature/<feature_id>."""
     _validate_id(feature_id, "feature_id")
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
@@ -121,9 +99,24 @@ def _write_artifact(
 
     workspace_context = get_workspace_context(workspace_id)
     owner, repo = _resolve_management_repo(workspace_context)
+    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
+    branch = f"feature/{feature_id}"
     path = f"docs/features/{feature_id}/{filename}"
-    result = _put_file(owner, repo, path, content, commit_message, github_token)
-    return {"ok": True, "path": path, "commit": result.get("commit", {}).get("sha", "")}
+
+    # Read-before-write: fetch the current SHA so GitHub accepts our PUT.
+    current = read_document(owner, repo, branch, path, github_token)
+
+    result = write_document(
+        owner, repo, feature_id, base_branch, path, content, current["sha"], commit_message, github_token
+    )
+    return {
+        "ok": True,
+        "path": path,
+        "commit": result["commit_sha"],
+        "commit_sha": result["commit_sha"],
+        "pr_url": result["pr"].get("url", ""),
+        "conflict": False,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -148,6 +141,8 @@ def handle_write_product_spec(
         return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
     try:
         return _write_artifact(wid, fid, "product-spec.md", content, commit_message)
+    except StaleBaseError as exc:
+        return {"ok": False, "conflict": True, "error": str(exc)}
     except Exception as exc:
         logger.warning("workflow_write_product_spec failed: %s", exc)
         return {"ok": False, "error": str(exc)}
@@ -165,6 +160,8 @@ def handle_write_technical_design(
         return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
     try:
         return _write_artifact(wid, fid, "technical-design.md", content, commit_message)
+    except StaleBaseError as exc:
+        return {"ok": False, "conflict": True, "error": str(exc)}
     except Exception as exc:
         logger.warning("workflow_write_technical_design failed: %s", exc)
         return {"ok": False, "error": str(exc)}
