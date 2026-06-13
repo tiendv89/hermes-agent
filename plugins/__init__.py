@@ -2,59 +2,119 @@
 
 from __future__ import annotations
 
+import functools
+import json
 import logging
 from typing import Any
 
 from .db import check_workflow_available
 from .hooks import inject_context
-from .tools import workspace, feature, artifacts, tasks as tasks_tool, gitnexus, rag
+from .tools import workspace, feature, artifacts, edit as edit_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool, approval
 
 logger = logging.getLogger(__name__)
 
+
+def _as_tool_content(result: Any) -> str:
+    """Coerce a handler's return value to a string for the tool message content.
+
+    The agent's tool registry passes a handler's return value straight through
+    as the ``tool`` message ``content`` (it only JSON-encodes errors). Our
+    handlers return dicts (``{"ok": True, ...}``). The Anthropic adapter
+    stringifies dict content, but strict OpenAI-compatible providers (DeepSeek)
+    reject it with HTTP 400 "content should be a string or a list". JSON-encode
+    here so the wire content is always a string, for every provider.
+    """
+    if isinstance(result, str):
+        return result
+    try:
+        return json.dumps(result, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(result)
+
+
+def _json_result_handler(handler: Any, is_async: bool) -> Any:
+    """Wrap a tool handler so its return value is JSON-stringified for the model.
+
+    Transparent to the dispatch calling convention (forwards *args/**kwargs) and
+    preserves sync vs async so the registry awaits async handlers correctly. The
+    underlying ``handle()`` still returns its dict to direct callers (hooks,
+    HTTP routes, unit tests) — only the registered tool handler is wrapped.
+    """
+    if is_async:
+        @functools.wraps(handler)
+        async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
+            return _as_tool_content(await handler(*args, **kwargs))
+
+        return _async_wrapper
+
+    @functools.wraps(handler)
+    def _sync_wrapper(*args: Any, **kwargs: Any) -> str:
+        return _as_tool_content(handler(*args, **kwargs))
+
+    return _sync_wrapper
+
 _TOOLS = (
     {
-        "name": "workflow_get_workspace_context",
+        "name": "get_workspace_context",
         "schema": workspace.SCHEMA,
         "handler": workspace.handle,
         "check_fn": check_workflow_available,
     },
     {
-        "name": "workflow_get_feature_state",
+        "name": "get_feature_state",
         "schema": feature.SCHEMA,
         "handler": feature.handle,
         "check_fn": check_workflow_available,
     },
     {
-        "name": "workflow_write_product_spec",
+        "name": "write_product_spec",
         "schema": artifacts.WRITE_SPEC_SCHEMA,
         "handler": artifacts.handle_write_product_spec,
         "check_fn": check_workflow_available,
     },
     {
-        "name": "workflow_write_technical_design",
+        "name": "edit_document",
+        "schema": edit_tool.EDIT_DOCUMENT_SCHEMA,
+        "handler": edit_tool.handle_edit_document,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "write_technical_design",
         "schema": artifacts.WRITE_TD_SCHEMA,
         "handler": artifacts.handle_write_technical_design,
         "check_fn": check_workflow_available,
     },
     {
-        "name": "workflow_get_tasks",
+        "name": "get_tasks",
         "schema": tasks_tool.SCHEMA,
         "handler": tasks_tool.handle,
         "check_fn": check_workflow_available,
     },
     {
-        "name": "workflow_query_gitnexus",
+        "name": "query_gitnexus",
         "schema": gitnexus.SCHEMA,
         "handler": gitnexus.handle,
         "check_fn": gitnexus.check_available,
         "is_async": True,
     },
     {
-        "name": "workflow_query_rag",
+        "name": "query_rag",
         "schema": rag.SCHEMA,
         "handler": rag.handle,
         "check_fn": rag.check_available,
         "is_async": True,
+    },
+    {
+        "name": "load_skill",
+        "schema": skills_tool.SCHEMA,
+        "handler": skills_tool.handle,
+        "check_fn": skills_tool.check_available,
+    },
+    {
+        "name": "request_approval",
+        "schema": approval.SCHEMA,
+        "handler": approval.handle,
+        "check_fn": check_workflow_available,
     },
 )
 
@@ -62,13 +122,14 @@ _TOOLS = (
 def register(ctx: Any) -> None:
     """Entry point called by PluginManager.discover_and_load."""
     for t in _TOOLS:
+        is_async = t.get("is_async", False)
         ctx.register_tool(
             name=t["name"],
             toolset="workflow",
             schema=t["schema"],
-            handler=t["handler"],
+            handler=_json_result_handler(t["handler"], is_async),
             check_fn=t.get("check_fn"),
-            is_async=t.get("is_async", False),
+            is_async=is_async,
         )
         logger.debug("workflow plugin: registered tool %s", t["name"])
 

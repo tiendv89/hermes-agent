@@ -1,18 +1,25 @@
-"""Hermes callback → OpenAI chat-completions SSE translation.
+"""Adapt the agent's threaded callbacks into an async SSE chat stream.
 
-Emits hermes's native ``/v1/chat/completions`` streaming wire format (see
-``gateway/platforms/api_server.py``):
+A hermes ``AIAgent`` turn runs synchronously on a worker thread and reports
+progress through callbacks; the FastAPI endpoint needs to *await* a stream of
+Server-Sent Events on the event loop. :class:`HermesSSETranslator` sits between
+them — callbacks push pre-rendered frames onto a loop-bound queue (crossing the
+thread boundary with ``call_soon_threadsafe``), and :meth:`stream` drains that
+queue as the ``StreamingResponse`` body.
 
-  * a role chunk first (``delta.role = "assistant"``),
-  * ``chat.completion.chunk`` frames carrying ``delta.content`` for text,
-  * ``event: hermes.tool.progress`` frames for tool start/complete
-    (``status: running`` / ``status: completed``, correlated by ``toolCallId``),
-  * a finish chunk (``finish_reason`` + ``usage``),
-  * the ``data: [DONE]`` sentinel.
+The emitted format is hermes's native ``/v1/chat/completions`` SSE dialect, so
+any OpenAI-compatible client can consume it:
 
-``event: hermes.artifact.saved`` is a workflow-gateway extension on top of the
-native format — emitted when a workflow write tool succeeds — so the UI can
-refresh feature artifacts. It is additive and ignored by generic OpenAI clients.
+    data: {"object": "chat.completion.chunk", "choices": [{"delta": {"role": "assistant"}, ...}]}
+    data: {... "choices": [{"delta": {"content": "Hello"}, ...}]}
+    data: {... "choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {...}}
+    data: [DONE]
+
+On top of that base format two ``event:``-typed frames carry workflow-gateway
+extensions (plain OpenAI clients ignore them):
+
+    event: hermes.tool.progress   — a tool started / finished (status + toolCallId)
+    event: hermes.artifact.saved  — a workflow write tool committed a document
 """
 
 from __future__ import annotations
@@ -26,74 +33,75 @@ from typing import Any, AsyncIterator, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-_WRITE_TOOL_ARTIFACTS: Dict[str, str] = {
-    "workflow_write_product_spec": "product_spec",
-    "workflow_write_technical_design": "technical_design",
+# Workflow write tools → the artifact kind the FE should refresh when they
+# succeed. Drives the ``hermes.artifact.saved`` extension event.
+ARTIFACT_BY_WRITE_TOOL: Dict[str, str] = {
+    "write_product_spec": "product_spec",
+    "write_technical_design": "technical_design",
 }
 
-# Emit an SSE comment this often while the agent is busy (e.g. running a slow
-# tool) and producing no events, so idle proxies/browsers don't drop the
-# connection mid-turn. SSE comment lines (": ...") are ignored by clients.
+# How long stream() waits with no agent activity before sending an SSE comment
+# to keep the connection alive (slow tools shouldn't trip idle proxy timeouts).
+# Comment frames (": ...") are ignored by SSE clients.
 _KEEPALIVE_SECONDS = 15.0
+
+# The end-of-stream sentinel placed on the queue by the closing frame emit.
+_END = None
 
 
 class HermesSSETranslator:
-    """Bridges synchronous AIAgent callbacks to an async OpenAI-style SSE generator.
+    """Translate AIAgent callbacks into an OpenAI-style SSE chat stream.
 
-    Wire callbacks on AIAgent construction, then consume ``translator.stream()``
-    as the StreamingResponse body.
+    Build it inside the request coroutine (it binds to the running loop), pass
+    its ``on_*`` methods to the agent as callbacks, then return
+    :meth:`stream` as the streaming response body. The agent thread calls the
+    callbacks; the loop consumes :meth:`stream`.
     """
 
     def __init__(self, model: str = "hermes") -> None:
         self._loop = asyncio.get_running_loop()
-        self._queue: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        self._frames: "asyncio.Queue[Optional[str]]" = asyncio.Queue()
         self._model = model
         self._id = "chatcmpl-" + uuid.uuid4().hex
         self._created = int(time.time())
         self._usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-        self._finished = False
+        self._terminated = False
 
-    # -- frame helpers ------------------------------------------------------
+    # -- frame construction -------------------------------------------------
 
-    def _chunk(
-        self,
-        delta: Dict[str, Any],
-        finish_reason: Optional[str] = None,
-        usage: Optional[Dict[str, int]] = None,
-    ) -> str:
-        obj: Dict[str, Any] = {
+    def _chunk(self, delta: Dict[str, Any], **top_level: Any) -> str:
+        """Render a ``chat.completion.chunk`` frame. ``top_level`` adds sibling keys
+        (``finish_reason`` goes inside the choice; ``usage``/``hermes`` are siblings)."""
+        finish_reason = top_level.pop("finish_reason", None)
+        payload: Dict[str, Any] = {
             "id": self._id,
             "object": "chat.completion.chunk",
             "created": self._created,
             "model": self._model,
             "choices": [{"index": 0, "delta": delta, "finish_reason": finish_reason}],
+            **top_level,
         }
-        if usage is not None:
-            obj["usage"] = usage
-        return "data: " + json.dumps(obj) + "\n\n"
+        return f"data: {json.dumps(payload)}\n\n"
 
     @staticmethod
-    def _event(event: str, payload: Dict[str, Any]) -> str:
-        return f"event: {event}\ndata: " + json.dumps(payload) + "\n\n"
+    def _event(name: str, data: Dict[str, Any]) -> str:
+        return f"event: {name}\ndata: {json.dumps(data)}\n\n"
 
-    def _put(self, chunk: str) -> None:
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, chunk)
+    def _emit(self, frame: Optional[str]) -> None:
+        """Push a rendered frame (or the end sentinel) from any thread onto the queue."""
+        self._loop.call_soon_threadsafe(self._frames.put_nowait, frame)
 
-    # -- AIAgent callbacks --------------------------------------------------
+    # -- AIAgent callbacks (called on the worker thread) --------------------
 
-    def on_delta(self, delta: Any, **_: Any) -> None:
-        # hermes fires stream_delta_callback(None) as a "flush/close the current
-        # display box" sentinel before tool execution. It is NOT end-of-stream
-        # and carries no text — drop it so we don't emit an empty content chunk.
-        if not delta:
-            return
-        self._put(self._chunk({"content": delta}))
+    def on_delta(self, delta: Any = None, **_: Any) -> None:
+        # The agent fires a None delta to flush its display before a tool runs;
+        # that's not text and not end-of-stream, so skip falsy deltas.
+        if delta:
+            self._emit(self._chunk({"content": delta}))
 
-    def on_tool_start(
-        self, call_id: str = "", name: str = "", args: Any = None, **_: Any
-    ) -> None:
-        # Matches hermes tool_executor: tool_start_callback(call_id, name, args).
-        self._put(self._event("hermes.tool.progress", {
+    def on_tool_start(self, call_id: str = "", name: str = "", args: Any = None, **_: Any) -> None:
+        # hermes signature: tool_start_callback(call_id, name, args)
+        self._emit(self._event("hermes.tool.progress", {
             "tool": name,
             "toolCallId": call_id or name,
             "status": "running",
@@ -102,18 +110,15 @@ class HermesSSETranslator:
     def on_tool_complete(
         self, call_id: str = "", name: str = "", args: Any = None, output: Any = None, **_: Any
     ) -> None:
-        # Matches hermes tool_executor: tool_complete_callback(call_id, name, args, result).
-        self._put(self._event("hermes.tool.progress", {
+        # hermes signature: tool_complete_callback(call_id, name, args, result)
+        self._emit(self._event("hermes.tool.progress", {
             "tool": name,
             "toolCallId": call_id or name,
             "status": "completed",
         }))
-        if name in _WRITE_TOOL_ARTIFACTS:
-            artifact_output = output if isinstance(output, dict) else {}
-            if artifact_output.get("ok", False):
-                self._put(self._event("hermes.artifact.saved", {
-                    "artifact": _WRITE_TOOL_ARTIFACTS[name],
-                }))
+        artifact = ARTIFACT_BY_WRITE_TOOL.get(name)
+        if artifact and isinstance(output, dict) and output.get("ok"):
+            self._emit(self._event("hermes.artifact.saved", {"artifact": artifact}))
 
     def on_usage(self, input_tokens: int = 0, output_tokens: int = 0, **_: Any) -> None:
         self._usage = {
@@ -123,46 +128,39 @@ class HermesSSETranslator:
         }
 
     def on_error(self, message: str, **_: Any) -> None:
-        # Surface the error on the finish chunk (finish_reason="error") with a
-        # hermes-namespaced extra so the client can distinguish it from a clean
-        # stop without breaking OpenAI-compatible parsers.
-        self._finalize("error", error=message)
+        # Terminate with finish_reason="error"; the message rides in a hermes
+        # sidecar so OpenAI parsers still accept the frame.
+        self._terminate("error", error=message)
 
     def done(self) -> None:
-        self._finalize("stop")
+        self._terminate("stop")
 
     # -- termination --------------------------------------------------------
 
-    def _finalize(self, finish_reason: str, error: Optional[str] = None) -> None:
-        """Emit the finish chunk + [DONE] sentinel exactly once."""
-        if self._finished:
+    def _terminate(self, finish_reason: str, error: Optional[str] = None) -> None:
+        """Emit the final chunk + ``[DONE]`` + end sentinel, at most once."""
+        if self._terminated:
             return
-        self._finished = True
-        obj: Dict[str, Any] = {
-            "id": self._id,
-            "object": "chat.completion.chunk",
-            "created": self._created,
-            "model": self._model,
-            "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
-            "usage": self._usage,
-        }
-        if error:
-            obj["hermes"] = {"error": error}
-        self._put("data: " + json.dumps(obj) + "\n\n")
-        self._put("data: [DONE]\n\n")
-        self._put(None)
+        self._terminated = True
+
+        siblings: Dict[str, Any] = {"finish_reason": finish_reason, "usage": self._usage}
+        if error is not None:
+            siblings["hermes"] = {"error": error}
+        self._emit(self._chunk({}, **siblings))
+        self._emit("data: [DONE]\n\n")
+        self._emit(_END)
+
+    # -- async consumption (runs on the event loop) -------------------------
 
     async def stream(self) -> AsyncIterator[str]:
-        # Lead with the OpenAI role chunk so clients open the assistant message.
+        # Lead with the assistant role frame so clients open the message.
         yield self._chunk({"role": "assistant"})
         while True:
             try:
-                chunk = await asyncio.wait_for(self._queue.get(), timeout=_KEEPALIVE_SECONDS)
+                frame = await asyncio.wait_for(self._frames.get(), _KEEPALIVE_SECONDS)
             except asyncio.TimeoutError:
-                # No agent activity for a while (e.g. a slow tool) — keep the
-                # connection warm so it isn't dropped before the answer arrives.
                 yield ": keepalive\n\n"
                 continue
-            if chunk is None:
+            if frame is _END:
                 return
-            yield chunk
+            yield frame

@@ -1,4 +1,4 @@
-"""workflow_get_tasks tool — returns live task status from the workspace database."""
+"""get_tasks tool — returns live task status from the workspace database."""
 
 from __future__ import annotations
 
@@ -41,5 +41,5 @@ def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> Dict[str, 
     try:
         return {"ok": True, "tasks": get_feature_tasks(wid, fid)}
     except Exception as exc:
-        logger.warning("workflow_get_tasks failed: %s", exc)
+        logger.warning("get_tasks failed: %s", exc)
         return {"ok": False, "error": str(exc)}

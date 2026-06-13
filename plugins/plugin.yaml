@@ -3,12 +3,14 @@ version: 1.0.0
 description: "Workspace-aware tools for the digital-factory agent: read workspace context, read feature state, write product-spec and technical-design artifacts. Registers a pre_llm_call hook that injects workspace + feature context into every turn."
 author: "NousResearch"
 provides_tools:
-  - workflow_get_workspace_context
-  - workflow_get_feature_state
-  - workflow_write_product_spec
-  - workflow_write_technical_design
-  - workflow_get_tasks
-  - workflow_query_gitnexus
-  - workflow_query_rag
+  - get_workspace_context
+  - get_feature_state
+  - write_product_spec
+  - edit_document
+  - write_technical_design
+  - get_tasks
+  - query_gitnexus
+  - query_rag
+  - load_skill
 hooks:
   - pre_llm_call

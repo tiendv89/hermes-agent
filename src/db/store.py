@@ -289,7 +289,12 @@ async def get_messages_as_conversation(
     )
     messages = []
     for msg in result.scalars().all():
-        entry: Dict[str, Any] = {"role": msg.role, "content": msg.content}
+        # Coerce NULL content to "" — assistant messages that only made tool
+        # calls store no text, and a null `content` is rejected by stricter
+        # OpenAI-compatible providers (e.g. DeepSeek: "content should be a
+        # string or a list"). Anthropic tolerates null, so this was previously
+        # latent. Empty string is valid for every provider.
+        entry: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
         if msg.tool_call_id:
             entry["tool_call_id"] = msg.tool_call_id
         if msg.tool_name:
@@ -385,6 +390,7 @@ async def list_sessions(
             Session.title,
             Session.started_at,
             Session.last_active_at,
+            Session.model,
         )
         .where(
             Session.workspace_id == workspace_id,
@@ -404,5 +410,6 @@ async def list_sessions(
             "started_at": row.started_at,
             "last_active_at": row.last_active_at,
             "last_message_excerpt": excerpt,
+            "model": row.model,
         })
     return out

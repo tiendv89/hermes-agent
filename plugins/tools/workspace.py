@@ -1,4 +1,4 @@
-"""workflow_get_workspace_context tool — reads workspace metadata from the workflow-backend DB."""
+"""get_workspace_context tool — reads workspace metadata from the workflow-backend DB."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
     "type": "object",
+    "description": (
+        "Read a workspace's context — its repos, roles, environments and "
+        "workflow settings from workspace.yaml. Use this to learn which repos "
+        "and stacks a feature spans before designing or breaking down work."
+    ),
     "properties": {
         "workspace_id": {
             "type": "string",
@@ -31,5 +36,5 @@ def handle(workspace_id: str = "", **_: Any) -> Dict[str, Any]:
     try:
         return {"ok": True, "workspace": get_workspace_context(wid)}
     except Exception as exc:
-        logger.warning("workflow_get_workspace_context failed: %s", exc)
+        logger.warning("get_workspace_context failed: %s", exc)
         return {"ok": False, "error": str(exc)}

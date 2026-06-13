@@ -1,4 +1,4 @@
-"""workflow_query_gitnexus tool — async passthrough to the GitNexus MCP server."""
+"""query_gitnexus tool — async passthrough to the GitNexus MCP server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from ..mcp_client import call_mcp_tool
+from ..mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +70,8 @@ def _build_arguments(tool: str, query: str) -> Dict[str, Any]:
     return {"q": query}
 
 
-async def handle(query: str = "", tool: str = "query", **_: Any) -> Dict[str, Any]:
+async def handle(query: Any = "", tool: str = "query", **_: Any) -> Dict[str, Any]:
+    query = coerce_text(query)
     if not query and tool != "list_repos":
         return {"ok": False, "error": "query is required for GitNexus tool %r." % tool}
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
@@ -80,5 +81,5 @@ async def handle(query: str = "", tool: str = "query", **_: Any) -> Dict[str, An
         results = await call_mcp_tool(url, tool, _build_arguments(tool, query))
         return {"ok": True, "results": results}
     except Exception as exc:
-        logger.warning("workflow_query_gitnexus failed: %s", exc)
+        logger.warning("query_gitnexus failed: %s", exc)
         return {"ok": False, "error": str(exc)}
