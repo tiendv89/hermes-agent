@@ -378,14 +378,14 @@ class TestCheckAvailableGating:
 
 
 class TestRegisterT3:
-    def test_registers_8_tools(self):
+    def test_registers_9_tools(self):
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        # 7 original tools + workflow_load_skill added by T6 = 8
-        assert ctx.register_tool.call_count == 8
+        # 7 original tools + workflow_load_skill (T6) + workflow_request_approval (T3) = 9
+        assert ctx.register_tool.call_count == 9
 
-    def test_all_8_tool_names_registered(self):
+    def test_all_9_tool_names_registered(self):
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
@@ -403,6 +403,7 @@ class TestRegisterT3:
             "workflow_query_gitnexus",
             "workflow_query_rag",
             "workflow_load_skill",
+            "workflow_request_approval",
         }
         assert names == expected
 
@@ -439,6 +440,7 @@ class TestRegisterT3:
             "workflow_edit_document",
             "workflow_write_technical_design",
             "workflow_get_tasks",
+            "workflow_request_approval",
         }
         for call in ctx.register_tool.call_args_list:
             name = call.kwargs.get("name") or call.args[0]
