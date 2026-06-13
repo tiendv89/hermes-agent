@@ -7,7 +7,7 @@ from typing import Any
 
 from .db import check_workflow_available
 from .hooks import inject_context
-from .tools import workspace, feature, artifacts, edit as edit_tool, tasks as tasks_tool, gitnexus, rag
+from .tools import workspace, feature, artifacts, edit as edit_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +61,12 @@ _TOOLS = (
         "handler": rag.handle,
         "check_fn": rag.check_available,
         "is_async": True,
+    },
+    {
+        "name": "workflow_load_skill",
+        "schema": skills_tool.SCHEMA,
+        "handler": skills_tool.handle,
+        "check_fn": skills_tool.check_available,
     },
 )
 

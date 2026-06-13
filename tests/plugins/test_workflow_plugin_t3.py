@@ -4,7 +4,7 @@ Covers:
   - workflow_get_tasks: parametrisation, happy path, db error
   - gitnexus/rag: arg passing (mock call_mcp_tool)
   - check_available gating: tools omitted when URL env vars not set
-  - register(): 7 tools, 2 MCP tools with is_async=True
+  - register(): 8 tools (7 from T3 + workflow_load_skill from T6), 2 MCP tools with is_async=True
   - inject_context: task-summary block + capability advertisement
   - inject_context: blocked_tasks block when a task is blocked
 """
@@ -373,7 +373,7 @@ class TestCheckAvailableGating:
 
 
 # ---------------------------------------------------------------------------
-# register() — 8 tools (7 original + workflow_edit_document), 2 MCP async
+# register() — 8 tools (7 from T3 + workflow_load_skill from T6), 2 MCP tools with is_async=True
 # ---------------------------------------------------------------------------
 
 
@@ -382,6 +382,7 @@ class TestRegisterT3:
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
+        # 7 original tools + workflow_load_skill added by T6 = 8
         assert ctx.register_tool.call_count == 8
 
     def test_all_8_tool_names_registered(self):
@@ -401,6 +402,7 @@ class TestRegisterT3:
             "workflow_get_tasks",
             "workflow_query_gitnexus",
             "workflow_query_rag",
+            "workflow_load_skill",
         }
         assert names == expected
 

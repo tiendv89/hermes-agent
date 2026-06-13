@@ -11,5 +11,6 @@ provides_tools:
   - workflow_get_tasks
   - workflow_query_gitnexus
   - workflow_query_rag
+  - workflow_load_skill
 hooks:
   - pre_llm_call
