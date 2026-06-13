@@ -7,7 +7,7 @@ from typing import Any
 
 from .db import check_workflow_available
 from .hooks import inject_context
-from .tools import workspace, feature, artifacts, tasks as tasks_tool, gitnexus, rag
+from .tools import workspace, feature, artifacts, edit as edit_tool, tasks as tasks_tool, gitnexus, rag
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +28,12 @@ _TOOLS = (
         "name": "workflow_write_product_spec",
         "schema": artifacts.WRITE_SPEC_SCHEMA,
         "handler": artifacts.handle_write_product_spec,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "workflow_edit_document",
+        "schema": edit_tool.EDIT_DOCUMENT_SCHEMA,
+        "handler": edit_tool.handle_edit_document,
         "check_fn": check_workflow_available,
     },
     {
