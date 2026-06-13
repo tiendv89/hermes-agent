@@ -1,4 +1,4 @@
-"""workflow_edit_document — targeted str_replace edit tool.
+"""edit_document — targeted str_replace edit tool.
 
 The Canvas/Artifacts targeted-edit pattern: the agent emits a list of
 {old_string, new_string} replacements; the module reads the current content,
@@ -25,6 +25,11 @@ _DOCUMENT_FILES: Dict[str, str] = {
 
 EDIT_DOCUMENT_SCHEMA: Dict[str, Any] = {
     "type": "object",
+    "description": (
+        "Make targeted find-and-replace edits to a feature document "
+        "(product_spec or technical_design) and commit them to the feature "
+        "branch. Prefer this over a full rewrite when changing specific passages."
+    ),
     "properties": {
         "workspace_id": {
             "type": "string",
@@ -135,7 +140,7 @@ def handle_edit_document(
     except StaleBaseError as exc:
         return {"ok": False, "conflict": True, "error": str(exc)}
     except Exception as exc:
-        logger.warning("workflow_edit_document failed: %s", exc)
+        logger.warning("edit_document failed: %s", exc)
         return {"ok": False, "error": str(exc)}
 
     out: Dict[str, Any] = {

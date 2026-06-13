@@ -1,4 +1,4 @@
-"""workflow_load_skill tool — load a skill's full content on demand.
+"""load_skill tool — load a skill's full content on demand.
 
 Returns the full SKILL.md body plus any reference files for a named skill.
 Only knowledge and authoring skills are loadable; mutation and execution skills
@@ -9,13 +9,18 @@ environment the gateway does not have).
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
     "type": "object",
+    "description": (
+        "Load a skill's full guidance on demand — returns the named skill's "
+        "SKILL.md body plus any reference files. Use when you need detailed "
+        "best-practices or workflow instructions; pick a name from the skill "
+        "index injected in context (technical or workflow skills)."
+    ),
     "properties": {
         "name": {
             "type": "string",
@@ -32,11 +37,27 @@ SCHEMA: Dict[str, Any] = {
 
 
 def check_available(**_: Any) -> bool:
-    """Available when the skill index is configured (WORKFLOW_GITHUB_REPO set)."""
-    return bool(os.environ.get("WORKFLOW_GITHUB_REPO", "").strip())
+    """Available whenever the bundled skill index has at least one skill."""
+    from ..skills import get_index
+
+    return bool(get_index())
 
 
-def handle(name: str, **_: Any) -> Dict[str, Any]:
+def _coerce_name(name: Any) -> str:
+    """Normalize the ``name`` argument to a plain string.
+
+    Over the MCP path the model frequently passes a structured object instead
+    of a bare string (e.g. ``{"name": "tech-lead"}``), which would otherwise
+    blow up on ``name.strip()`` with ``'dict' object has no attribute 'strip'``.
+    """
+    if isinstance(name, dict):
+        name = name.get("name") or name.get("skill") or ""
+    if not isinstance(name, str):
+        name = "" if name is None else str(name)
+    return name.strip()
+
+
+def handle(name: Any = "", **_: Any) -> Dict[str, Any]:
     """Return the full SKILL.md body + reference files for the named skill.
 
     Returns:
@@ -46,7 +67,7 @@ def handle(name: str, **_: Any) -> Dict[str, Any]:
     """
     from ..skills import get_skill
 
-    name = name.strip()
+    name = _coerce_name(name)
     if not name:
         return {"ok": False, "error": "name must be a non-empty string."}
 
@@ -57,8 +78,8 @@ def handle(name: str, **_: Any) -> Dict[str, Any]:
             return {
                 "ok": False,
                 "error": (
-                    "Skill index is empty — WORKFLOW_GITHUB_REPO or GITHUB_TOKEN "
-                    "may not be configured."
+                    "Skill index is empty — the bundled skills directory "
+                    "(plugins/skills) is missing or unreadable."
                 ),
             }
         available = sorted(index.keys())

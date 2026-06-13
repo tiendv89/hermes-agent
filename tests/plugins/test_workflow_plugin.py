@@ -136,10 +136,10 @@ class TestPluginManifest:
         assert "provides_tools" in manifest
         tools = manifest["provides_tools"]
         assert isinstance(tools, list)
-        assert "workflow_get_workspace_context" in tools
-        assert "workflow_get_feature_state" in tools
-        assert "workflow_write_product_spec" in tools
-        assert "workflow_write_technical_design" in tools
+        assert "get_workspace_context" in tools
+        assert "get_feature_state" in tools
+        assert "write_product_spec" in tools
+        assert "write_technical_design" in tools
 
 
 # ---------------------------------------------------------------------------
@@ -653,10 +653,10 @@ class TestRegister:
         ctx = MagicMock()
         plugin.register(ctx)
         registered_names = [call.kwargs.get("name") or call.args[0] for call in ctx.register_tool.call_args_list]
-        assert "workflow_get_workspace_context" in registered_names
-        assert "workflow_get_feature_state" in registered_names
-        assert "workflow_write_product_spec" in registered_names
-        assert "workflow_write_technical_design" in registered_names
+        assert "get_workspace_context" in registered_names
+        assert "get_feature_state" in registered_names
+        assert "write_product_spec" in registered_names
+        assert "write_technical_design" in registered_names
 
     def test_registers_pre_llm_call_hook(self):
         plugin = _load_plugin_init()

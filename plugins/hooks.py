@@ -63,7 +63,7 @@ def _build_skills_block(feature_id: str, feature_stage: str, repo_ids: list[str]
     knowledge = {name: e for name, e in index.items() if not e.is_authoring}
     authoring = {name: e for name, e in index.items() if e.is_authoring}
 
-    lines: list[str] = ["## Available skills (call workflow_load_skill to load full content)"]
+    lines: list[str] = ["## Available skills (call load_skill to load full content)"]
 
     # For the technical-design stage, surface matched technical_skills first.
     if feature_stage == "technical_design" and repo_ids:
@@ -167,13 +167,13 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
     if skills_block:
         parts.append(skills_block)
 
-    caps = ["workflow_get_tasks (live task status)"]
+    caps = ["get_tasks (live task status)"]
     if os.environ.get("GITNEXUS_MCP_URL"):
-        caps.append("workflow_query_gitnexus (code structure / call graph / impact)")
+        caps.append("query_gitnexus (code structure / call graph / impact)")
     if os.environ.get("RAG_MCP_URL"):
-        caps.append("workflow_query_rag (semantic recall over past specs/designs/logs)")
-    if os.environ.get("WORKFLOW_GITHUB_REPO"):
-        caps.append("workflow_load_skill (load full skill guidance on demand)")
+        caps.append("query_rag (semantic recall over past specs/designs/logs)")
+    if get_index():
+        caps.append("load_skill (load full skill guidance on demand)")
     parts.append(
         "Before answering questions about task status, code structure, or prior decisions, "
         "use the workflow tools rather than guessing: " + "; ".join(caps) + ". "

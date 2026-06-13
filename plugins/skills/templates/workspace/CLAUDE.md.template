@@ -1,0 +1,15 @@
+# Workspace operating guide
+
+This directory is a project-management workspace, not an implementation repository.
+
+## Project local context
+- Project name: <project-name>
+- Project purpose: <project-purpose>
+
+<!-- BEGIN SHARED WORKFLOW RULES -->
+{{include:/workspace/workflow/CLAUDE.shared.md}}
+<!-- END SHARED WORKFLOW RULES -->
+
+## Project-specific additional rules
+- Add project-specific rules here
+- Do not rewrite the shared workflow rules above unless intentionally changing the company model

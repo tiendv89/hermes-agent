@@ -1,0 +1,598 @@
+# Shared workflow rules
+
+## Feature lifecycle
+
+Features follow this lifecycle:
+
+- in_design
+- in_tdd
+- ready_for_implementation
+- in_implementation
+- in_handoff
+- done
+- blocked
+- cancelled
+
+![Feature Lifecycle Workflow](docs/feature-workflow.png)
+
+## Stage review status values
+
+- draft
+- awaiting_approval
+- approved
+- rejected
+
+## Task status values
+
+- todo
+- ready
+- in_progress
+- blocked
+- in_review
+- reviewing
+- review_passed
+- review_incomplete
+- change_requested
+- done
+- cancelled
+
+## Workflow
+
+1. Product owner produces `product-spec.md`
+2. Human approves or rejects product spec
+3. Tech lead uses `tech-lead` (Phase 1) to produce `technical-design.md`
+4. Human approves or rejects technical design
+5. Tech lead uses `tech-lead` (Phase 2) to produce task breakdown under `docs/features/<feature_id>/tasks/`
+6. Human approves or rejects tasks
+7. Teams execute tasks in their real implementation repos
+8. Handoffs are recorded under `handoffs/`
+9. Human approves final handoff
+
+## Task structure rules
+
+- Tasks are stored as one YAML file per task under `docs/features/<feature_id>/tasks/`
+- Subtasks are recorded inside the parent task file as checklist/log entries
+- Subtasks do not have their own lifecycle status
+- Task lifecycle status exists only at the task file level
+- One task changes one repository only
+- If a logical change requires edits in two repos (e.g. move a file to repo A and update a reference in repo B), split it into two tasks — one per repo — with the second depending on the first
+- `repo` must match `workspace.yaml -> repos[].id`
+- Every task must define:
+  - `status`
+  - `depends_on`
+  - `execution.actor_type`
+  - `branch`
+
+## Task status transition rules
+
+Valid transitions only — skipping a step is a rule violation:
+
+```
+todo → ready                  (auto-ready rule, applied by whoever marks the last dependency done)
+ready → in_progress           (start-implementation only)
+in_progress → in_review       (agent or human, after work is complete)
+in_progress → blocked         (agent, when blocked)
+in_review → reviewing         (orchestrator, on reviewer dispatch claim — first-push-wins)
+in_review → done              (human, or handleMergedPrs when the impl PR merges directly without a reviewer cycle)
+in_review → ready             (human, when rejecting for rework)
+in_review → review_incomplete (orchestrator, when reviewer exits without a valid result — up to MAX_REVIEW_INCOMPLETES times)
+reviewing → review_passed     (orchestrator, when reviewer verdict is `passed` — APPROVE posted, awaiting impl PR merge)
+reviewing → change_requested  (orchestrator, when reviewer posts REQUEST_CHANGES)
+reviewing → review_incomplete (orchestrator, when reviewer exits without a valid result — up to MAX_REVIEW_INCOMPLETES times)
+review_passed → done          (orchestrator/handleMergedPrs, when the impl PR is observed merged on GitHub)
+review_incomplete → reviewing (orchestrator, when re-dispatching reviewer on the next poll cycle)
+review_incomplete → blocked   (orchestrator, after MAX_REVIEW_INCOMPLETES failed review attempts — escalates)
+change_requested → in_progress  (fix agent — same first-push-wins claim as ready → in_progress)
+blocked → ready               (human, after resolving the block — only if pr.url is null)
+blocked → in_review           (human, after resolving the block — when pr.url is already set)
+any → cancelled               (human only)
+```
+
+- `todo → in_progress` is **never valid** — a task must pass through `ready` first.
+- `start-implementation` must hard-stop if the task status is not `ready`.
+- **Unblock target rule**: when a human resolves a block, the target status depends on how far the task had progressed. If `pr.url` is set, reset to `in_review` — the PR already exists and the agent should resume review work. If `pr.url` is null, reset to `ready` — the task has not yet produced a PR and must be re-claimed. Never reset a task to `ready` once a PR has been opened.
+- **Change-requested claim rule**: `change_requested → in_progress` uses the same first-push-wins claim protocol as `ready → in_progress`. The fix agent commits the claim to the management repo task branch before beginning implementation. If the push is rejected (non-fast-forward), the agent must stop — another fix agent won the claim.
+- **Reviewer-dispatch claim rule**: `in_review → reviewing` (and `review_incomplete → reviewing` for retries) uses the same first-push-wins claim protocol as other agent claims. The orchestrator writes a `reviewer_started` log entry and sets status to `reviewing` atomically in the claim commit. The `reviewing` status itself is the duplicate-claim guard — once a task is `reviewing`, other orchestrator instances will not dispatch a second reviewer for the same task.
+- **Review-passed holding rule**: after a `passed` verdict the task is set to `review_passed`, **not** back to `in_review`. This intentionally deviates from the approved technical design (which specified `reviewing → in_review`): resetting to `in_review` would allow `findReviewableTasks` to dispatch a fresh reviewer while waiting for the impl PR to merge, creating a duplicate-dispatch window. `review_passed` closes that window — it is excluded from `findReviewableTasks` and exists solely as a holding state. The in_review PR poll continues to watch the PR; when GitHub reports `merged: true`, `handleMergedPrs` writes `review_passed → done`.
+- **Review-incomplete retry rule**: `review_incomplete → reviewing` uses the same first-push-wins claim protocol as reviewer dispatch. After `MAX_REVIEW_INCOMPLETES` failures the orchestrator escalates directly to `blocked` instead of retrying.
+
+![Task Status Workflow](docs/task-workflow.png)
+
+## Task log rules
+
+- Every task state change should be recorded in the task file `log`
+- Both humans and agents append task log entries when they mutate task state
+- Marking a task `done` requires a human log entry
+- **Timestamp rule**: every log entry `at:` field must use a real local timestamp with timezone offset obtained at the time of the action via `date +%Y-%m-%dT%H:%M:%S%z`. Hardcoded or placeholder timestamps (e.g. `00:00:00Z`) are not acceptable.
+- **Note string rule**: `note:` values must be plain single-line strings or use YAML block scalar syntax (`>-` for folded, `|-` for literal). Never write a multi-line plain scalar (unquoted continuation lines after the first) — YAML parsers reject these inconsistently. Prefer `>-` for prose notes:
+  ```yaml
+  note: >-
+    First sentence. Second sentence that would be long.
+    Continuation is safe here because >- folds lines into spaces.
+  ```
+
+### Valid task log action names
+
+The following `action` values are defined for task log entries:
+
+| Action | Set by | Meaning |
+|---|---|---|
+| `created` | human / tech-lead | task file created during breakdown |
+| `ready` | auto-ready rule | task eligible for execution |
+| `claimed` | agent / runtime | status set to `in_progress`, claim commit pushed |
+| `rag_pre_flight` | runtime | RAG context injected before executor spawn |
+| `started` | agent | executor work phase begun |
+| `work_phase_complete` | agent | intermediate work phase finished |
+| `blocked` | agent | task set to `blocked` with reason |
+| `reviewer_started` | reviewer agent | Audit-only. Written alongside the `reviewing` status claim commit. The orchestrator must never read this entry to make a dispatch decision; use `task.status === "reviewing"` instead. |
+| `fix_started` | fix agent | Audit-only. Written alongside the `in_progress` status claim commit for fix runs. The orchestrator must never read this entry to make a dispatch decision; use `task.status === "in_progress"` instead. |
+| `reviewer_complete` | reviewer agent | reviewer verdict applied — task mutated to `change_requested` (REQUEST_CHANGES) or `review_passed` (APPROVE; awaits impl PR merge) |
+| `review_blocked` | orchestrator | reviewer exited without a valid result — task transitioned to `review_incomplete` for retry; escalates to `blocked` after max attempts |
+| `retried` | orchestrator | max-turns block reset to `ready` for retry |
+| `done` | human or reviewer agent | task work accepted |
+| `cancelled` | human | task cancelled |
+
+## Task file scope
+
+An agent executing task T_x must only write to `T_x.yaml` in the management repo. Writing to any other task file (`T_y.yaml` where y ≠ x) is forbidden — even for valid reasons such as schema migrations, audit entries, or bulk updates.
+
+Cross-cutting changes to multiple task files must be:
+- Planned as a dedicated task with a single executor.
+- Executed with no concurrent runners touching any of the affected files.
+
+This rule preserves the concurrency model: each task YAML is an independent, contention-free write target. The moment an agent writes to a sibling task file, that guarantee breaks.
+
+## Dependency rules
+
+- Every task must define `depends_on` (use `[]` if none)
+- A task can only start when:
+  - its status is `ready`
+  - all tasks in `depends_on` are `done`
+- This rule is enforced by `start-implementation`
+- **Auto-ready rule**: when a task is marked `done`, any task whose entire `depends_on` list is now satisfied must have its status advanced from `todo` to `ready`. The actor who marks the dependency `done` is responsible for applying this transition and appending a log entry to each affected task.
+
+## Execution rules
+
+Each task must define:
+
+```yaml
+execution:
+  actor_type: human | agent | either
+```
+
+## Review boundary
+
+- Agents may move work to `in_review`
+- Humans review, validate, and decide whether work becomes `done`; reviewer agents may also mark `done` when CI and the quality rubric both pass
+- Reviewer agents may set `change_requested` when posting a `REQUEST_CHANGES` GitHub review
+- Agents do not approve stages
+- Agents do not mark tasks `done` for tasks with `execution.requires_human_review: true` — the reviewer still posts APPROVE but skips the PR merge, and the orchestrator waits for the human to merge the PR before marking the task `done` (via the existing in_review PR poll)
+
+## Commit-before-block rule
+
+Before an agent sets a task to `status: blocked` for **any** reason, it must:
+
+1. **Commit all in-progress work** to the task's feature branch — even partial, even broken. Use a commit message that describes the state honestly (e.g. `wip(T3): partial indexer — blocked on Qdrant auth`).
+2. **Push** the commit to origin so the next agent can see it.
+3. **Set `blocked_reason`** — a clear description of what went wrong.
+4. **Set `blocked_suggestion`** — a concrete next step for the agent that picks this up (e.g. "check Qdrant credentials in .env, re-run `qdrant_init.py` manually to verify connection, then continue from `services/indexer.py:142`").
+
+This ensures the next agent inherits full context: code state on the branch, the reason for the block, and a starting point. An agent that blocks without committing its work wastes the next agent's time.
+
+## Start rule
+
+- Tasks marked `ready` are eligible for execution
+- Execution must begin through `start-implementation`
+
+## Skill execution contract
+
+When a workflow skill declares an autonomous execution contract — any instruction such as "do not stop after X", "proceed directly", "all steps are part of a single invocation", or "without pausing for human confirmation" — the agent must honour that contract in full:
+
+- Complete every declared step in sequence without pausing or returning control to the user between steps.
+- Do not stop after setup phases (branch creation, environment resolution, log entry) and wait for a prompt.
+- Do not treat a partial completion (e.g. implementation only, branch setup only) as a finished invocation.
+- If a blocking issue arises that cannot be resolved, set `status: blocked`, write `blocked_reason`, and stop — do not silently drop remaining steps.
+
+Stopping early and waiting for the user to continue is a **contract violation** regardless of whether any individual step succeeded.
+
+## Reset / rollback rule
+
+- Stage resets preserve artifacts
+- Downstream artifacts are marked for revalidation, not deleted
+
+## Environment resolution rules
+
+- Before any repo operation, the operator or agent must read the project `.env` file if it exists.
+- Workflow-relevant environment values should be resolved from the project `.env` first.
+- If a required value is missing from `.env`, the workflow must ask the user instead of guessing.
+
+## Required environment values
+
+Typical required values:
+
+- `WORKSPACE_ROOT`
+- `GIT_AUTHOR_NAME`
+- `GIT_AUTHOR_EMAIL`
+- `GITHUB_ACCOUNT`
+
+## Figma link propagation rule
+
+A Figma link in a product spec is a design contract. It must be carried forward through every downstream artifact that touches UI.
+
+**Product spec → technical design:**
+- If `product-spec.md` contains one or more Figma URLs, the tech lead must include a `## Figma` section in `technical-design.md` that lists every Figma URL and maps each one to the screens or components it covers.
+- The technical design may not be marked `approved` if the product spec has Figma links and the technical design has no `## Figma` section.
+
+**Technical design → tasks:**
+- If `technical-design.md` has a `## Figma` section, every task in `tasks.md` that implements UI for a `frontend_engineer` repo must include a `### Figma` subsection listing the Figma URL(s) and frame names relevant to that task.
+- A frontend task with no `### Figma` subsection when the technical design has Figma links is incomplete and must be corrected before the task is marked `ready`.
+
+## Figma MCP usage rule
+
+When `FIGMA_PERSONAL_ACCESS_TOKEN` is present in the project `.env` and `figma-mcp` is listed under the role's `enabled_skills`, agents must use the Figma MCP to read design context before implementing any UI.
+
+- Read the target Figma frame or component via the MCP **before** writing code.
+- Extract design tokens (colors, spacing, typography) from Figma variables — do not hardcode values that exist in Figma.
+- Derive component and prop names from the Figma component name.
+- If `FIGMA_PERSONAL_ACCESS_TOKEN` is missing, stop and ask the user to add it to `.env` (see `.env.template`).
+- Never skip Figma context when the token is available — guessing at design values is not acceptable.
+
+## Frontend engineer Figma implementation rule
+
+When a task spec includes a `### Figma` subsection, the Figma design is the source of truth for visual output — not the text description.
+
+- **Read first**: use the Figma MCP (`get_design_context` or `get_screenshot`) on every frame listed in `### Figma` before writing any UI code. Do not implement from the text description alone.
+- **Token is available**: if `FIGMA_PERSONAL_ACCESS_TOKEN` is set, reading Figma context is mandatory. Skipping it is a rule violation.
+- **Token is missing**: if the task has a `### Figma` subsection but `FIGMA_PERSONAL_ACCESS_TOKEN` is absent, set status to `blocked`, `blocked_reason: skill_missing`, and record in `blocked_details`: `"FIGMA_PERSONAL_ACCESS_TOKEN not set — cannot read Figma design"`. Do not implement from guesswork.
+- **Fidelity**: the implemented UI must match the Figma frames for layout, spacing, color tokens, typography, and all interactive states (default, hover, focus, disabled, error, loading). Deviations require an explicit note in the PR description.
+- **No orphan values**: every color, spacing, or typography value used in the implementation must map to a Figma variable or a codebase design token. Hardcoded hex or pixel values that exist in Figma are not acceptable.
+
+## Management repo
+
+The management repo is the repository that stores the workspace's feature docs, task YAML files (`docs/features/<feature_id>/tasks/`), and `CLAUDE.md`. It is the authoritative record of task state and is separate from (or may overlap with) implementation repos.
+
+Rules:
+- Every workspace must declare exactly one management repo in `workspace.yaml` via `management_repo: <repo_id>`, where the value matches a `repos[].id` entry.
+- The management repo is a required field. Workflow skills that operate on task state must resolve it before proceeding.
+- **Claim commit rule**: before an agent begins implementation work in a target repo, it must commit and push the claim (status change to `in_progress` in `T_x.yaml`) to the management repo on the task's feature branch. If the push is rejected (non-fast-forward), the agent must stop — another agent won the claim.
+- The management repo commit is the canonical record of task ownership. Without it, the claim is not valid and the agent must not proceed with implementation.
+- Agents may only modify their own task file (`T_x.yaml`) in the management repo. See "Task file scope" rule.
+- **Branch merge rule**: when the human marks a task `done`, they must also open a PR on the management repo to merge the task's feature branch into `main`. This keeps `main` up-to-date with all terminal task states and prevents task state from living only on feature branches indefinitely. The `done` log entry and the management repo merge PR must happen together.
+- **Rebase-before-PR rule**: before opening a workspace PR (or pushing the final implementation branch for review), the task branch must be rebased onto its **PR base branch**:
+  - If the task's PR targets `feature/<feature_id>` (intra-feature task — the feature branch exists in the impl repo), rebase onto `origin/feature/<feature_id>`.
+  - If the task's PR targets `<base_branch>` directly, rebase onto `origin/<base_branch>`.
+  - `<base_branch>` is declared in `workspace.yaml` for each repo — do not assume `main`. This prevents duplicate commits from parallel tasks that merged while this task was in flight.
+- **Rebase-before-done rule**: before a workspace PR is merged (and a task marked `done`), the task branch must be rebased onto its PR base branch (see Rebase-before-PR rule above). A PR whose branch is not up-to-date with the base branch must not be merged — rebase it first, then merge. This applies to both the management repo PR and any implementation repo PR for the same task.
+- **Mergeable-before-close rule**: before the runtime merges the workspace PR, it checks whether the PR is in a mergeable state. If the PR is `CONFLICTING` (`mergeable: false`), the merge is skipped and a `workspace_pr_not_mergeable` event is emitted — the PR is left open. The task YAML remains `done`; only the workspace PR merge is deferred. If mergeability is `UNKNOWN` (GitHub has not finished computing it), the merge proceeds and any error is handled by the existing `workspace_pr_merge_failed` path. Operators must resolve the conflict on the feature branch and push before the next recovery cycle will retry.
+- **No direct push to main rule**: nothing may be committed directly to `main` on the management repo — not task state, not feature docs, not skill updates, not workspace initialisation, not any other change. Every write to the management repo must land on a feature branch and be merged via PR. This applies to agents, workflow skills (`init-feature`, `approve-feature`, `init-workspace`, etc.), and humans alike. No exceptions.
+- **Dependency unblock rule**: whenever a task is marked `done`, immediately check every other task in the same feature whose `depends_on` list includes the just-completed task. For each such task where all `depends_on` entries are now `done`, transition its status from `todo` to `ready` and append a `ready` log entry. This must happen in the same commit as the `done` update.
+- **Task branch rule**: every commit to the management repo during task execution must land on the task's feature branch, not on `main`. Before committing, follow the **branch checkout + sync protocol** below. This rule applies to all management repo writes during a task — claim commits, status updates, log entries, and log file flushes.
+
+## Branch checkout + sync protocol
+
+This protocol applies before any commit to **both the management repo and implementation repos** during task execution. Run it whenever switching to or working on a feature branch.
+
+### Step 1 — Ensure you are on the feature branch
+
+```bash
+git fetch origin
+git checkout <feature-branch>   # create from the correct base if it doesn't exist yet
+```
+
+If the branch does not exist locally or on origin, determine the correct base before creating it:
+
+**For implementation repos** — check whether a feature-level branch (`feature/<feature_id>`) exists on origin. If it does, the task is intra-feature and must be created from there:
+
+```bash
+# Intra-feature task: feature/<feature_id> exists on origin
+git checkout -b <task-branch> origin/feature/<feature_id>
+
+# Standalone task: no feature branch, create from base_branch
+git checkout <base_branch> && git pull origin <base_branch>
+git checkout -b <task-branch>
+```
+
+To check whether the feature branch exists:
+```bash
+git fetch origin
+git show-ref --verify --quiet refs/remotes/origin/feature/<feature_id> && echo "exists" || echo "absent"
+```
+
+**For the management repo** — always create from `main` (task branches in the management repo are always rooted at `main`).
+
+### Step 2 — Pull latest from origin
+
+```bash
+git pull origin <feature-branch>
+```
+
+If the pull succeeds (fast-forward or clean merge), continue.
+
+### Step 3 — Handle a failed pull (force-push or diverged history)
+
+If `git pull` is rejected because the origin branch has diverged (e.g. another agent force-pushed or rewound the branch), follow this recovery sequence:
+
+1. **Save local changes** — capture everything this agent added on top of the base branch:
+   ```bash
+   git diff origin/main..HEAD > /tmp/<task-id>-local.patch
+   git log origin/main..HEAD --oneline > /tmp/<task-id>-local-commits.txt
+   ```
+2. **Reset to main** and delete the stale local branch:
+   ```bash
+   git checkout main
+   git branch -D <feature-branch>
+   ```
+3. **Re-checkout** the branch from origin:
+   ```bash
+   git checkout -b <feature-branch> origin/<feature-branch>
+   ```
+4. **Analyse before touching anything** — read the saved patch and the current branch state carefully:
+   ```bash
+   git diff origin/<feature-branch> /tmp/<task-id>-local.patch
+   ```
+   Answer these questions before doing anything else:
+   - Is the local work already present on origin (same logical change, possibly different commit)? → discard the patch and continue.
+   - Is the local work still required given the new origin state (e.g. the branch was rebased but our change is not there)? → apply only the missing parts.
+   - Is the local work now obsolete or conflicting with origin (e.g. the feature was redesigned)? → commit the local patch as-is to the feature branch so it is not lost, then set `status: blocked` (see **Commit-before-block rule** below). Do not attempt to silently discard work.
+
+   Only apply the patch when the answer to "still required and not yet present" is unambiguous.
+
+### Step 4 — Rebase onto the PR base branch before committing
+
+```bash
+git fetch origin
+git rebase origin/<pr_base_branch>
+```
+
+Where `<pr_base_branch>` is:
+- `feature/<feature_id>` — if this is an intra-feature task (i.e., `origin/feature/<feature_id>` exists in the impl repo and the task's PR will target it).
+- `<base_branch>` from `workspace.yaml` — for standalone tasks whose PR targets the repo's main integration branch directly.
+
+Do not hardcode `main`. Always resolve from `workspace.yaml` and check for the feature branch first.
+
+This keeps history linear and ensures the task branch includes all prior work from sibling tasks that have already merged into the feature branch.
+
+### Scope
+
+This protocol applies to:
+- The **management repo** — before every task state write (claim, status update, log entry, log flush).
+- **Implementation repos** — before every implementation commit during task execution.
+
+## Git / SSH rules
+
+- SSH authentication is handled by the runtime: the executor sets `GIT_SSH_COMMAND` via `SSH_PRIVATE_KEY` before spawning agents; in interactive sessions git uses the local SSH agent / `~/.ssh/config`
+- Agents must not attempt to configure SSH keys manually — `GIT_SSH_COMMAND` is already set
+- `SSH_KEY_PATH` is not a workflow env var — do not reference or require it
+
+## Git hard-reset safety rule
+
+Before running `git reset --hard`, `git checkout --force`, or any other destructive
+git operation on a repo, the agent **must** run both checks below and **hard-stop**
+if either fails:
+
+1. **Uncommitted changes check** — `git status --short`. If output is non-empty
+   (staged, unstaged, or untracked tracked files), stop. Do not reset.
+2. **Unpushed commits check** — `git log origin/<base_branch>..HEAD --oneline`.
+   If output is non-empty, stop. Do not reset.
+
+On hard-stop, report the exact output of the failing check and wait for the user to
+resolve it (e.g. push, stash, or explicitly confirm discard) before proceeding.
+
+This rule applies to every repo touched in the workflow — implementation repos,
+management repos, and the workflow repo itself.
+
+## Pre-push checks rule
+
+Before pushing any branch, run all tests and lint checks. Do not push if any tests fail or lint errors exist.
+
+- Detect the test runner from the project (`package.json`, `Makefile`, `go.mod`, `pytest.ini`, etc.). Do not assume a specific runner.
+- Run the full test suite, not a subset.
+- Run the project's lint step (`eslint`, `golangci-lint`, `ruff check`, `flake8`, etc.) and fix all errors. Warnings are acceptable; errors are not.
+- **Go projects**: `golangci-lint run` is mandatory before every commit — zero errors required. Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
+- Fix any failures and re-run until clean before pushing.
+
+## Test-before-PR rule
+
+- **Always run the full test suite before opening a PR.** This applies to every task, every workflow, every agent context.
+- Use whatever test commands the implementation repo specifies — check the README, `package.json`, `Makefile`, `go.mod`, or equivalent build config. Do not assume a specific test runner or language.
+- All tests must pass before invoking `pr-create`. Fix any failures and re-run until clean.
+- **Default (interactive runs):** do not open a PR for failing tests. Hard-stop, set `status: blocked`, write `blocked_reason: tests_failed`, surface to the user.
+- **Agent-runtime exception (`AGENT_RUNTIME=1`):** if tests cannot be made to pass after **3 attempts**, the agent **must still open a draft PR** documenting the failed attempt, and write `result.json` with `terminal_status: blocked, blocked_reason: tests_failed, pr_url: <URL>`. Rationale: in agent-runtime mode the PR is the durable handover — without it, the next agent has no branch to inherit and the failed attempt is invisible. The orchestrator routes the blocked result to a fix agent / reviewer on the next cycle. This carve-out is product-vision sanctioned (revised D5 in the orchestrator design); do not read the default rule as forbidding it.
+
+## PR creation rule
+
+- **Do not use `gh` CLI to create pull requests.** Use the `pr-create` skill instead.
+- `pr-create` uses the GitHub REST API via `curl` with `GITHUB_TOKEN` from project `.env` — this avoids requiring `gh` to be installed on the host or in agent containers.
+- Any workflow skill or agent that needs to open a PR must invoke `pr-create` rather than calling `gh pr create` directly.
+- `GITHUB_TOKEN` is required in project `.env` for PR creation. If missing, `pr-create` falls back to `~/.config/gh/hosts.yml`.
+
+## PR title convention
+
+PR titles must follow the format:
+
+```
+<type>(<featureId>/T<n>): <short description>
+```
+
+Examples:
+- `feat(task-branch-lifecycle/T1): taskBranchName helper + BlockedContext schema`
+- `fix(agent-runtime-hardening/T3): correct Dockerfile claude CLI install path`
+
+Rules:
+- `<type>` follows conventional commits (`feat`, `fix`, `chore`, `refactor`, `docs`, etc.)
+- `<featureId>` is the feature directory name under `docs/features/`
+- `T<n>` is the task ID
+- Description is lowercase, imperative, no trailing period
+- Keep the full title under 72 characters
+
+## Shared environment resolution rule
+
+- Workflow skills that perform repo, git, PR, or SSH-related work must use `resolve-project-env`
+- `resolve-project-env` is the shared contract for reading project `.env`
+- Required values must be resolved from project `.env` first
+- If required values are missing, the workflow must ask the user explicitly instead of guessing
+
+## SSH rule
+
+- SSH authentication is transparent — the executor sets `GIT_SSH_COMMAND` before spawning agents; interactive sessions rely on the local SSH agent / `~/.ssh/config`
+- Agents must not attempt to read or configure SSH keys; `SSH_KEY_PATH` is not a required or valid workflow variable
+
+## Per-task required skills
+
+Technical skills are declared per task, not per agent or per role. Each task's `## T<n>` section in `tasks.md` includes a `### Required skills` subsection listing the skill slugs the task needs. Skill slugs must match directory names under `workflow/claude/technical_skills/`.
+
+At run-task time, the agent reads the declared skills and loads their `SKILL.md` content into its system prompt. This is the only capability-matching mechanism — there is no agent-side role or skills list.
+
+See `tasks.md`'s `### Required skills` subsection as the source of truth for per-task capability.
+
+## Narrative / state split
+
+Task YAML files (`tasks/T<n>.yaml`) contain only machine-mutable state: `status`, `depends_on`, `blocked_reason`, `branch`, `execution`, `pr`, `log`. Agents read and write these files.
+
+Logical intent — description, subtasks, required skills, model overrides — lives in `tasks.md`. This file is authored by humans (or the tech-lead skill) and stays stable during implementation. Agents read it but do not modify it except to check off subtask items.
+
+This split isolates git-push contention: multiple agents can mutate separate task YAMLs in parallel without conflicting on a shared narrative file.
+
+## Product-spec phase write boundary
+
+During the `product_spec` stage, agents must not write or modify any file outside the feature's `product-spec.md`.
+
+If workspace-level changes are discovered as needed (e.g. missing repo entries, config typos, new skills, rule updates), the agent must **stop and list them explicitly for the human** instead of applying them. The human decides whether to apply them before or after the product spec is approved.
+
+Examples of changes that must be surfaced, not applied:
+- Edits to `workspace.yaml`, `CLAUDE.md`, `.env`, `.env.template`
+- Creating or modifying skills under `claude/technical_skills/`
+- Registering new repos or roles
+- Any file outside `docs/features/<feature_id>/product-spec.md`
+
+## CLAUDE.md edit policy
+
+Before editing `CLAUDE.md` in any project workspace, determine whether the change is **workspace-specific** or **common**.
+
+### Common change
+A rule that should apply to every workspace using this workflow (e.g. lifecycle rules, task structure, git conventions, environment resolution).
+
+**Do not edit `CLAUDE.md` directly.**
+
+Instead:
+1. Edit `$WORKSPACE_ROOT/CLAUDE.shared.md`
+2. Run `sync-workspace-rules` to propagate the change into `CLAUDE.md`
+
+### Workspace-specific change
+A rule that only applies to this one project (e.g. repo-specific conventions, stack-specific constraints, local team agreements).
+
+Edit the project-specific section of `CLAUDE.md` directly — the content above or below the shared section markers.
+
+### Uncertain
+If it is not clear whether the change is common or workspace-specific, **stop and ask the human** before making any edit.
+
+## Shell command permission policy
+
+The assistant may run read-only inspection commands without asking first when working inside a project repository or workspace.
+
+Examples of allowed read-only commands:
+
+- `pwd`
+- `ls`
+- `find`
+- `grep`
+- `rg`
+- `cat`
+- `head`
+- `tail`
+- `git status`
+- `git branch`
+- `git diff --stat`
+
+The assistant must still ask before running commands that:
+
+- modify files
+- delete files
+- move files
+- change permissions
+- push to remote
+- create or merge branches
+- deploy infrastructure or applications
+
+## Agent-runtime detection rule
+
+Before implementing any code autonomously, check whether you are running inside the agent runtime:
+
+```bash
+printenv AGENT_RUNTIME
+```
+
+- If the output is `1` — you are inside the agent runtime. Proceed with autonomous implementation as instructed by the task.
+- If the output is empty or the variable is absent — you are in an interactive session. **Do not implement code unless the human has explicitly asked you to in this conversation.** Read, plan, and discuss freely; write or modify files only on explicit instruction.
+
+## Runtime ABI
+
+The agent runtime is split into orchestrator and executor layers (see `agent-runtime-split` feature).
+The orchestrator owns all workflow-state writes; the executor only performs code work and writes
+`result.json`. This `CLAUDE.md` contains workflow rules only — it is not injected into the
+executor's runtime context.
+
+The runtime uses a **ports-and-adapters architecture**: the orchestrator core depends only on typed
+TypeScript interfaces; concrete adapters are injected at startup based on a named profile
+(`local-subprocess` or `local-docker`). This means the same orchestrator binary runs in every
+topology — no bundled-image assumption. Profiles and adapters are purely additive.
+
+For third-party runtime authors and operators, the authoritative references are:
+- **Portability spec**: `runtime/portability-spec.md` — every port, adapter, profile, runner env contract, broker protocol fixtures, and how to add a new profile
+- **ABI spec**: `runtime/abi/docs/abi-spec.md` — executor-facing inputs, outputs, side-effects, lifecycle, examples
+- **Operator guide**: `runtime/orchestrator/docs/OPERATOR-GUIDE.md` — deployment, Docker Compose entry point, environment variables, common issues
+
+## RAG-first read rule
+
+When the RAG MCP tool (`mcp__rag-server__rag_query`) is available, agents must query RAG before opening a file to look up code or context.
+
+**Lookup order:**
+1. Query RAG first via `mcp__rag-server__rag_query`
+2. If results are relevant (high confidence), use them — do not open the file
+3. Fall back to a direct `Read` only when RAG returns no results or low-confidence results
+
+**Exceptions** — direct read without a prior RAG query is acceptable when:
+- The file path is already known and a targeted line-range edit is the goal (not a lookup)
+- The file is a config, lock, or generated file unlikely to be indexed
+- The RAG MCP is unavailable for this run
+
+This rule applies in both interactive sessions and agent runtime. Its purpose is to avoid loading entire files into context when the indexed corpus already contains the relevant excerpt.
+
+## GitNexus lookup priority rule
+
+When the GitNexus MCP tools (`mcp__gitnexus__*`) are available, agents must use them for structural code questions before falling back to grep or file reads.
+
+**Lookup order:**
+1. Use `mcp__gitnexus__query` to locate a symbol, function, class, or pattern across the repo
+2. Use `mcp__gitnexus__context` to get callers, callees, and type relationships for a symbol
+3. Run `mcp__gitnexus__impact` before any refactor or deletion to understand blast radius
+4. Fall back to `grep` or `Read` only when GitNexus returns no results or the MCP is unavailable
+
+**Other tools:**
+- `mcp__gitnexus__detect_changes` — map a git diff or changed file list to the symbols it affects
+- `mcp__gitnexus__list_repos` — discover which repos are indexed
+- `mcp__gitnexus__group_query` — trace execution flows across multiple indexed repos
+
+**Exceptions** — grep or direct read without a prior GitNexus query is acceptable when:
+- GitNexus returns no results for the query
+- The question is about raw file content, not code structure (e.g. reading a config, checking a comment)
+- The `mcp__gitnexus__*` tools are absent from the tool list (indexer may not have completed a cycle yet)
+
+**Never open an entire file** just to find a symbol when GitNexus can answer it directly. **Never skip GitNexus** when the tools are available and the question is structural.
+
+The `mcp__gitnexus__*` tools appear when `GITNEXUS_MCP_URL` is set in the executor environment. TypeScript and Python are the primary indexed languages; for other languages verify coverage with grep if results seem incomplete. This rule applies in both interactive sessions and agent runtime. Its purpose is to leverage the pre-built AST + call-graph index for structural questions rather than doing expensive full-file reads or grep scans.
+
+## status.yaml — feature-branch fields
+
+The `status.yaml` file in each feature directory tracks both stage-level review state and
+orchestrator-managed branch/drift metadata. The following fields are written and read by the
+orchestrator; they are not present in hand-authored status files until the orchestrator creates them.
+
+| Field | Type | Written by | Description |
+|---|---|---|---|
+| `feature_branch` | string | orchestrator (Feature Branch Lifecycle Manager, T8) | Branch name for the feature, e.g. `feature/{feature_id}`. Written once on first orchestrator run; never overwritten. |
+| `feature_branch_base_sha` | string | orchestrator (Feature Branch Lifecycle Manager, T8) | `git merge-base` SHA at the time the feature branch was created from the base branch. Used by the drift daemon to detect base-branch divergence. Never overwritten after initial write. |
+| `handoff_pr_url` | string or null | orchestrator (Handoff Trigger) | URL of the management repo feature branch PR (`feature/{feature_id}` → `main`). Set when the Handoff Trigger fires; `null` until then. |
+| `impl_feature_prs` | list | orchestrator (Handoff Trigger, autonomous-feature-reviewer T2) | Implementation repo feature branch PRs opened by the Handoff Trigger. Each entry: `repo` (matches `workspace.yaml repos[].id`), `url` (GitHub PR URL), `status` (`"open"` \| `"merged"`). Absent until handoff; if absent, Feature Done Watcher checks only `handoff_pr_url`. |
+| `drift_detected` | boolean | autonomous-feature-reviewer daemon | `true` when the drift daemon detects that the base branch has advanced past `feature_branch_base_sha`. Reset to `false` once the feature branch is rebased. |
+| `drift_reason` | string or null | autonomous-feature-reviewer daemon | Human-readable description of the detected drift (e.g. conflicting commit SHA and summary). `null` when `drift_detected` is `false`. |

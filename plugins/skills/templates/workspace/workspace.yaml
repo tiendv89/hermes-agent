@@ -1,0 +1,81 @@
+workspace_id: project-A
+name: Project A
+overview_doc: docs/overview.md
+
+approval:
+  actor_source: env:GIT_AUTHOR_EMAIL
+  fallback_actor: unknown@local
+  timestamp_source: local_time
+
+git:
+  branch_pattern: "feature/{feature_id}-{work_id}"
+
+environments:
+  develop:
+    enabled: true
+  staging:
+    enabled: true
+  production:
+    enabled: true
+
+# Per-phase model allowlist — centralized cost control.
+# Agents use the merged default for each phase. Tasks can override
+# specific phases via ### Model overrides in tasks.md.
+model_policy:
+  implementation:
+    allowed: [claude-sonnet-4-6]          # models agents may use for code writing
+    default: claude-sonnet-4-6
+  self_review:
+    allowed: [claude-sonnet-4-6]          # model for reviewing own diff
+    default: claude-sonnet-4-6
+  pr_description:
+    allowed: [claude-haiku-4-5-20251001]  # model for PR summary (light)
+    default: claude-haiku-4-5-20251001
+  suggested_next_step:
+    allowed: [claude-haiku-4-5-20251001]  # model for blocked explanations (light)
+    default: claude-haiku-4-5-20251001
+  conflict_resolution:
+    allowed: [claude-sonnet-4-6]          # model for merge-conflict resolution
+    default: claude-sonnet-4-6
+
+automation:
+  enabled: true
+
+# Threaded Slack notifications (optional).
+# Set channel_id to the Slack channel ID for this workspace's notifications.
+# Requires SLACK_BOT_TOKEN and REDIS_URL to also be set in the orchestrator env.
+# Remove or omit this block to disable Slack threading for this workspace.
+# notifications:
+#   slack:
+#     channel_id: C0123456789  # Slack channel ID
+
+# The management repo stores all task YAMLs, feature docs, and CLAUDE.md.
+# It must always be the first entry in repos[] and must use id: management-repo.
+management_repo: management-repo
+
+repos:
+  # ── Management repo (required, always first, id must be management-repo) ──
+  - id: management-repo
+    github: git@github.com:<github-account>/<workspace-id>.git
+    local_path: env:MANAGEMENT_REPO_LOCAL_PATH
+    base_branch: main
+    owner_role: tech_lead
+
+  # ── Implementation repos ──
+  - id: project-A-api
+    github: git@github.com:example/project-A-api.git
+    local_path: env:PROJECT_A_API_LOCAL_PATH
+    base_branch: main
+    owner_role: backend_engineer
+
+  - id: project-A-web
+    github: git@github.com:example/project-A-web.git
+    local_path: env:PROJECT_A_WEB_LOCAL_PATH
+    base_branch: main
+    owner_role: frontend_engineer
+
+  - id: project-A-data
+    github: git@github.com:example/project-A-data.git
+    local_path: env:PROJECT_A_DATA_LOCAL_PATH
+    base_branch: main
+    owner_role: data_engineer

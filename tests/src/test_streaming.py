@@ -164,7 +164,7 @@ class TestHermesSSETranslator:
 
         def do(t):
             t.on_tool_complete(
-                "cid-3", "workflow_write_product_spec", {"content": "..."}, {"ok": True}
+                "cid-3", "write_product_spec", {"content": "..."}, {"ok": True}
             )
             t.done()
 
@@ -181,7 +181,7 @@ class TestHermesSSETranslator:
         def do(t):
             t.on_tool_complete(
                 "cid-4",
-                "workflow_write_product_spec",
+                "write_product_spec",
                 {"content": "..."},
                 {"ok": False, "error": "nope"},
             )

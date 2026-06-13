@@ -373,6 +373,31 @@ async def test_get_messages_as_conversation_parses_tool_calls():
     assert isinstance(convo[0]["tool_calls"], list)
 
 
+@pytest.mark.asyncio
+async def test_get_messages_as_conversation_coerces_null_content():
+    """NULL content must become "" — a null content is rejected by stricter
+    OpenAI-compatible providers (e.g. DeepSeek)."""
+    from src.db.store import get_messages_as_conversation
+
+    asst = MagicMock()
+    asst.role, asst.content = "assistant", None  # tool-call message: no text
+    asst.tool_call_id, asst.tool_name = None, None
+    asst.tool_calls = None
+    asst.finish_reason, asst.reasoning = "tool_calls", None
+
+    scalars = MagicMock()
+    scalars.all.return_value = [asst]
+    result = MagicMock()
+    result.scalars.return_value = scalars
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result)
+
+    convo = await get_messages_as_conversation(db, "sess_1")
+
+    assert convo[0]["content"] == ""
+    assert convo[0]["content"] is not None
+
+
 # ---------------------------------------------------------------------------
 # GET /api/v5/sessions/{session_id}/messages
 # ---------------------------------------------------------------------------

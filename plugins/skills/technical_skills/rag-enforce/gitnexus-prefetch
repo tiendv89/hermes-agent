@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Reminds Claude to use mcp__gitnexus__ tools before reading source files.
+# GitNexus has no REST query endpoint — MCP-only. Exits 0 always.
+FILE="$CLAUDE_TOOL_INPUT_FILE_PATH"
+
+case "$FILE" in
+  *.ts|*.tsx|*.py|*.go|*.rs|*.java) ;;
+  *) exit 0 ;;
+esac
+
+BASENAME=$(basename "$FILE" | sed 's/\.[^.]*$//')
+echo "## GitNexus reminder"
+echo "Before reading $FILE, prefer mcp__gitnexus__query with query \"$BASENAME\" to look up symbols, callers, and structure. Only fall back to this Read if GitNexus returns no results."
+exit 0

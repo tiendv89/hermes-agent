@@ -1,9 +1,9 @@
-"""Tests for T3: workflow_request_approval tool + stage-transition endpoint + GET /tools.
+"""Tests for T3: request_approval tool + stage-transition endpoint + GET /tools.
 
 Covers:
-  - workflow_request_approval: returns payload, writes nothing
-  - workflow_request_approval: missing feature_id returns error
-  - workflow_request_approval: invalid stage returns error
+  - request_approval: returns payload, writes nothing
+  - request_approval: missing feature_id returns error
+  - request_approval: invalid stage returns error
   - stage-transition: approve mutations match approve-feature skill
   - stage-transition: reject mutations
   - stage-transition: reopen sets revalidation flags
@@ -97,7 +97,7 @@ def _make_write_result():
 
 
 # ---------------------------------------------------------------------------
-# workflow_request_approval — read-only tool
+# request_approval — read-only tool
 # ---------------------------------------------------------------------------
 
 
@@ -310,23 +310,40 @@ class TestGetToolsEndpoint:
         tools = resp.json()["tools"]
         assert tools[0]["description"] == ""
 
-    def test_workflow_request_approval_in_live_registry(self, monkeypatch):
-        """When WORKFLOW_DATABASE_URL is set, workflow_request_approval must appear."""
+    def test_request_approval_in_live_registry(self, monkeypatch):
+        """When WORKFLOW_DATABASE_URL is set, request_approval must appear."""
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         client = self._build_client(monkeypatch)
         resp = client.get("/api/v1/tools")
         assert resp.status_code == 200
         names = [t["name"] for t in resp.json()["tools"]]
-        assert "workflow_request_approval" in names
+        assert "request_approval" in names
 
-    def test_workflow_request_approval_excluded_when_db_unset(self, monkeypatch):
-        """When WORKFLOW_DATABASE_URL is unset, workflow_request_approval is excluded."""
+    def test_skills_listed_for_frontend(self, monkeypatch):
+        """GET /tools also returns the loadable skills, typed technical/workflow."""
+        client = self._build_client(monkeypatch)
+        resp = client.get("/api/v1/tools")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "skills" in data
+
+        by_name = {s["name"]: s for s in data["skills"]}
+        # A technical (knowledge) skill and a workflow skill both show up,
+        # tagged with the right type.
+        assert by_name["python-best-practices"]["type"] == "technical"
+        assert by_name["tech-lead"]["type"] == "workflow"
+        assert by_name["approve-feature"]["type"] == "workflow"
+        # Every skill carries a non-empty description for the picker.
+        assert all(s["description"] for s in data["skills"])
+
+    def test_request_approval_excluded_when_db_unset(self, monkeypatch):
+        """When WORKFLOW_DATABASE_URL is unset, request_approval is excluded."""
         monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
         client = self._build_client(monkeypatch)
         resp = client.get("/api/v1/tools")
         assert resp.status_code == 200
         names = [t["name"] for t in resp.json()["tools"]]
-        assert "workflow_request_approval" not in names
+        assert "request_approval" not in names
 
 
 # ---------------------------------------------------------------------------

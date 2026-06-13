@@ -1,10 +1,10 @@
 """Tests for T3 additions to plugins.
 
 Covers:
-  - workflow_get_tasks: parametrisation, happy path, db error
+  - get_tasks: parametrisation, happy path, db error
   - gitnexus/rag: arg passing (mock call_mcp_tool)
   - check_available gating: tools omitted when URL env vars not set
-  - register(): 8 tools (7 from T3 + workflow_load_skill from T6), 2 MCP tools with is_async=True
+  - register(): 10 tools total (incl. load_skill + request_approval), 2 MCP tools with is_async=True
   - inject_context: task-summary block + capability advertisement
   - inject_context: blocked_tasks block when a task is blocked
 """
@@ -67,7 +67,7 @@ def _clear_mcp_urls(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# workflow_get_tasks — parametrisation
+# get_tasks — parametrisation
 # ---------------------------------------------------------------------------
 
 
@@ -139,7 +139,7 @@ class TestWorkflowGetTasks:
 
 
 # ---------------------------------------------------------------------------
-# workflow_query_gitnexus — arg passing
+# query_gitnexus — arg passing
 # ---------------------------------------------------------------------------
 
 
@@ -260,7 +260,7 @@ class TestWorkflowQueryGitnexus:
 
 
 # ---------------------------------------------------------------------------
-# workflow_query_rag — arg passing
+# query_rag — arg passing
 # ---------------------------------------------------------------------------
 
 
@@ -373,19 +373,20 @@ class TestCheckAvailableGating:
 
 
 # ---------------------------------------------------------------------------
-# register() — 8 tools (7 from T3 + workflow_load_skill from T6), 2 MCP tools with is_async=True
+# register() — 10 tools total, 2 of them MCP tools with is_async=True
 # ---------------------------------------------------------------------------
 
 
 class TestRegisterT3:
-    def test_registers_9_tools(self):
+    def test_registers_10_tools(self):
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        # 7 original tools + workflow_load_skill (T6) + workflow_request_approval (T3) = 9
-        assert ctx.register_tool.call_count == 9
+        # 6 context/artifact tools + edit_document (T1) + 2 MCP tools
+        # + load_skill (T6) + request_approval (T3) = 10
+        assert ctx.register_tool.call_count == 10
 
-    def test_all_9_tool_names_registered(self):
+    def test_all_10_tool_names_registered(self):
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
@@ -394,16 +395,16 @@ class TestRegisterT3:
             for call in ctx.register_tool.call_args_list
         }
         expected = {
-            "workflow_get_workspace_context",
-            "workflow_get_feature_state",
-            "workflow_write_product_spec",
-            "workflow_edit_document",
-            "workflow_write_technical_design",
-            "workflow_get_tasks",
-            "workflow_query_gitnexus",
-            "workflow_query_rag",
-            "workflow_load_skill",
-            "workflow_request_approval",
+            "get_workspace_context",
+            "get_feature_state",
+            "write_product_spec",
+            "edit_document",
+            "write_technical_design",
+            "get_tasks",
+            "query_gitnexus",
+            "query_rag",
+            "load_skill",
+            "request_approval",
         }
         assert names == expected
 
@@ -414,7 +415,7 @@ class TestRegisterT3:
         gitnexus_call = next(
             c
             for c in ctx.register_tool.call_args_list
-            if (c.kwargs.get("name") or c.args[0]) == "workflow_query_gitnexus"
+            if (c.kwargs.get("name") or c.args[0]) == "query_gitnexus"
         )
         assert gitnexus_call.kwargs.get("is_async") is True
 
@@ -425,7 +426,7 @@ class TestRegisterT3:
         rag_call = next(
             c
             for c in ctx.register_tool.call_args_list
-            if (c.kwargs.get("name") or c.args[0]) == "workflow_query_rag"
+            if (c.kwargs.get("name") or c.args[0]) == "query_rag"
         )
         assert rag_call.kwargs.get("is_async") is True
 
@@ -434,18 +435,59 @@ class TestRegisterT3:
         ctx = MagicMock()
         plugins_mod.register(ctx)
         sync_names = {
-            "workflow_get_workspace_context",
-            "workflow_get_feature_state",
-            "workflow_write_product_spec",
-            "workflow_edit_document",
-            "workflow_write_technical_design",
-            "workflow_get_tasks",
-            "workflow_request_approval",
+            "get_workspace_context",
+            "get_feature_state",
+            "write_product_spec",
+            "edit_document",
+            "write_technical_design",
+            "get_tasks",
+            "request_approval",
         }
         for call in ctx.register_tool.call_args_list:
             name = call.kwargs.get("name") or call.args[0]
             if name in sync_names:
                 assert not call.kwargs.get("is_async"), f"{name} should not be async"
+
+    def test_registered_handler_returns_json_string(self):
+        """The registered tool handler must JSON-stringify the dict return so
+        strict OpenAI-compatible providers (DeepSeek) don't reject dict content."""
+        import json as _json
+
+        plugins_mod = _load_plugins_register()
+        ctx = MagicMock()
+        plugins_mod.register(ctx)
+
+        spec_call = next(
+            c for c in ctx.register_tool.call_args_list
+            if (c.kwargs.get("name") or c.args[0]) == "write_product_spec"
+        )
+        wrapped = spec_call.kwargs["handler"]
+
+        # With GITHUB_TOKEN unset the real handler returns an ok:False dict;
+        # the wrapper must JSON-stringify it (not pass a dict through).
+        out = wrapped(content="x", workspace_id="ws", feature_id="f")
+        assert isinstance(out, str)
+        assert _json.loads(out)["ok"] is False
+
+    @pytest.mark.asyncio
+    async def test_registered_async_handler_returns_json_string(self):
+        plugins_mod = _load_plugins_register()
+        ctx = MagicMock()
+        plugins_mod.register(ctx)
+
+        rag_call = next(
+            c for c in ctx.register_tool.call_args_list
+            if (c.kwargs.get("name") or c.args[0]) == "query_rag"
+        )
+        wrapped = rag_call.kwargs["handler"]
+        assert rag_call.kwargs.get("is_async") is True
+
+        # With RAG_MCP_URL unset, the real async handle() returns an ok:False
+        # dict; the wrapper must await it and return a JSON string.
+        import json as _json
+        out = await wrapped(query="q", workspace_id="ws")
+        assert isinstance(out, str)
+        assert _json.loads(out)["ok"] is False
 
     def test_gitnexus_uses_own_check_fn(self):
         plugins_mod = _load_plugins_register()
@@ -456,7 +498,7 @@ class TestRegisterT3:
         gitnexus_call = next(
             c
             for c in ctx.register_tool.call_args_list
-            if (c.kwargs.get("name") or c.args[0]) == "workflow_query_gitnexus"
+            if (c.kwargs.get("name") or c.args[0]) == "query_gitnexus"
         )
         assert gitnexus_call.kwargs.get("check_fn") is gitnexus.check_available
 
@@ -469,7 +511,7 @@ class TestRegisterT3:
         rag_call = next(
             c
             for c in ctx.register_tool.call_args_list
-            if (c.kwargs.get("name") or c.args[0]) == "workflow_query_rag"
+            if (c.kwargs.get("name") or c.args[0]) == "query_rag"
         )
         assert rag_call.kwargs.get("check_fn") is rag.check_available
 
@@ -567,32 +609,32 @@ class TestInjectContextT3:
         assert "T1" in content
         assert "T2" in content
 
-    def test_capability_advertisement_includes_workflow_get_tasks(self):
+    def test_capability_advertisement_includes_get_tasks(self):
         with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
-        assert "workflow_get_tasks" in content
+        assert "get_tasks" in content
 
     def test_gitnexus_advertised_when_url_set(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
-        assert "workflow_query_gitnexus" in content
+        assert "query_gitnexus" in content
 
     def test_gitnexus_not_advertised_when_url_unset(self):
         with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
-        assert "workflow_query_gitnexus" not in content
+        assert "query_gitnexus" not in content
 
     def test_rag_advertised_when_url_set(self, monkeypatch):
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
         with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
-        assert "workflow_query_rag" in content
+        assert "query_rag" in content
 
     def test_rag_not_advertised_when_url_unset(self):
         with patch("plugins.hooks.check_workflow_available", return_value=False):
             content = self._call_inject(feature_id="")
-        assert "workflow_query_rag" not in content
+        assert "query_rag" not in content
 
     def test_task_summary_lists_all_tasks(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
@@ -613,3 +655,143 @@ class TestInjectContextT3:
             content = self._call_inject()
         assert "T1" in content and "Setup DB" in content and "done" in content
         assert "T3" in content and "Frontend" in content and "in_progress" in content
+
+
+# ---------------------------------------------------------------------------
+# write_product_spec — content coercion (regression for
+# "'dict' object has no attribute 'encode'" over the MCP path)
+# ---------------------------------------------------------------------------
+
+
+class TestMcpArgCoercionAndErrors:
+    def test_coerce_text_unwraps_dict_query(self):
+        from plugins.mcp_client import coerce_text
+
+        assert coerce_text("auth flow") == "auth flow"
+        assert coerce_text({"query": "auth flow"}) == "auth flow"
+        assert coerce_text({"q": "x"}) == "x"
+        assert coerce_text(None) == ""
+
+    def test_unwrap_exception_drills_into_group(self):
+        from plugins.mcp_client import _unwrap_exception
+
+        eg = ExceptionGroup("tg", [ConnectionError("connection refused")])
+        leaf = _unwrap_exception(eg)
+        assert isinstance(leaf, ConnectionError)
+        assert str(leaf) == "connection refused"
+
+    @pytest.mark.asyncio
+    async def test_rag_coerces_dict_query_to_string(self, monkeypatch):
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003/sse")
+        with patch(
+            "plugins.tools.rag.call_mcp_tool", new_callable=AsyncMock, return_value=[]
+        ) as mock_call:
+            from plugins.tools.rag import handle
+
+            # Model passes query as a structured object (the blocker case).
+            result = await handle(query={"query": "auth flow"}, workspace_id="ws-1")
+        assert result["ok"] is True
+        # The forwarded argument must be a plain string, not a dict.
+        assert mock_call.await_args[0][2]["query"] == "auth flow"
+
+    @pytest.mark.asyncio
+    async def test_gitnexus_coerces_dict_query(self, monkeypatch):
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
+        with patch(
+            "plugins.tools.gitnexus.call_mcp_tool", new_callable=AsyncMock, return_value=[]
+        ) as mock_call:
+            from plugins.tools.gitnexus import handle
+
+            result = await handle(query={"q": "AIAgent"}, tool="query")
+        assert result["ok"] is True
+        assert mock_call.await_args[0][2] == {"q": "AIAgent"}
+
+    @pytest.mark.asyncio
+    async def test_call_mcp_tool_unwraps_transport_taskgroup(self, monkeypatch):
+        """When the SSE transport fails with an ExceptionGroup, call_mcp_tool must
+        raise a clean MCPCallError carrying the real cause — not the opaque
+        'unhandled errors in a TaskGroup'."""
+        from plugins import mcp_client
+
+        class _FailingCM:
+            async def __aenter__(self):
+                raise ExceptionGroup("tg", [ConnectionError("connection refused")])
+
+            async def __aexit__(self, *_a):
+                return False
+
+        monkeypatch.setattr(mcp_client, "sse_client", lambda *_a, **_k: _FailingCM())
+
+        with pytest.raises(mcp_client.MCPCallError) as ei:
+            await mcp_client.call_mcp_tool("http://gitnexus:8002", "query", {"q": "x"})
+        msg = str(ei.value)
+        assert "connection refused" in msg
+        assert "TaskGroup" not in msg
+
+
+class TestResolveManagementRepo:
+    def test_resolves_from_workspace_context(self):
+        from plugins.tools.artifacts import _resolve_management_repo
+
+        ctx = {"management_repo": "management-repo",
+               "repos": [{"id": "management-repo", "github": "git@github.com:org/ws.git"}]}
+        assert _resolve_management_repo(ctx) == ("org", "ws")
+
+    def test_env_fallback_when_no_repo_configured(self, monkeypatch):
+        from plugins.tools.artifacts import _resolve_management_repo
+
+        monkeypatch.setenv("MANAGEMENT_REPO_GITHUB", "git@github.com:org/ws.git")
+        # repos == [] (the blocker case) → env override resolves it.
+        assert _resolve_management_repo({"management_repo": "management-repo", "repos": []}) == ("org", "ws")
+
+    def test_env_fallback_accepts_owner_repo_form(self, monkeypatch):
+        from plugins.tools.artifacts import _resolve_management_repo
+
+        monkeypatch.setenv("MANAGEMENT_REPO_GITHUB", "org/ws")
+        assert _resolve_management_repo({"management_repo": "management-repo", "repos": []}) == ("org", "ws")
+
+    def test_raises_when_unresolvable(self, monkeypatch):
+        from plugins.tools.artifacts import _resolve_management_repo
+
+        monkeypatch.delenv("MANAGEMENT_REPO_GITHUB", raising=False)
+        with pytest.raises(ValueError, match="MANAGEMENT_REPO_GITHUB"):
+            _resolve_management_repo({"management_repo": "management-repo", "repos": []})
+
+
+class TestWriteArtifactCoercesContent:
+    def test_coerce_passes_through_str(self):
+        from plugins.tools.artifacts import _coerce_content
+
+        assert _coerce_content("# Spec") == "# Spec"
+
+    def test_coerce_dict_to_json_string(self):
+        from plugins.tools.artifacts import _coerce_content
+
+        out = _coerce_content({"title": "Spec", "body": "x"})
+        assert isinstance(out, str)
+        assert '"title"' in out
+
+    def test_write_product_spec_with_dict_content_does_not_raise(self, monkeypatch):
+        """A dict content must be serialized to str before the write, not crash."""
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+        captured = {}
+
+        def fake_write(owner, repo, feature_id, base_branch, path, content, sha, message, token):
+            captured["content"] = content
+            return {"commit_sha": "deadbeef", "pr": {"url": "http://pr"}}
+
+        with (
+            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("plugins.tools.artifacts._resolve_management_repo", return_value=("o", "r")),
+            patch("plugins.tools.artifacts.read_document", return_value={"sha": "base"}),
+            patch("plugins.tools.artifacts.write_document", side_effect=fake_write),
+        ):
+            from plugins.tools.artifacts import handle_write_product_spec
+
+            result = handle_write_product_spec(
+                content={"title": "My Spec"}, workspace_id="ws-1", feature_id="feat-1"
+            )
+
+        assert result["ok"] is True
+        assert isinstance(captured["content"], str)
+        assert "My Spec" in captured["content"]

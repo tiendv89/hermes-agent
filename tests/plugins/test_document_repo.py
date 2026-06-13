@@ -6,8 +6,8 @@ Covers:
   - write_document: new file (sha=None), existing file (sha provided)
   - ensure_feature_branch: already exists, absent (created), race (422)
   - ensure_pr: existing open PR returned, create when absent
-  - workflow_edit_document handler: targeted edits happy path, old_string not found warning
-  - workflow_write_product_spec / workflow_write_technical_design via document_repo path
+  - edit_document handler: targeted edits happy path, old_string not found warning
+  - write_product_spec / write_technical_design via document_repo path
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""workflow_request_approval tool.
+"""request_approval tool.
 
 Surfaces an Approve/Reject/Re-open control card for the human; writes nothing.
 The agent calls this to signal that a stage is ready for human review.

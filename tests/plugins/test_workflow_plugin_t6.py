@@ -1,20 +1,20 @@
-"""Tests for T6 skills subsystem additions to plugins.
+"""Tests for the T6 skills subsystem (local-bundle loader).
+
+Skills are bundled with the gateway under ``plugins/skills/claude/`` and the
+index is built by walking that tree — no network or GitHub token involved.
 
 Covers:
   - SkillEntry dataclass
-  - get_index: empty when env vars absent; cached after first call
   - _parse_description: extracts description from YAML frontmatter
   - _skills_for_repos: maps repo IDs to skill names
-  - build_index: returns empty dict when WORKFLOW_GITHUB_REPO is not set
+  - build_index / get_index: loads the real bundle; caches after first call
+  - _index_skill / _build_index_from_bundle: indexing a directory tree
+    (descriptions required, references collected, excluded buckets)
   - load_skill (handle): happy path, unknown skill, empty index
-  - load_skill check_available: gated on WORKFLOW_GITHUB_REPO
-  - _TOOLS registration: workflow_load_skill present in register()
-  - inject_context: skill descriptions injected in output
-  - inject_context: stack-matched skills injected for technical_design stage
-  - inject_context: workflow_load_skill advertised when WORKFLOW_GITHUB_REPO set
-  - inject_context: no skills block when index is empty
-  - index excludes mutation and execution skills by path (unit test)
-  - load_skill returns body + references for known skill
+  - load_skill check_available: gated on a non-empty index
+  - _TOOLS registration: load_skill present in register()
+  - inject_context: skill descriptions injected; load_skill advertised when
+    the index is populated; no skills block when the index is empty
 """
 
 from __future__ import annotations
@@ -36,7 +36,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    """Remove plugins modules between tests to avoid cross-test pollution."""
+    """Remove plugins modules between tests to avoid cross-test pollution
+    (the skill index caches at module scope)."""
     keys = [k for k in sys.modules if k.startswith("plugins")]
     for k in keys:
         del sys.modules[k]
@@ -48,13 +49,20 @@ def _clean_modules():
 
 @pytest.fixture(autouse=True)
 def _clear_env_vars(monkeypatch):
-    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-    monkeypatch.delenv("WORKFLOW_GITHUB_REPO", raising=False)
-    monkeypatch.delenv("WORKFLOW_GITHUB_BRANCH", raising=False)
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
     monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
     yield
+
+
+def _write_skill(skill_dir: Path, description: str | None) -> None:
+    """Write a minimal SKILL.md into *skill_dir* (description optional)."""
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    if description is None:
+        body = f"---\nname: {skill_dir.name}\n---\n# {skill_dir.name}"
+    else:
+        body = f"---\nname: {skill_dir.name}\ndescription: {description}\n---\n# {skill_dir.name}"
+    (skill_dir / "SKILL.md").write_text(body, encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -120,345 +128,170 @@ class TestParseDescription:
 
 
 # ---------------------------------------------------------------------------
-# build_index / get_index — env var gating
+# build_index / get_index — loads the real bundle, then caches
 # ---------------------------------------------------------------------------
 
 
 class TestBuildIndex:
-    def test_empty_when_no_env_vars(self):
+    def test_loads_bundled_skills(self):
         from plugins.skills.index import build_index
 
-        result = build_index()
-        assert result == {}
+        index = build_index()
+        # Known knowledge + authoring skills ship in the bundle.
+        assert "python-best-practices" in index
+        assert "typescript-best-practices" in index
+        assert "tech-lead" in index
+        assert index["tech-lead"].is_authoring is True
+        assert index["python-best-practices"].is_authoring is False
 
-    def test_empty_when_token_missing(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
+    def test_includes_all_workflow_skills(self):
         from plugins.skills.index import build_index
 
-        result = build_index()
-        assert result == {}
+        index = build_index()
+        # Every workflow_skills/* entry is loadable (is_authoring=True),
+        # including mutation/execution skills — load_skill returns guidance only.
+        for name in ("approve-feature", "reject-feature", "set-feature-stage",
+                     "start-implementation", "list-features", "tech-lead"):
+            assert name in index, name
+            assert index[name].is_authoring is True
 
-    def test_empty_when_repo_missing(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
-        from plugins.skills.index import build_index
+    def test_empty_when_bundle_missing(self, monkeypatch, tmp_path):
+        import plugins.skills.index as index_mod
 
-        result = build_index()
-        assert result == {}
-
-    def test_empty_when_repo_format_invalid(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "not-valid-format")
-        from plugins.skills.index import build_index
-
-        result = build_index()
-        assert result == {}
-
-    def test_calls_github_api_when_configured(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
-        with patch("plugins.skills.index._build_index_from_github", return_value={}) as mock_build:
-            from plugins.skills.index import build_index
-
-            result = build_index()
-        mock_build.assert_called_once_with("owner", "repo", "main", "ghp_fake")
-        assert result == {}
-
-    def test_custom_branch_passed_through(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
-        monkeypatch.setenv("WORKFLOW_GITHUB_BRANCH", "develop")
-        with patch("plugins.skills.index._build_index_from_github", return_value={}) as mock_build:
-            from plugins.skills.index import build_index
-
-            build_index()
-        mock_build.assert_called_once_with("owner", "repo", "develop", "ghp_fake")
-
-
-# ---------------------------------------------------------------------------
-# get_index — caching
-# ---------------------------------------------------------------------------
+        monkeypatch.setattr(index_mod, "_BUNDLE_ROOT", tmp_path / "does-not-exist")
+        assert index_mod.build_index() == {}
 
 
 class TestGetIndex:
-    def test_returns_empty_without_config(self):
-        from plugins.skills.index import get_index
-
-        assert get_index() == {}
-
-    def test_result_is_cached(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
-
-        fake_entry = MagicMock()
-        fake_entry.name = "python-best-practices"
-
-        call_count = {"n": 0}
-
-        def fake_build(owner, repo, ref, token):
-            call_count["n"] += 1
-            return {"python-best-practices": fake_entry}
-
-        with patch("plugins.skills.index._build_index_from_github", side_effect=fake_build):
+    def test_result_is_cached_and_built_once(self):
+        with patch(
+            "plugins.skills.index._build_index_from_bundle",
+            return_value={"python-best-practices": MagicMock()},
+        ) as mock_build:
             from plugins.skills import get_index
 
             r1 = get_index()
             r2 = get_index()
 
         assert r1 is r2
-        assert call_count["n"] == 1
+        mock_build.assert_called_once()
 
-    def test_get_skill_returns_none_for_unknown(self, monkeypatch):
-        monkeypatch.delenv("WORKFLOW_GITHUB_REPO", raising=False)
+    def test_get_skill_returns_none_for_unknown(self):
         from plugins.skills import get_skill
 
-        assert get_skill("no-such-skill") is None
+        assert get_skill("no-such-skill-xyz") is None
 
-    def test_get_skill_returns_entry_when_known(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_fake")
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
+    def test_get_skill_returns_entry_when_known(self):
+        from plugins.skills import get_skill
 
-        from plugins.skills.index import SkillEntry
-
-        entry = SkillEntry(name="python-best-practices", description="Python skill", path="p")
-        with patch("plugins.skills.index._build_index_from_github", return_value={"python-best-practices": entry}):
-            from plugins.skills import get_skill
-
-            result = get_skill("python-best-practices")
-        assert result is entry
+        entry = get_skill("python-best-practices")
+        assert entry is not None
+        assert entry.name == "python-best-practices"
+        assert entry.description
 
 
 # ---------------------------------------------------------------------------
-# Skill path filtering — excluded skills
+# get_shared_rules — CLAUDE.shared.md (injected into the system prompt)
 # ---------------------------------------------------------------------------
 
 
-class TestSkillPathFiltering:
-    """Verify the path-based inclusion logic without hitting GitHub."""
+class TestSharedRules:
+    def test_returns_bundled_shared_rules(self):
+        from plugins.skills import get_shared_rules
 
-    def _make_blobs(self, paths: list[str]) -> list[dict]:
-        return [{"path": p, "type": "blob"} for p in paths]
+        rules = get_shared_rules()
+        assert rules  # non-empty
+        assert "Feature lifecycle" in rules
 
-    def test_technical_skills_included(self):
-        from plugins.skills.index import _TECHNICAL_SKILLS_PREFIX
+    def test_cached_after_first_read(self):
+        import plugins.skills.index as index_mod
 
-        path = f"{_TECHNICAL_SKILLS_PREFIX}/python-best-practices/SKILL.md"
-        assert path.startswith(_TECHNICAL_SKILLS_PREFIX + "/")
+        with patch.object(index_mod, "_read", wraps=index_mod._read) as spy:
+            index_mod.get_shared_rules()
+            index_mod.get_shared_rules()
+        assert spy.call_count == 1
 
-    def test_authoring_skills_included(self):
-        from plugins.skills.index import _AUTHORING_SKILLS, _WORKFLOW_SKILLS_PREFIX
+    def test_empty_when_file_missing(self, monkeypatch, tmp_path):
+        import plugins.skills.index as index_mod
 
-        for skill in _AUTHORING_SKILLS:
-            path = f"{_WORKFLOW_SKILLS_PREFIX}/{skill}/SKILL.md"
-            parts = path[len(_WORKFLOW_SKILLS_PREFIX) + 1:].split("/")
-            assert parts[0] in _AUTHORING_SKILLS
-
-    def test_mutation_skills_excluded(self):
-        from plugins.skills.index import _AUTHORING_SKILLS, _MUTATION_SKILLS
-
-        for skill in _MUTATION_SKILLS:
-            assert skill not in _AUTHORING_SKILLS
-
-    def test_execution_skills_excluded(self):
-        from plugins.skills.index import _AUTHORING_SKILLS, _EXECUTION_SKILLS
-
-        for skill in _EXECUTION_SKILLS:
-            assert skill not in _AUTHORING_SKILLS
+        monkeypatch.setattr(index_mod, "_BUNDLE_ROOT", tmp_path / "missing")
+        assert index_mod.get_shared_rules() == ""
 
 
 # ---------------------------------------------------------------------------
-# _build_index_from_github — unit with mocked GitHub responses
+# Bucket assignment — technical = knowledge, workflow = authoring
 # ---------------------------------------------------------------------------
 
 
-class TestBuildIndexFromGithub:
-    def _make_tree(self, paths: list[str]) -> dict:
-        return {
-            "truncated": False,
-            "tree": [{"path": p, "type": "blob"} for p in paths],
-        }
+class TestSkillBuckets:
+    def test_technical_skills_are_knowledge(self):
+        from plugins.skills.index import build_index
 
-    def test_indexes_technical_skill(self):
-        tree = self._make_tree([
-            "claude/technical_skills/python-best-practices/SKILL.md",
-        ])
-        skill_md = "---\nname: python-best-practices\ndescription: Python best practices skill.\n---\n# Python"
+        index = build_index()
+        assert index["python-best-practices"].is_authoring is False
+        assert index["typescript-best-practices"].is_authoring is False
 
-        with (
-            patch("plugins.skills.index.requests.get") as mock_get,
-        ):
-            # First call: tree; second call: SKILL.md content
-            tree_resp = MagicMock()
-            tree_resp.raise_for_status = MagicMock()
-            tree_resp.json.return_value = tree
+    def test_workflow_skills_are_authoring(self):
+        from plugins.skills.index import build_index
 
-            import base64
-            file_resp = MagicMock()
-            file_resp.raise_for_status = MagicMock()
-            file_resp.status_code = 200
-            file_resp.json.return_value = {
-                "encoding": "base64",
-                "content": base64.b64encode(skill_md.encode()).decode(),
-            }
+        index = build_index()
+        for name in ("tech-lead", "init-feature", "approve-feature", "set-feature-stage"):
+            assert index[name].is_authoring is True
 
-            mock_get.side_effect = [tree_resp, file_resp]
+    def test_entry_path_reflects_bucket(self):
+        from plugins.skills import get_skill
 
-            from plugins.skills.index import _build_index_from_github
+        assert get_skill("python-best-practices").path.startswith("technical_skills/")
+        assert get_skill("tech-lead").path.startswith("workflow_skills/")
 
-            result = _build_index_from_github("owner", "repo", "main", "token")
 
-        assert "python-best-practices" in result
-        entry = result["python-best-practices"]
-        assert entry.description == "Python best practices skill."
-        assert entry.body == skill_md
-        assert entry.is_authoring is False
+# ---------------------------------------------------------------------------
+# _build_index_from_bundle / _index_skill — directory walking
+# ---------------------------------------------------------------------------
 
-    def test_indexes_authoring_skill(self):
-        tree = self._make_tree([
-            "claude/workflow_skills/tech-lead/SKILL.md",
-        ])
-        skill_md = "---\nname: tech-lead\ndescription: Tech lead authoring skill.\n---\n# TL"
 
-        with patch("plugins.skills.index.requests.get") as mock_get:
-            import base64
+class TestBuildIndexFromBundle:
+    def test_indexes_technical_and_authoring_skills(self, tmp_path):
+        _write_skill(tmp_path / "technical_skills" / "python-best-practices", "Python best practices.")
+        _write_skill(tmp_path / "workflow_skills" / "tech-lead", "Tech lead authoring skill.")
 
-            tree_resp = MagicMock()
-            tree_resp.raise_for_status = MagicMock()
-            tree_resp.json.return_value = tree
+        from plugins.skills.index import _build_index_from_bundle
 
-            file_resp = MagicMock()
-            file_resp.raise_for_status = MagicMock()
-            file_resp.status_code = 200
-            file_resp.json.return_value = {
-                "encoding": "base64",
-                "content": base64.b64encode(skill_md.encode()).decode(),
-            }
+        index = _build_index_from_bundle(tmp_path)
 
-            mock_get.side_effect = [tree_resp, file_resp]
+        assert index["python-best-practices"].description == "Python best practices."
+        assert index["python-best-practices"].is_authoring is False
+        assert index["tech-lead"].is_authoring is True
 
-            from plugins.skills.index import _build_index_from_github
+    def test_skips_skill_without_description(self, tmp_path):
+        _write_skill(tmp_path / "technical_skills" / "no-desc", None)
 
-            result = _build_index_from_github("owner", "repo", "main", "token")
+        from plugins.skills.index import _build_index_from_bundle
 
-        assert "tech-lead" in result
-        assert result["tech-lead"].is_authoring is True
+        assert "no-desc" not in _build_index_from_bundle(tmp_path)
 
-    def test_excludes_mutation_skills(self):
-        tree = self._make_tree([
-            "claude/workflow_skills/approve-feature/SKILL.md",
-            "claude/workflow_skills/reject-feature/SKILL.md",
-        ])
+    def test_includes_all_workflow_skills(self, tmp_path):
+        _write_skill(tmp_path / "workflow_skills" / "approve-feature", "Approve a feature.")
+        _write_skill(tmp_path / "workflow_skills" / "start-implementation", "Start implementation.")
 
-        with patch("plugins.skills.index.requests.get") as mock_get:
-            tree_resp = MagicMock()
-            tree_resp.raise_for_status = MagicMock()
-            tree_resp.json.return_value = tree
-            mock_get.return_value = tree_resp
+        from plugins.skills.index import _build_index_from_bundle
 
-            from plugins.skills.index import _build_index_from_github
+        index = _build_index_from_bundle(tmp_path)
+        assert index["approve-feature"].is_authoring is True
+        assert index["start-implementation"].is_authoring is True
 
-            result = _build_index_from_github("owner", "repo", "main", "token")
+    def test_collects_reference_files(self, tmp_path):
+        ts_dir = tmp_path / "technical_skills" / "ts"
+        _write_skill(ts_dir, "TypeScript skill.")
+        (ts_dir / "advanced-types.md").write_text("# Advanced Types", encoding="utf-8")
+        (ts_dir / "references").mkdir()
+        (ts_dir / "references" / "patterns.md").write_text("# Patterns", encoding="utf-8")
 
-        assert "approve-feature" not in result
-        assert "reject-feature" not in result
+        from plugins.skills.index import _build_index_from_bundle
 
-    def test_excludes_execution_skills(self):
-        tree = self._make_tree([
-            "claude/workflow_skills/start-implementation/SKILL.md",
-            "claude/workflow_skills/review-pr/SKILL.md",
-        ])
-
-        with patch("plugins.skills.index.requests.get") as mock_get:
-            tree_resp = MagicMock()
-            tree_resp.raise_for_status = MagicMock()
-            tree_resp.json.return_value = tree
-            mock_get.return_value = tree_resp
-
-            from plugins.skills.index import _build_index_from_github
-
-            result = _build_index_from_github("owner", "repo", "main", "token")
-
-        assert "start-implementation" not in result
-        assert "review-pr" not in result
-
-    def test_skips_skill_without_description(self):
-        tree = self._make_tree([
-            "claude/technical_skills/no-desc/SKILL.md",
-        ])
-        skill_md = "---\nname: no-desc\n---\n# No description here"
-
-        with patch("plugins.skills.index.requests.get") as mock_get:
-            import base64
-
-            tree_resp = MagicMock()
-            tree_resp.raise_for_status = MagicMock()
-            tree_resp.json.return_value = tree
-
-            file_resp = MagicMock()
-            file_resp.raise_for_status = MagicMock()
-            file_resp.status_code = 200
-            file_resp.json.return_value = {
-                "encoding": "base64",
-                "content": base64.b64encode(skill_md.encode()).decode(),
-            }
-
-            mock_get.side_effect = [tree_resp, file_resp]
-
-            from plugins.skills.index import _build_index_from_github
-
-            result = _build_index_from_github("owner", "repo", "main", "token")
-
-        assert "no-desc" not in result
-
-    def test_includes_reference_files(self):
-        tree = self._make_tree([
-            "claude/technical_skills/ts/SKILL.md",
-            "claude/technical_skills/ts/advanced-types.md",
-            "claude/technical_skills/ts/references/patterns.md",
-        ])
-        skill_md = "---\nname: ts\ndescription: TypeScript skill.\n---\n# TS"
-
-        with patch("plugins.skills.index.requests.get") as mock_get:
-            import base64
-
-            def make_file_resp(content: str):
-                r = MagicMock()
-                r.raise_for_status = MagicMock()
-                r.status_code = 200
-                r.json.return_value = {
-                    "encoding": "base64",
-                    "content": base64.b64encode(content.encode()).decode(),
-                }
-                return r
-
-            tree_resp = MagicMock()
-            tree_resp.raise_for_status = MagicMock()
-            tree_resp.json.return_value = tree
-
-            mock_get.side_effect = [
-                tree_resp,
-                make_file_resp(skill_md),           # SKILL.md
-                make_file_resp("# Advanced Types"),  # advanced-types.md
-                make_file_resp("# Patterns"),        # references/patterns.md
-            ]
-
-            from plugins.skills.index import _build_index_from_github
-
-            result = _build_index_from_github("owner", "repo", "main", "token")
-
-        assert "ts" in result
-        entry = result["ts"]
-        assert "advanced-types.md" in entry.references
-        assert "references/patterns.md" in entry.references
-
-    def test_handles_tree_fetch_failure(self):
-        import requests as req
-
-        with patch("plugins.skills.index.requests.get", side_effect=req.RequestException("network error")):
-            from plugins.skills.index import _build_index_from_github
-
-            result = _build_index_from_github("owner", "repo", "main", "token")
-
-        assert result == {}
+        entry = _build_index_from_bundle(tmp_path)["ts"]
+        assert entry.references["advanced-types.md"] == "# Advanced Types"
+        assert entry.references["references/patterns.md"] == "# Patterns"
 
 
 # ---------------------------------------------------------------------------
@@ -510,7 +343,7 @@ class TestLoadSkillHandler:
             result = handle(name="something")
 
         assert result["ok"] is False
-        assert "WORKFLOW_GITHUB_REPO" in result["error"]
+        assert "plugins/skills" in result["error"]
 
     def test_empty_name_returns_error(self):
         from plugins.tools.skills import handle
@@ -518,6 +351,24 @@ class TestLoadSkillHandler:
         result = handle(name="")
         assert result["ok"] is False
         assert "non-empty" in result["error"]
+
+    def test_dict_name_is_coerced(self):
+        """Over the MCP path the model may pass {"name": "..."} instead of a str.
+        It must not raise 'dict' object has no attribute 'strip'."""
+        entry = self._make_entry()
+        with patch("plugins.skills.get_skill", return_value=entry) as mock_get:
+            from plugins.tools.skills import handle
+
+            result = handle(name={"name": "python-best-practices"})
+        assert result["ok"] is True
+        mock_get.assert_called_once_with("python-best-practices")
+
+    def test_non_string_name_does_not_raise(self):
+        from plugins.tools.skills import handle
+
+        # A bare None / number must degrade to the empty-name error, not crash.
+        assert handle(name=None)["ok"] is False
+        assert handle(name=123)["ok"] is False
 
     def test_whitespace_stripped(self):
         entry = self._make_entry()
@@ -535,22 +386,22 @@ class TestLoadSkillHandler:
             r1 = handle(name="python-best-practices")
             r2 = handle(name="python-best-practices")
 
-        # Modifying one result's references doesn't affect the other
         r1["skill"]["references"]["new_key"] = "injected"
         assert "new_key" not in r2["skill"]["references"]
 
 
 class TestLoadSkillCheckAvailable:
-    def test_false_when_repo_not_set(self):
+    def test_true_when_bundle_present(self):
         from plugins.tools.skills import check_available
 
-        assert check_available() is False
-
-    def test_true_when_repo_set(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
-        from plugins.tools.skills import check_available
-
+        # The real bundle ships with the repo, so the index is non-empty.
         assert check_available() is True
+
+    def test_false_when_index_empty(self):
+        with patch("plugins.skills.get_index", return_value={}):
+            from plugins.tools.skills import check_available
+
+            assert check_available() is False
 
 
 # ---------------------------------------------------------------------------
@@ -563,12 +414,12 @@ class TestToolsRegistration:
         from plugins import _TOOLS
 
         names = [t["name"] for t in _TOOLS]
-        assert "workflow_load_skill" in names
+        assert "load_skill" in names
 
     def test_load_skill_has_required_fields(self):
         from plugins import _TOOLS
 
-        tool = next(t for t in _TOOLS if t["name"] == "workflow_load_skill")
+        tool = next(t for t in _TOOLS if t["name"] == "load_skill")
         assert "schema" in tool
         assert "handler" in tool
         assert "check_fn" in tool
@@ -580,7 +431,7 @@ class TestToolsRegistration:
         register(ctx)
         registered_names = [call.kwargs.get("name") or call.args[0]
                             for call in ctx.register_tool.call_args_list]
-        assert "workflow_load_skill" in registered_names
+        assert "load_skill" in registered_names
 
 
 # ---------------------------------------------------------------------------
@@ -627,9 +478,7 @@ class TestSkillsForRepos:
 
 
 class TestInjectContextSkills:
-    def _call_inject(self, workspace_id: str = "ws-1", feature_id: str = "feat-1", monkeypatch=None):
-        if monkeypatch:
-            monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+    def _call_inject(self, workspace_id: str = "ws-1", feature_id: str = "feat-1"):
         import plugins.context as ctx_mod
         ctx_mod.set_context("sess-1", workspace_id, feature_id)
         from plugins.hooks import inject_context
@@ -637,14 +486,17 @@ class TestInjectContextSkills:
         result = inject_context(session_id="sess-1")
         return result["context"] if result else ""
 
-    def test_no_skills_block_when_index_empty(self, monkeypatch):
-        with patch("plugins.hooks._build_skills_block", return_value=None):
-            with patch("plugins.hooks.check_workflow_available", return_value=False):
-                content = self._call_inject()
+    def test_no_skills_block_when_index_empty(self):
+        with (
+            patch("plugins.hooks._build_skills_block", return_value=None),
+            patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks.get_index", return_value={}),
+        ):
+            content = self._call_inject()
         assert "Available skills" not in content
 
-    def test_skills_block_injected_when_index_populated(self, monkeypatch):
-        skills_block = "## Available skills (call workflow_load_skill to load full content)\n  python-best-practices: Python skill"
+    def test_skills_block_injected_when_index_populated(self):
+        skills_block = "## Available skills (call load_skill to load full content)\n  python-best-practices: Python skill"
         with (
             patch("plugins.hooks._build_skills_block", return_value=skills_block),
             patch("plugins.hooks.check_workflow_available", return_value=False),
@@ -653,22 +505,23 @@ class TestInjectContextSkills:
         assert "Available skills" in content
         assert "python-best-practices" in content
 
-    def test_load_skill_advertised_when_repo_set(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_GITHUB_REPO", "owner/repo")
+    def test_load_skill_advertised_when_index_populated(self):
         with (
             patch("plugins.hooks._build_skills_block", return_value=None),
             patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks.get_index", return_value={"python-best-practices": MagicMock()}),
         ):
             content = self._call_inject()
-        assert "workflow_load_skill" in content
+        assert "load_skill" in content
 
-    def test_load_skill_not_advertised_when_repo_unset(self):
+    def test_load_skill_not_advertised_when_index_empty(self):
         with (
             patch("plugins.hooks._build_skills_block", return_value=None),
             patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks.get_index", return_value={}),
         ):
             content = self._call_inject()
-        assert "workflow_load_skill" not in content
+        assert "load_skill" not in content
 
     def test_skills_block_called_with_stage(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
@@ -749,7 +602,6 @@ class TestBuildSkillsBlock:
             block = _build_skills_block("feat-1", "technical_design", ["hermes-agent"])
 
         assert "Stack-matched skills" in block
-        # python-best-practices should appear in the stack-matched section (before "Other knowledge skills")
         stack_pos = block.find("Stack-matched")
         other_pos = block.find("Other knowledge")
         python_pos = block.find("python-best-practices")

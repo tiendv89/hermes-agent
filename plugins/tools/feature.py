@@ -1,4 +1,4 @@
-"""workflow_get_feature_state tool — reads feature lifecycle state from the workflow-backend DB."""
+"""get_feature_state tool — reads feature lifecycle state from the workflow-backend DB."""
 
 from __future__ import annotations
 
@@ -40,5 +40,5 @@ def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> Dict[str, 
     try:
         return {"ok": True, "feature": get_feature_detail(wid, fid)}
     except Exception as exc:
-        logger.warning("workflow_get_feature_state failed: %s", exc)
+        logger.warning("get_feature_state failed: %s", exc)
         return {"ok": False, "error": str(exc)}

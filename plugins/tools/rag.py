@@ -1,4 +1,4 @@
-"""workflow_query_rag tool — async semantic search via the RAG MCP server."""
+"""query_rag tool — async semantic search via the RAG MCP server."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from ..mcp_client import call_mcp_tool
+from ..mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
 
@@ -61,9 +61,12 @@ async def handle(
 ) -> Dict[str, Any]:
     from ..context import get_workspace_id
 
+    # The model may pass query as a structured object over the MCP path; the RAG
+    # server validates it as a string, so coerce before forwarding.
+    query = coerce_text(query)
     if not query:
         return {"ok": False, "error": "query is required."}
-    wid = workspace_id or get_workspace_id()
+    wid = coerce_text(workspace_id) or get_workspace_id()
     if not wid:
         return {"ok": False, "error": "workspace_id is required but was not provided and no workspace context is set."}
     url = os.environ.get("RAG_MCP_URL", "").strip()
@@ -76,5 +79,5 @@ async def handle(
         results = await call_mcp_tool(url, "rag_query", arguments)
         return {"ok": True, "results": results}
     except Exception as exc:
-        logger.warning("workflow_query_rag failed: %s", exc)
+        logger.warning("query_rag failed: %s", exc)
         return {"ok": False, "error": str(exc)}
