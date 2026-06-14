@@ -140,7 +140,7 @@ async def _schedule_follow_up(
 ) -> None:
     """Re-load history and schedule the coalesced follow-up turn."""
     try:
-        from src.db import get_messages_as_conversation, get_session, touch_session
+        from src.db import get_messages_as_conversation, touch_session
         from src.api.model_catalog import resolve_model
 
         async with pending["db_factory"]() as db:

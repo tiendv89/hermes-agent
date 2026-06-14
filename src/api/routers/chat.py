@@ -8,7 +8,6 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse

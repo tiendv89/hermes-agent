@@ -33,6 +33,14 @@ constraint-dependencies = ["pygments>=2.20.0"]
 [tool.uv.sources]
 hermes-agent = { path = "vendor/hermes-agent", editable = true }
 
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
+markers = [
+    "integration: tests that require external services (Postgres, Redis, etc.)",
+]
+# Exclude integration tests by default; run with -m integration to include them.
+addopts = "-m 'not integration'"
+
 [tool.ruff]
 # Don't lint the vendored upstream submodule — it has its own tooling/config.
 extend-exclude = ["vendor"]

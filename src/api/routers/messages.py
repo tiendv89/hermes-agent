@@ -24,10 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.agent_dispatch import schedule_agent_turn
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
-from src.api.mentions import mentions_agent, parse_mention_handles, resolve_mentions
+from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import default_model, resolve_model
 from src.db import (
-    AGENT_SENTINEL,
     get_messages_as_conversation,
     get_session,
     is_member,
