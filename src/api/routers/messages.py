@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -36,6 +37,7 @@ from src.db import (
     update_session_model,
 )
 from src.db.store import append_message
+from src.realtime.bus import get_bus
 
 logger = logging.getLogger(__name__)
 
@@ -122,6 +124,23 @@ async def send_message(
 
     await touch_session(db, session_id)
 
+    # --- Fan-out to SSE stream subscribers ---
+    get_bus().publish(
+        session_id,
+        {
+            "event": "message.created",
+            "data": {
+                "id": str(message_id),
+                "session_id": session_id,
+                "role": "user",
+                "content": body.content,
+                "author_id": user_id,
+                "created_at": _time.time(),
+                "mentions": resolved_mentions,
+            },
+        },
+    )
+
     # --- Dispatch gate ---
     if not _should_trigger_agent(session, has_agent_mention):
         return JSONResponse(
@@ -130,7 +149,9 @@ async def send_message(
         )
 
     # --- Trigger agent (with coalescing) ---
-    chosen_model = (body.model or "").strip() or getattr(session, "model", None) or default_model()
+    chosen_model = (
+        (body.model or "").strip() or getattr(session, "model", None) or default_model()
+    )
     resolved = resolve_model(chosen_model)
     if resolved["model"] != getattr(session, "model", None):
         await update_session_model(db, session_id, resolved["model"])
@@ -164,7 +185,9 @@ async def send_message(
             "status": "accepted",
             "message_id": message_id,
             "agent_triggered": True,
-            "agent_mentions": [m for m in resolved_mentions if m["mentioned_kind"] == "agent"],
+            "agent_mentions": [
+                m for m in resolved_mentions if m["mentioned_kind"] == "agent"
+            ],
         },
         status_code=202,
     )

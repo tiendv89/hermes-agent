@@ -16,7 +16,8 @@ import os
 import threading
 from typing import Any, Callable, Dict, Optional, Set
 
-from src.streaming import HermesSSETranslator
+from src.realtime.bus import get_bus
+from src.streaming import BusPublishingSSETranslator, HermesSSETranslator
 
 logger = logging.getLogger(__name__)
 
@@ -69,10 +70,12 @@ def _run_agent_turn(
     workflow_context = None
     try:
         from plugins import context as workflow_context
+
         workflow_context.set_context(session_id, workspace_id, feature_id)
 
         try:
             from src.db.session_db_proxy import make_gateway_session_db
+
             session_db = make_gateway_session_db(
                 loop,
                 db_factory,
@@ -88,6 +91,7 @@ def _run_agent_turn(
             session_db = None
 
         from plugins.skills import get_shared_rules
+
         shared_rules = get_shared_rules() or None
 
         from run_agent import AIAgent
@@ -155,7 +159,12 @@ async def _schedule_follow_up(
                 return
             _active_runs.add(session_id)
 
-        follow_translator = HermesSSETranslator(model=resolved["model"])
+        follow_translator = BusPublishingSSETranslator(
+            session_id=session_id, model=resolved["model"]
+        )
+        get_bus().publish(
+            session_id, {"event": "agent.working", "data": {"session_id": session_id}}
+        )
         loop.run_in_executor(
             None,
             functools.partial(
@@ -177,7 +186,9 @@ async def _schedule_follow_up(
             ),
         )
     except Exception:
-        logger.exception("agent_dispatch: failed to schedule follow-up turn for %s", session_id)
+        logger.exception(
+            "agent_dispatch: failed to schedule follow-up turn for %s", session_id
+        )
         with _active_runs_lock:
             _active_runs.discard(session_id)
 
@@ -227,7 +238,13 @@ async def schedule_agent_turn(
             return False
         _active_runs.add(session_id)
 
-    translator = HermesSSETranslator(model=model)
+    translator = BusPublishingSSETranslator(session_id=session_id, model=model)
+
+    # Signal to all stream subscribers that the agent is starting work.
+    get_bus().publish(
+        session_id, {"event": "agent.working", "data": {"session_id": session_id}}
+    )
+
     loop.run_in_executor(
         None,
         functools.partial(

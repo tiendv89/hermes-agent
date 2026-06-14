@@ -35,7 +35,7 @@ def _check_service_token(request: Request) -> None:
 
     header = request.headers.get("Authorization", "")
     prefix = "Bearer "
-    token = header[len(prefix):] if header.startswith(prefix) else ""
+    token = header[len(prefix) :] if header.startswith(prefix) else ""
     if not hmac.compare_digest(token, expected):
         raise HTTPException(status_code=401, detail="Invalid or missing service token.")
 
