@@ -322,6 +322,19 @@ async def test_create_channel_returns_session_id():
 
 
 @pytest.mark.asyncio
+async def test_create_channel_duplicate_name_raises():
+    """create_channel propagates IntegrityError on duplicate channel name."""
+    from sqlalchemy.exc import IntegrityError
+    from src.db.store_v4 import create_channel
+
+    db = _mock_db()
+    db.flush = AsyncMock(side_effect=IntegrityError("unique", {}, None))
+
+    with pytest.raises(IntegrityError):
+        await create_channel(db, "ws-1", "#general", "user_a")
+
+
+@pytest.mark.asyncio
 async def test_create_channel_without_description():
     """create_channel works without an optional description."""
     from src.db.store_v4 import create_channel
