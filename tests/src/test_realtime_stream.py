@@ -256,6 +256,8 @@ async def test_bus_translator_tool_progress_published():
             translator.on_tool_start(call_id="c1", name="my_tool")
             translator.on_tool_complete(call_id="c1", name="my_tool", output=None)
 
+            # call_soon_threadsafe schedules publish on the next loop tick.
+            await asyncio.sleep(0)
             while not q.empty():
                 events.append(q.get_nowait())
 
@@ -280,6 +282,8 @@ async def test_bus_translator_done_publishes_agent_done():
 
         async with bus.subscribe("sess_t3") as q:
             translator.done()
+
+            await asyncio.sleep(0)
             while not q.empty():
                 events.append(q.get_nowait())
 
@@ -302,6 +306,8 @@ async def test_bus_translator_error_publishes_agent_done():
 
         async with bus.subscribe("sess_t4") as q:
             translator.on_error(message="something went wrong")
+
+            await asyncio.sleep(0)
             while not q.empty():
                 events.append(q.get_nowait())
 
@@ -326,6 +332,8 @@ async def test_bus_translator_null_delta_not_published():
         async with bus.subscribe("sess_t5") as q:
             translator.on_delta(delta=None)
             translator.on_delta(delta="")
+
+            await asyncio.sleep(0)
             while not q.empty():
                 events_before.append(q.get_nowait())
 

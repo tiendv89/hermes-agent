@@ -32,7 +32,12 @@ class BusPublishingSSETranslator(HermesSSETranslator):
         self._session_id = session_id
 
     def _bus_publish(self, event: str, data: dict) -> None:
-        get_bus().publish(self._session_id, {"event": event, "data": data})
+        # Callbacks are invoked from a worker thread (run_in_executor); use
+        # call_soon_threadsafe to schedule put_nowait on the event-loop thread.
+        bus = get_bus()
+        self._loop.call_soon_threadsafe(
+            bus.publish, self._session_id, {"event": event, "data": data}
+        )
 
     # -- overridden callbacks -----------------------------------------------
 
