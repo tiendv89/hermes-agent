@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time as _time
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -124,8 +125,6 @@ async def send_message(
     await touch_session(db, session_id)
 
     # --- Fan-out to SSE stream subscribers ---
-    import time as _time
-
     get_bus().publish(
         session_id,
         {

@@ -174,7 +174,8 @@ async def delete_channel_endpoint(
 
     # Publish channel.deleted so live SSE subscribers (T3) know to drop it.
     get_bus().publish(
-        channel_id, {"event": "channel.deleted", "channel_id": channel_id}
+        channel_id,
+        {"event": "channel.deleted", "data": {"session_id": channel_id}},
     )
 
     logger.info(

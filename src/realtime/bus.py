@@ -39,6 +39,25 @@ class SessionBus:
             except asyncio.QueueFull:
                 pass
 
+    def subscribe_raw(self, session_id: str, q: asyncio.Queue) -> None:
+        """Register a pre-created queue synchronously.
+
+        Use when the subscription must be registered before an async operation
+        (e.g. a DB fetch) to avoid a race window. The caller is responsible for
+        cleanup via :meth:`unsubscribe_raw`.
+        """
+        self._topics.setdefault(session_id, []).append(q)
+
+    def unsubscribe_raw(self, session_id: str, q: asyncio.Queue) -> None:
+        """Unregister a queue previously registered via :meth:`subscribe_raw`."""
+        subs = self._topics.get(session_id, [])
+        try:
+            subs.remove(q)
+        except ValueError:
+            pass
+        if not subs:
+            self._topics.pop(session_id, None)
+
     @asynccontextmanager
     async def subscribe(self, session_id: str) -> AsyncIterator[asyncio.Queue]:
         """Async context manager that registers a subscriber queue.
@@ -49,17 +68,11 @@ class SessionBus:
                 event = await q.get()
         """
         q: asyncio.Queue = asyncio.Queue(maxsize=_MAX_QUEUE)
-        self._topics.setdefault(session_id, []).append(q)
+        self.subscribe_raw(session_id, q)
         try:
             yield q
         finally:
-            subs = self._topics.get(session_id, [])
-            try:
-                subs.remove(q)
-            except ValueError:
-                pass
-            if not subs:
-                self._topics.pop(session_id, None)
+            self.unsubscribe_raw(session_id, q)
 
 
 # ---------------------------------------------------------------------------

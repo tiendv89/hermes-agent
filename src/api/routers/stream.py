@@ -96,17 +96,22 @@ async def stream_thread(
         except ValueError:
             pass
 
-    # Capture missed messages from DB before entering the live-stream phase.
-    # We cannot await DB inside the generator (generator uses its own scope),
-    # so fetch the replay list here while we still have the DB session.
+    # Subscribe to the bus BEFORE the DB replay fetch (§4.3).
+    # Registering the queue here — while still in the request handler — ensures
+    # no live event published between the DB query and the generator starting
+    # is lost. The generator owns cleanup via finally.
+    bus = get_bus()
+    queue: asyncio.Queue = asyncio.Queue(maxsize=256)
+    bus.subscribe_raw(session_id, queue)
+
     replay_messages: list = []
     if since_id is not None:
         replay_messages = await get_messages_since(db, session_id, since_id)
 
     async def event_generator():
-        async with get_bus().subscribe(session_id) as queue:
-            # Replay missed persisted messages first (subscription already active
-            # so no in-flight live events are lost during this window).
+        try:
+            # Replay missed persisted messages first; subscription is already
+            # active so no in-flight live events are lost during this window.
             for msg in replay_messages:
                 yield _sse_frame("message.created", msg)
 
@@ -133,6 +138,8 @@ async def stream_thread(
                     and data.get("session_id") == session_id
                 ):
                     return
+        finally:
+            bus.unsubscribe_raw(session_id, queue)
 
     return StreamingResponse(
         event_generator(),
