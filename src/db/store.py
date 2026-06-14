@@ -245,6 +245,7 @@ async def append_message(
     token_count: Optional[int] = None,
     platform_message_id: Optional[str] = None,
     observed: bool = False,
+    author_id: Optional[str] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -264,6 +265,7 @@ async def append_message(
         observed=observed,
         active=True,
         created_at=time.time(),
+        author_id=author_id,
     )
     db.add(msg)
 

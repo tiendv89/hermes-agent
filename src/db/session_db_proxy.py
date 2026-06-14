@@ -31,8 +31,15 @@ def make_gateway_session_db(
     loop: asyncio.AbstractEventLoop,
     db_factory: Callable,
     gateway_session_id: str,
+    author_id: Optional[str] = None,
+    skip_user_persist: bool = False,
 ):
-    """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres."""
+    """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres.
+
+    author_id: if set, attached to user-role messages mirrored to Postgres.
+    skip_user_persist: if True, skip mirroring user-role messages (used when the
+        send service has already persisted the human message with author_id).
+    """
     from hermes_state import SessionDB
     from src.db.store import (
         append_message as pg_append,
@@ -89,6 +96,12 @@ def make_gateway_session_db(
             if session_id != gateway_session_id:
                 return result
 
+            # Skip mirroring user messages when the send service pre-persisted them.
+            if role == "user" and skip_user_persist:
+                return result
+
+            _author = author_id if role == "user" else None
+
             async def _save() -> None:
                 try:
                     async with db_factory() as db:
@@ -109,6 +122,7 @@ def make_gateway_session_db(
                             codex_message_items=_to_json(codex_message_items),
                             platform_message_id=platform_message_id,
                             observed=observed,
+                            author_id=_author,
                         )
                 except Exception:
                     logger.exception("GatewaySessionDB: failed to mirror append_message to Postgres")
