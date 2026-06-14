@@ -40,9 +40,7 @@ class SessionBus:
                 pass
 
     @asynccontextmanager
-    async def subscribe(
-        self, session_id: str
-    ) -> AsyncIterator[asyncio.Queue]:
+    async def subscribe(self, session_id: str) -> AsyncIterator[asyncio.Queue]:
         """Async context manager that registers a subscriber queue.
 
         Usage::

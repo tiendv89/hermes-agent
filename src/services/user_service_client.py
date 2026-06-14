@@ -57,7 +57,9 @@ async def get_workspace_role(
 
     url = f"{base_url}/api/v1/workspaces/{workspace_id}/members/{user_id}"
     async with aiohttp.ClientSession() as session:
-        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+        async with session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+        ) as resp:
             if resp.status == 404:
                 return None
             if resp.status != 200:

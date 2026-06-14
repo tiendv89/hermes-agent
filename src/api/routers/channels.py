@@ -173,7 +173,9 @@ async def delete_channel_endpoint(
         raise HTTPException(status_code=404, detail="Channel not found.")
 
     # Publish channel.deleted so live SSE subscribers (T3) know to drop it.
-    get_bus().publish(channel_id, {"event": "channel.deleted", "channel_id": channel_id})
+    get_bus().publish(
+        channel_id, {"event": "channel.deleted", "channel_id": channel_id}
+    )
 
     logger.info(
         "Channel deleted: %s (workspace=%s, by=%s)",

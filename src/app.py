@@ -30,6 +30,7 @@ try:
     _plugins.register(_wf_ctx)
 except Exception as _exc:
     import logging as _logging
+
     _logging.getLogger(__name__).warning(
         "src: failed to register workflow plugin: %s", _exc
     )

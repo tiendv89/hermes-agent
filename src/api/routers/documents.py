@@ -1,6 +1,6 @@
 """Human document-save route.
 
-    PUT /features/{feature_id}/document — human-save a document to the feature branch
+PUT /features/{feature_id}/document — human-save a document to the feature branch
 """
 
 from __future__ import annotations
@@ -62,7 +62,9 @@ async def save_document_endpoint(
 
     github_token = _os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
-        raise HTTPException(status_code=500, detail="GITHUB_TOKEN is not configured on the server.")
+        raise HTTPException(
+            status_code=500, detail="GITHUB_TOKEN is not configured on the server."
+        )
 
     # Workspace resolution: infer workspace from the feature context if needed.
     # For the human-save path we look up the workspace via the feature context
@@ -89,8 +91,15 @@ async def save_document_endpoint(
 
     try:
         result = write_document(
-            owner, repo, feature_id, base_branch, path,
-            body.content, body.base_sha, commit_message, github_token,
+            owner,
+            repo,
+            feature_id,
+            base_branch,
+            path,
+            body.content,
+            body.base_sha,
+            commit_message,
+            github_token,
         )
     except StaleBaseError as exc:
         raise HTTPException(
@@ -105,8 +114,10 @@ async def save_document_endpoint(
         logger.exception("save_document failed for feature %s", feature_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return JSONResponse({
-        "ok": True,
-        "commit_sha": result["commit_sha"],
-        "pr": result["pr"],
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "commit_sha": result["commit_sha"],
+            "pr": result["pr"],
+        }
+    )

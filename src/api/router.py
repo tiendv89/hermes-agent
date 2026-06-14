@@ -10,6 +10,8 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     GET  /models                                 — models
     POST /chat                                   — chat (streaming SSE, legacy)
     POST /threads/{id}/messages                  — send service (v4 team-chat)
+    GET  /threads/{id}/stream                    — SSE fan-out subscription (v4)
+    POST /threads/{id}/typing                    — ephemeral typing indicator (v4)
     PUT  /features/{feature_id}/document         — documents (human save)
     GET  /tools                                  — tools + skills registry
     POST /features/{feature_id}/stage-transition — stages (approve/reject/reopen)
@@ -23,13 +25,24 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from src.api.routers import channels, chat, documents, messages, models, sessions, stages, tools
+from src.api.routers import (
+    channels,
+    chat,
+    documents,
+    messages,
+    models,
+    sessions,
+    stages,
+    stream,
+    tools,
+)
 
 router = APIRouter()
 router.include_router(sessions.router)
 router.include_router(models.router)
 router.include_router(chat.router)
 router.include_router(messages.router)
+router.include_router(stream.router)
 router.include_router(documents.router)
 router.include_router(tools.router)
 router.include_router(stages.router)

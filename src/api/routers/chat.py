@@ -1,6 +1,6 @@
 """Streaming chat route.
 
-    POST /chat — run one agent turn and stream the reply back as SSE
+POST /chat — run one agent turn and stream the reply back as SSE
 """
 
 from __future__ import annotations
@@ -95,7 +95,11 @@ async def chat(
         # Resolve the model for this turn: a per-turn FE selection wins and is
         # persisted on the session; otherwise reuse the session's last model,
         # then the server default. Unknown ids fall back inside resolve_model.
-        chosen = (body.model or "").strip() or getattr(session, "model", None) or default_model()
+        chosen = (
+            (body.model or "").strip()
+            or getattr(session, "model", None)
+            or default_model()
+        )
         resolved = resolve_model(chosen)
         if resolved["model"] != getattr(session, "model", None):
             await update_session_model(db, session_id, resolved["model"])
