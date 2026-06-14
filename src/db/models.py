@@ -50,6 +50,9 @@ class Session(Base):
     is_active      = Column(Boolean, nullable=False, default=True)
     extra          = Column("metadata", JSONB, nullable=False, default=dict)
 
+    # v4 team-chat: 'thread' (default) or 'channel'
+    kind = Column(String, nullable=False, default="thread")
+
     __table_args__ = (
         Index("idx_sessions_source",  "source"),
         Index("idx_sessions_started", "started_at"),
@@ -79,7 +82,45 @@ class Message(Base):
     active               = Column(Boolean, nullable=False, default=True)
     created_at           = Column(Double, nullable=False)
 
+    # v4 team-chat: sender X-User-Id or 'agent' sentinel; NULL for legacy rows
+    author_id = Column(String)
+
     __table_args__ = (
         Index("idx_messages_session",        "session_id", "created_at"),
         Index("idx_messages_session_active", "session_id", "active", "created_at"),
+        Index("idx_messages_author",         "session_id", "author_id"),
+    )
+
+
+class SessionMember(Base):
+    """Explicit membership for threads and channels (v4 team-chat)."""
+
+    __tablename__ = "session_members"
+
+    session_id = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False, primary_key=True)
+    user_id    = Column(String, nullable=False, primary_key=True)
+    role_label = Column(String)
+    added_by   = Column(String, nullable=False)
+    added_at   = Column(Double, nullable=False)
+
+    __table_args__ = (
+        Index("idx_session_members_user", "user_id"),
+    )
+
+
+class MessageMention(Base):
+    """Resolved @mentions within messages (v4 team-chat)."""
+
+    __tablename__ = "message_mentions"
+
+    id             = Column(BigInteger, primary_key=True, autoincrement=True)
+    message_id     = Column(BigInteger, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False)
+    session_id     = Column(String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False)
+    mentioned_id   = Column(String, nullable=False)
+    mentioned_kind = Column(String, nullable=False)  # 'user' | 'agent'
+    read_at        = Column(Double)
+
+    __table_args__ = (
+        Index("idx_message_mentions_session",  "session_id"),
+        Index("idx_message_mentions_user",     "session_id", "mentioned_id", "read_at"),
     )
