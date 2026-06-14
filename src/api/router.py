@@ -12,13 +12,17 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     PUT  /features/{feature_id}/document         — documents (human save)
     GET  /tools                                  — tools + skills registry
     POST /features/{feature_id}/stage-transition — stages (approve/reject/reopen)
+    GET  /channels                               — channels (team chat)
+    POST /channels                               — channels
+    DELETE /channels/{id}                        — channels
+    POST /channels/{id}/join                     — channels
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
-from src.api.routers import chat, documents, models, sessions, stages, tools
+from src.api.routers import channels, chat, documents, models, sessions, stages, tools
 
 router = APIRouter()
 router.include_router(sessions.router)
@@ -27,6 +31,7 @@ router.include_router(chat.router)
 router.include_router(documents.router)
 router.include_router(tools.router)
 router.include_router(stages.router)
+router.include_router(channels.router)
 
 # Re-exported for callers/tests that reach for the in-flight run registry on
 # this module. These are the SAME objects the chat router mutates, so adding to
