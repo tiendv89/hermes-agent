@@ -181,7 +181,7 @@ async def test_bus_cleanup_on_exit():
 
     bus = SessionBus()
 
-    async with bus.subscribe("sess_c") as q:
+    async with bus.subscribe("sess_c") as _q:
         pass  # exits immediately
 
     # No subscribers should remain.
@@ -195,7 +195,7 @@ async def test_bus_slow_subscriber_drops_gracefully():
 
     bus = SessionBus()
 
-    async with bus.subscribe("sess_slow") as q_slow, bus.subscribe("sess_slow") as q_fast:
+    async with bus.subscribe("sess_slow") as _q_slow, bus.subscribe("sess_slow") as q_fast:
         # Fill the slow subscriber's queue to capacity.
         for i in range(_MAX_QUEUE):
             bus.publish("sess_slow", {"event": "fill", "data": {"i": i}})
