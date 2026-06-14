@@ -10,10 +10,10 @@ import secrets
 import time
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import Message, MessageMention, Session, SessionMember
+from .models import MessageMention, Session, SessionMember
 
 # ---------------------------------------------------------------------------
 # Member store
