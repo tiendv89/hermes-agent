@@ -32,6 +32,8 @@ from src.db.store_v4 import (
     list_channels,
     get_channel,
     hard_delete_channel,
+    create_workspace_thread,
+    list_workspace_threads,
     AGENT_SENTINEL,
 )
 
@@ -73,4 +75,7 @@ __all__ = [
     "list_channels",
     "get_channel",
     "hard_delete_channel",
+    # T9 workspace threads
+    "create_workspace_thread",
+    "list_workspace_threads",
 ]

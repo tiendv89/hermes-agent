@@ -12,6 +12,8 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     POST /threads/{id}/messages                  — send service (v4 team-chat)
     GET  /threads/{id}/stream                    — SSE fan-out subscription (v4)
     POST /threads/{id}/typing                    — ephemeral typing indicator (v4)
+    POST /threads                                — create workspace-level thread (T9)
+    GET  /threads                                — list caller's workspace threads (T9)
     PUT  /features/{feature_id}/document         — documents (human save)
     GET  /tools                                  — tools + skills registry
     POST /features/{feature_id}/stage-transition — stages (approve/reject/reopen)
@@ -34,6 +36,7 @@ from src.api.routers import (
     sessions,
     stages,
     stream,
+    threads,
     tools,
 )
 
@@ -47,6 +50,7 @@ router.include_router(documents.router)
 router.include_router(tools.router)
 router.include_router(stages.router)
 router.include_router(channels.router)
+router.include_router(threads.router)
 
 # Re-exported for callers/tests that reach for the in-flight run registry.
 # Both the legacy /chat handler and the new send service share this state via
