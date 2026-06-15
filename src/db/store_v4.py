@@ -347,3 +347,116 @@ async def hard_delete_channel(
     await db.delete(session)
     await db.commit()
     return True
+
+
+# ---------------------------------------------------------------------------
+# Workspace thread store (T9)
+# ---------------------------------------------------------------------------
+
+
+async def create_workspace_thread(
+    db: AsyncSession,
+    workspace_id: str,
+    creator_user_id: str,
+    title: Optional[str] = None,
+    members: Optional[List[str]] = None,
+) -> str:
+    """Create a workspace-level team thread (kind='thread', feature_id='').
+
+    The creator is auto-joined as the first member. Any additional user IDs in
+    *members* are also added. Returns the new session id.
+    """
+    now = time.time()
+    session = Session(
+        id=_new_session_id(),
+        source="hermes-agent",
+        user_id=creator_user_id,
+        workspace_id=workspace_id,
+        feature_id="",
+        title=title or None,
+        kind="thread",
+        started_at=now,
+        last_active_at=now,
+        extra={},
+    )
+    db.add(session)
+    await db.flush()
+
+    # Auto-join creator
+    db.add(
+        SessionMember(
+            session_id=session.id,
+            user_id=creator_user_id,
+            added_by=creator_user_id,
+            added_at=now,
+        )
+    )
+
+    # Add any explicitly requested initial members (skip duplicates)
+    if members:
+        for uid in members:
+            if uid == creator_user_id:
+                continue
+            db.add(
+                SessionMember(
+                    session_id=session.id,
+                    user_id=uid,
+                    added_by=creator_user_id,
+                    added_at=now,
+                )
+            )
+
+    await db.commit()
+    return session.id
+
+
+async def list_workspace_threads(
+    db: AsyncSession,
+    workspace_id: str,
+    user_id: str,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Return workspace-level threads the user owns or is a member of.
+
+    Workspace threads are kind='thread' rows with feature_id=''.
+    Non-members are excluded (own ∪ member-of filter).
+    """
+    result = await db.execute(
+        select(
+            Session.id,
+            Session.title,
+            Session.feature_id,
+            Session.started_at,
+            Session.last_active_at,
+            Session.model,
+            Session.kind,
+        )
+        .where(
+            Session.workspace_id == workspace_id,
+            Session.archived == False,  # noqa: E712
+            Session.kind == "thread",
+            Session.feature_id == "",
+            or_(
+                Session.user_id == user_id,
+                Session.id.in_(
+                    select(SessionMember.session_id).where(
+                        SessionMember.user_id == user_id
+                    )
+                ),
+            ),
+        )
+        .order_by(Session.last_active_at.desc())
+        .limit(limit)
+    )
+    return [
+        {
+            "id": row.id,
+            "title": row.title or "(untitled)",
+            "feature_id": row.feature_id,
+            "started_at": row.started_at,
+            "last_active_at": row.last_active_at,
+            "model": row.model,
+            "kind": row.kind,
+        }
+        for row in result.all()
+    ]
