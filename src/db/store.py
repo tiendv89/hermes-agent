@@ -245,6 +245,7 @@ async def append_message(
     token_count: Optional[int] = None,
     platform_message_id: Optional[str] = None,
     observed: bool = False,
+    author_id: Optional[str] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -264,6 +265,7 @@ async def append_message(
         observed=observed,
         active=True,
         created_at=time.time(),
+        author_id=author_id,
     )
     db.add(msg)
 
@@ -338,6 +340,7 @@ async def get_session_messages(
             "id": str(msg.id),
             "role": msg.role,
             "content": msg.content or "",
+            "author_id": msg.author_id,
             "created_at": msg.created_at,
         }
         if msg.tool_name:
@@ -349,6 +352,42 @@ async def get_session_messages(
                 entry["tool_calls"] = json.loads(msg.tool_calls)
             except (ValueError, TypeError):
                 entry["tool_calls"] = msg.tool_calls
+        messages.append(entry)
+    return messages
+
+
+async def get_messages_since(
+    db: AsyncSession,
+    session_id: str,
+    since_message_id: int,
+) -> list[Dict[str, Any]]:
+    """Return active messages with id > since_message_id, oldest-first.
+
+    Used by the SSE stream endpoint's ``?since=`` replay to catch up a
+    reconnecting client without missing events that arrived while the bus queue
+    was empty (§4.3 / T3).
+    """
+    result = await db.execute(
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.active == True,  # noqa: E712
+            Message.id > since_message_id,
+        )
+        .order_by(Message.created_at, Message.id)
+    )
+    messages = []
+    for msg in result.scalars().all():
+        entry: Dict[str, Any] = {
+            "id": str(msg.id),
+            "session_id": session_id,
+            "role": msg.role,
+            "content": msg.content or "",
+            "author_id": msg.author_id,
+            "created_at": msg.created_at,
+        }
+        if msg.tool_name:
+            entry["tool_name"] = msg.tool_name
         messages.append(entry)
     return messages
 
@@ -381,9 +420,26 @@ async def list_sessions(
     db: AsyncSession,
     workspace_id: str,
     feature_id: str,
+    user_id: Optional[str] = None,
     limit: int = 50,
 ) -> list[Dict[str, Any]]:
-    """Return non-archived sessions for a workspace+feature, newest-first."""
+    """Return non-archived agent-chat sessions for a workspace+feature, newest-first.
+
+    Excludes channels (kind='channel'), which are feature-scoped sessions surfaced
+    in their own CHANNELS list — without this they'd double up under Sessions.
+
+    When ``user_id`` is provided, only that user's own sessions are returned —
+    sessions are private single-user agent chats, not shared like channels.
+    """
+    conditions = [
+        Session.workspace_id == workspace_id,
+        Session.feature_id == feature_id,
+        Session.kind != "channel",
+        Session.archived == False,  # noqa: E712
+    ]
+    if user_id:
+        conditions.append(Session.user_id == user_id)
+
     result = await db.execute(
         select(
             Session.id,
@@ -392,11 +448,7 @@ async def list_sessions(
             Session.last_active_at,
             Session.model,
         )
-        .where(
-            Session.workspace_id == workspace_id,
-            Session.feature_id == feature_id,
-            Session.archived == False,  # noqa: E712
-        )
+        .where(*conditions)
         .order_by(Session.last_active_at.desc())
         .limit(limit)
     )
@@ -404,12 +456,14 @@ async def list_sessions(
     out = []
     for row in rows:
         excerpt = await _last_assistant_excerpt(db, row.id)
-        out.append({
-            "id": row.id,
-            "title": row.title or "(untitled)",
-            "started_at": row.started_at,
-            "last_active_at": row.last_active_at,
-            "last_message_excerpt": excerpt,
-            "model": row.model,
-        })
+        out.append(
+            {
+                "id": row.id,
+                "title": row.title or "(untitled)",
+                "started_at": row.started_at,
+                "last_active_at": row.last_active_at,
+                "last_message_excerpt": excerpt,
+                "model": row.model,
+            }
+        )
     return out

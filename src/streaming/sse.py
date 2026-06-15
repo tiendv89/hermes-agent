@@ -99,23 +99,40 @@ class HermesSSETranslator:
         if delta:
             self._emit(self._chunk({"content": delta}))
 
-    def on_tool_start(self, call_id: str = "", name: str = "", args: Any = None, **_: Any) -> None:
+    def on_tool_start(
+        self, call_id: str = "", name: str = "", args: Any = None, **_: Any
+    ) -> None:
         # hermes signature: tool_start_callback(call_id, name, args)
-        self._emit(self._event("hermes.tool.progress", {
-            "tool": name,
-            "toolCallId": call_id or name,
-            "status": "running",
-        }))
+        self._emit(
+            self._event(
+                "hermes.tool.progress",
+                {
+                    "tool": name,
+                    "toolCallId": call_id or name,
+                    "status": "running",
+                },
+            )
+        )
 
     def on_tool_complete(
-        self, call_id: str = "", name: str = "", args: Any = None, output: Any = None, **_: Any
+        self,
+        call_id: str = "",
+        name: str = "",
+        args: Any = None,
+        output: Any = None,
+        **_: Any,
     ) -> None:
         # hermes signature: tool_complete_callback(call_id, name, args, result)
-        self._emit(self._event("hermes.tool.progress", {
-            "tool": name,
-            "toolCallId": call_id or name,
-            "status": "completed",
-        }))
+        self._emit(
+            self._event(
+                "hermes.tool.progress",
+                {
+                    "tool": name,
+                    "toolCallId": call_id or name,
+                    "status": "completed",
+                },
+            )
+        )
         artifact = ARTIFACT_BY_WRITE_TOOL.get(name)
         if artifact and isinstance(output, dict) and output.get("ok"):
             self._emit(self._event("hermes.artifact.saved", {"artifact": artifact}))
@@ -143,7 +160,10 @@ class HermesSSETranslator:
             return
         self._terminated = True
 
-        siblings: Dict[str, Any] = {"finish_reason": finish_reason, "usage": self._usage}
+        siblings: Dict[str, Any] = {
+            "finish_reason": finish_reason,
+            "usage": self._usage,
+        }
         if error is not None:
             siblings["hermes"] = {"error": error}
         self._emit(self._chunk({}, **siblings))

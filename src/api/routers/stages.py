@@ -1,6 +1,6 @@
 """Stage-review lifecycle route.
 
-    POST /features/{feature_id}/stage-transition — ts lifecycle write (approve/reject/reopen)
+POST /features/{feature_id}/stage-transition — ts lifecycle write (approve/reject/reopen)
 """
 
 from __future__ import annotations
@@ -120,7 +120,9 @@ async def stage_transition_endpoint(
 
     github_token = _os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
-        raise HTTPException(status_code=500, detail="GITHUB_TOKEN is not configured on the server.")
+        raise HTTPException(
+            status_code=500, detail="GITHUB_TOKEN is not configured on the server."
+        )
 
     workspace_id = _os.environ.get("WORKSPACE_ID", "").strip()
     if not workspace_id:
@@ -169,7 +171,9 @@ async def stage_transition_endpoint(
             detail=f"Could not parse status.yaml: {exc}",
         ) from exc
 
-    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    now = datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S+0000"
+    )
     stage_block = status_data.setdefault("stages", {}).setdefault(body.stage, {})
     if "review_history" not in stage_block or stage_block["review_history"] is None:
         stage_block["review_history"] = []
@@ -181,24 +185,28 @@ async def stage_transition_endpoint(
         stage_block["reviewed_by"] = actor
         stage_block["reviewed_at"] = now
         stage_block["review_comment"] = body.comment
-        stage_block["review_history"].append({
-            "review_status": "approved",
-            "reviewed_by": actor,
-            "reviewed_at": now,
-            "comment": body.comment,
-        })
+        stage_block["review_history"].append(
+            {
+                "review_status": "approved",
+                "reviewed_by": actor,
+                "reviewed_at": now,
+                "comment": body.comment,
+            }
+        )
         effects = _APPROVE_EFFECTS.get(body.stage, {})
         if effects:
             status_data["feature_status"] = effects["feature_status"]
             status_data["current_stage"] = effects["current_stage"]
             status_data["next_action"] = effects["next_action"]
-        status_data["history"].append({
-            "at": now,
-            "by": actor,
-            "action": "stage_approved",
-            "stage": body.stage,
-            "note": f"{body.stage} approved by {actor}.",
-        })
+        status_data["history"].append(
+            {
+                "at": now,
+                "by": actor,
+                "action": "stage_approved",
+                "stage": body.stage,
+                "note": f"{body.stage} approved by {actor}.",
+            }
+        )
         commit_msg = f"chore({feature_id}): approve {body.stage} stage"
 
     elif body.action == "reject":
@@ -206,22 +214,26 @@ async def stage_transition_endpoint(
         stage_block["reviewed_by"] = actor
         stage_block["reviewed_at"] = now
         stage_block["review_comment"] = body.comment
-        stage_block["review_history"].append({
-            "review_status": "rejected",
-            "reviewed_by": actor,
-            "reviewed_at": now,
-            "comment": body.comment,
-        })
+        stage_block["review_history"].append(
+            {
+                "review_status": "rejected",
+                "reviewed_by": actor,
+                "reviewed_at": now,
+                "comment": body.comment,
+            }
+        )
         status_data["next_action"] = (
             f"Stage {body.stage} rejected. Address the comment and re-submit for approval."
         )
-        status_data["history"].append({
-            "at": now,
-            "by": actor,
-            "action": "stage_rejected",
-            "stage": body.stage,
-            "note": f"{body.stage} rejected by {actor}. Comment: {body.comment or '(none)'}",
-        })
+        status_data["history"].append(
+            {
+                "at": now,
+                "by": actor,
+                "action": "stage_rejected",
+                "stage": body.stage,
+                "note": f"{body.stage} rejected by {actor}. Comment: {body.comment or '(none)'}",
+            }
+        )
         commit_msg = f"chore({feature_id}): reject {body.stage} stage"
 
     else:  # reopen
@@ -229,12 +241,14 @@ async def stage_transition_endpoint(
         stage_block["reviewed_by"] = None
         stage_block["reviewed_at"] = None
         stage_block["review_comment"] = None
-        stage_block["review_history"].append({
-            "review_status": "draft",
-            "reviewed_by": actor,
-            "reviewed_at": now,
-            "comment": f"Stage reopened by {actor}.",
-        })
+        stage_block["review_history"].append(
+            {
+                "review_status": "draft",
+                "reviewed_by": actor,
+                "reviewed_at": now,
+                "comment": f"Stage reopened by {actor}.",
+            }
+        )
         effects = _REOPEN_EFFECTS.get(body.stage, {})
         if effects:
             status_data["feature_status"] = effects["feature_status"]
@@ -243,21 +257,30 @@ async def stage_transition_endpoint(
             revalidation = status_data.setdefault("revalidation", {})
             for k, v in effects.get("revalidation", {}).items():
                 revalidation[k] = v
-        status_data["history"].append({
-            "at": now,
-            "by": actor,
-            "action": "stage_reopened",
-            "stage": body.stage,
-            "note": f"{body.stage} reopened by {actor} — artifacts preserved, revalidation flags set.",
-        })
+        status_data["history"].append(
+            {
+                "at": now,
+                "by": actor,
+                "action": "stage_reopened",
+                "stage": body.stage,
+                "note": f"{body.stage} reopened by {actor} — artifacts preserved, revalidation flags set.",
+            }
+        )
         commit_msg = f"chore({feature_id}): reopen {body.stage} stage"
 
     new_content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
 
     try:
         result = write_document(
-            owner, repo, feature_id, base_branch, path,
-            new_content, current["sha"], commit_msg, github_token,
+            owner,
+            repo,
+            feature_id,
+            base_branch,
+            path,
+            new_content,
+            current["sha"],
+            commit_msg,
+            github_token,
         )
     except StaleBaseError as exc:
         raise HTTPException(
@@ -272,12 +295,14 @@ async def stage_transition_endpoint(
         logger.exception("stage_transition failed for feature %s", feature_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    return JSONResponse({
-        "ok": True,
-        "feature_id": feature_id,
-        "stage": body.stage,
-        "action": body.action,
-        "review_status": stage_block["review_status"],
-        "commit_sha": result["commit_sha"],
-        "pr": result["pr"],
-    })
+    return JSONResponse(
+        {
+            "ok": True,
+            "feature_id": feature_id,
+            "stage": body.stage,
+            "action": body.action,
+            "review_status": stage_block["review_status"],
+            "commit_sha": result["commit_sha"],
+            "pr": result["pr"],
+        }
+    )

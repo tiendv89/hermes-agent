@@ -1,4 +1,4 @@
-from src.db.models import Base, Message, Session
+from src.db.models import Base, Message, MessageMention, Session, SessionMember
 from src.db.store import (
     init_db,
     create_session,
@@ -14,14 +14,36 @@ from src.db.store import (
     set_session_archived,
     append_message,
     get_messages_as_conversation,
+    get_messages_since,
     get_session_messages,
     list_sessions,
+)
+from src.db.store_v4 import (
+    add_member,
+    remove_member,
+    list_members,
+    is_member,
+    list_member_sessions,
+    persist_mentions,
+    resolve_mentions,
+    get_unread_mention_count,
+    get_unread_mentions_by_session,
+    mark_mentions_read,
+    create_channel,
+    list_channels,
+    get_channel,
+    hard_delete_channel,
+    create_workspace_thread,
+    list_workspace_threads,
+    AGENT_SENTINEL,
 )
 
 __all__ = [
     "Base",
     "Message",
+    "MessageMention",
     "Session",
+    "SessionMember",
     "init_db",
     "create_session",
     "get_session",
@@ -36,6 +58,26 @@ __all__ = [
     "set_session_archived",
     "append_message",
     "get_messages_as_conversation",
+    "get_messages_since",
     "get_session_messages",
     "list_sessions",
+    # v4 team-chat
+    "AGENT_SENTINEL",
+    "add_member",
+    "remove_member",
+    "list_members",
+    "is_member",
+    "list_member_sessions",
+    "persist_mentions",
+    "resolve_mentions",
+    "get_unread_mention_count",
+    "get_unread_mentions_by_session",
+    "mark_mentions_read",
+    "create_channel",
+    "list_channels",
+    "get_channel",
+    "hard_delete_channel",
+    # T9 workspace threads
+    "create_workspace_thread",
+    "list_workspace_threads",
 ]
