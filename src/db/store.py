@@ -245,6 +245,7 @@ async def append_message(
     token_count: Optional[int] = None,
     platform_message_id: Optional[str] = None,
     observed: bool = False,
+    author_id: Optional[str] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -264,6 +265,7 @@ async def append_message(
         observed=observed,
         active=True,
         created_at=time.time(),
+        author_id=author_id,
     )
     db.add(msg)
 
@@ -353,6 +355,42 @@ async def get_session_messages(
     return messages
 
 
+async def get_messages_since(
+    db: AsyncSession,
+    session_id: str,
+    since_message_id: int,
+) -> list[Dict[str, Any]]:
+    """Return active messages with id > since_message_id, oldest-first.
+
+    Used by the SSE stream endpoint's ``?since=`` replay to catch up a
+    reconnecting client without missing events that arrived while the bus queue
+    was empty (§4.3 / T3).
+    """
+    result = await db.execute(
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.active == True,  # noqa: E712
+            Message.id > since_message_id,
+        )
+        .order_by(Message.created_at, Message.id)
+    )
+    messages = []
+    for msg in result.scalars().all():
+        entry: Dict[str, Any] = {
+            "id": str(msg.id),
+            "session_id": session_id,
+            "role": msg.role,
+            "content": msg.content or "",
+            "author_id": msg.author_id,
+            "created_at": msg.created_at,
+        }
+        if msg.tool_name:
+            entry["tool_name"] = msg.tool_name
+        messages.append(entry)
+    return messages
+
+
 # ---------------------------------------------------------------------------
 # Session listing
 # ---------------------------------------------------------------------------
@@ -404,12 +442,14 @@ async def list_sessions(
     out = []
     for row in rows:
         excerpt = await _last_assistant_excerpt(db, row.id)
-        out.append({
-            "id": row.id,
-            "title": row.title or "(untitled)",
-            "started_at": row.started_at,
-            "last_active_at": row.last_active_at,
-            "last_message_excerpt": excerpt,
-            "model": row.model,
-        })
+        out.append(
+            {
+                "id": row.id,
+                "title": row.title or "(untitled)",
+                "started_at": row.started_at,
+                "last_active_at": row.last_active_at,
+                "last_message_excerpt": excerpt,
+                "model": row.model,
+            }
+        )
     return out

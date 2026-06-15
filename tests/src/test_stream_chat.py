@@ -37,16 +37,50 @@ class _MockAIAgent:
 
 
 def _inject_mock_run_agent():
-    """Inject a fake run_agent module into sys.modules before router import.
+    """Inject stub modules for heavyweight deps not installed in the test env.
 
-    The router does `from run_agent import AIAgent` inside _run_agent().
-    run_agent has heavyweight deps that aren't installed in the test env, so
-    we pre-populate sys.modules with a minimal stub module instead.
+    Stubs: run_agent (AIAgent), hermes_state (SessionDB), plugins.context,
+    plugins.skills.  These are lazy-imported inside agent_dispatch._run_agent_turn
+    and must be pre-populated before the worker thread fires.
+
+    Always overwrites run_agent.AIAgent with _MockAIAgent so this test's
+    fixture is not affected by an earlier test that injected a different stub.
     """
     if "run_agent" not in sys.modules:
         stub = types.ModuleType("run_agent")
-        stub.AIAgent = _MockAIAgent  # type: ignore[attr-defined]
         sys.modules["run_agent"] = stub
+    # Always set AIAgent so a generic MagicMock from another test doesn't win.
+    sys.modules["run_agent"].AIAgent = _MockAIAgent  # type: ignore[attr-defined]
+
+    if "hermes_state" not in sys.modules:
+        stub = types.ModuleType("hermes_state")
+
+        class _FakeSessionDB:
+            def append_message(self, *a, **kw):
+                return 0
+
+            def update_token_counts(self, *a, **kw):
+                pass
+
+        stub.SessionDB = _FakeSessionDB  # type: ignore[attr-defined]
+        sys.modules["hermes_state"] = stub
+
+    for _mod_name in ("plugins", "plugins.context", "plugins.skills"):
+        if _mod_name not in sys.modules:
+            sys.modules[_mod_name] = types.ModuleType(_mod_name)
+
+    ctx = sys.modules["plugins.context"]
+    if not hasattr(ctx, "set_context"):
+        ctx.set_context = MagicMock()  # type: ignore[attr-defined]
+        ctx.clear_context = MagicMock()  # type: ignore[attr-defined]
+
+    plugins_pkg = sys.modules["plugins"]
+    if not hasattr(plugins_pkg, "context"):
+        plugins_pkg.context = ctx  # type: ignore[attr-defined]
+
+    skills = sys.modules["plugins.skills"]
+    if not hasattr(skills, "get_shared_rules"):
+        skills.get_shared_rules = lambda: None  # type: ignore[attr-defined]
 
 
 def _parse_sse_events(body: bytes) -> list:

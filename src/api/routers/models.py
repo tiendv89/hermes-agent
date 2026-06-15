@@ -1,6 +1,6 @@
 """Model catalog route.
 
-    GET /models — selectable chat models for the FE picker
+GET /models — selectable chat models for the FE picker
 """
 
 from __future__ import annotations

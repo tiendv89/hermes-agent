@@ -1,8 +1,8 @@
 """Session lifecycle routes.
 
-    POST /session                       — create a new session
-    GET  /sessions                      — list sessions for a workspace+feature
-    GET  /sessions/{session_id}/messages — load a session's transcript
+POST /session                       — create a new session
+GET  /sessions                      — list sessions for a workspace+feature
+GET  /sessions/{session_id}/messages — load a session's transcript
 """
 
 from __future__ import annotations

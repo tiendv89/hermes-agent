@@ -31,8 +31,15 @@ def make_gateway_session_db(
     loop: asyncio.AbstractEventLoop,
     db_factory: Callable,
     gateway_session_id: str,
+    author_id: Optional[str] = None,
+    skip_user_persist: bool = False,
 ):
-    """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres."""
+    """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres.
+
+    author_id: if set, attached to user-role messages mirrored to Postgres.
+    skip_user_persist: if True, skip mirroring user-role messages (used when the
+        send service has already persisted the human message with author_id).
+    """
     from hermes_state import SessionDB
     from src.db.store import (
         append_message as pg_append,
@@ -47,7 +54,6 @@ def make_gateway_session_db(
     )
 
     class GatewaySessionDB(SessionDB):
-
         def append_message(
             self,
             session_id: str,
@@ -89,6 +95,12 @@ def make_gateway_session_db(
             if session_id != gateway_session_id:
                 return result
 
+            # Skip mirroring user messages when the send service pre-persisted them.
+            if role == "user" and skip_user_persist:
+                return result
+
+            _author = author_id if role == "user" else None
+
             async def _save() -> None:
                 try:
                     async with db_factory() as db:
@@ -109,9 +121,12 @@ def make_gateway_session_db(
                             codex_message_items=_to_json(codex_message_items),
                             platform_message_id=platform_message_id,
                             observed=observed,
+                            author_id=_author,
                         )
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror append_message to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror append_message to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
             return result
@@ -184,7 +199,9 @@ def make_gateway_session_db(
                             model=model,
                         )
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror update_token_counts to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror update_token_counts to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
 
@@ -198,7 +215,9 @@ def make_gateway_session_db(
                     async with db_factory() as db:
                         await pg_end_session(db, gateway_session_id, end_reason)
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror end_session to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror end_session to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
 
@@ -212,7 +231,9 @@ def make_gateway_session_db(
                     async with db_factory() as db:
                         await pg_update_cwd(db, gateway_session_id, cwd)
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror update_session_cwd to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror update_session_cwd to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
 
@@ -229,9 +250,13 @@ def make_gateway_session_db(
             async def _save() -> None:
                 try:
                     async with db_factory() as db:
-                        await pg_update_meta(db, gateway_session_id, model_config_json, model=model)
+                        await pg_update_meta(
+                            db, gateway_session_id, model_config_json, model=model
+                        )
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror update_session_meta to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror update_session_meta to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
 
@@ -243,9 +268,13 @@ def make_gateway_session_db(
             async def _save() -> None:
                 try:
                     async with db_factory() as db:
-                        await pg_update_system_prompt(db, gateway_session_id, system_prompt)
+                        await pg_update_system_prompt(
+                            db, gateway_session_id, system_prompt
+                        )
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror update_system_prompt to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror update_system_prompt to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
 
@@ -259,7 +288,9 @@ def make_gateway_session_db(
                     async with db_factory() as db:
                         await pg_update_model(db, gateway_session_id, model)
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror update_session_model to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror update_session_model to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
 
@@ -273,7 +304,9 @@ def make_gateway_session_db(
                     async with db_factory() as db:
                         await pg_set_title(db, gateway_session_id, title)
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror set_session_title to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror set_session_title to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
             return result
@@ -288,7 +321,9 @@ def make_gateway_session_db(
                     async with db_factory() as db:
                         await pg_set_archived(db, gateway_session_id, archived)
                 except Exception:
-                    logger.exception("GatewaySessionDB: failed to mirror set_session_archived to Postgres")
+                    logger.exception(
+                        "GatewaySessionDB: failed to mirror set_session_archived to Postgres"
+                    )
 
             asyncio.run_coroutine_threadsafe(_save(), loop)
             return result

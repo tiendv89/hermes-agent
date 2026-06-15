@@ -1,6 +1,6 @@
 """Tool + skill registry route.
 
-    GET /tools — live tool registry + loadable skills (for the FE slash-command picker)
+GET /tools — live tool registry + loadable skills (for the FE slash-command picker)
 """
 
 from __future__ import annotations
@@ -37,21 +37,25 @@ async def list_tools_endpoint() -> JSONResponse:
                     continue
             except Exception:
                 continue
-        tools.append({
-            "name": t["name"],
-            "description": t.get("schema", {}).get("description", ""),
-        })
+        tools.append(
+            {
+                "name": t["name"],
+                "description": t.get("schema", {}).get("description", ""),
+            }
+        )
 
     skills = []
     try:
         from plugins.skills import get_index
 
         for entry in sorted(get_index().values(), key=lambda e: e.name):
-            skills.append({
-                "name": entry.name,
-                "description": entry.description,
-                "type": "workflow" if entry.is_authoring else "technical",
-            })
+            skills.append(
+                {
+                    "name": entry.name,
+                    "description": entry.description,
+                    "type": "workflow" if entry.is_authoring else "technical",
+                }
+            )
     except Exception:
         logger.exception("list_tools: failed to build the skill list")
 
