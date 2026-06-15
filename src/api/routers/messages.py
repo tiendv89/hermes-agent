@@ -17,7 +17,7 @@ import asyncio
 import logging
 import time as _time
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,15 +29,17 @@ from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import default_model, resolve_model
 from src.db import (
     get_messages_as_conversation,
+    get_messages_since,
     get_session,
+    get_session_messages,
     is_member,
-    list_members,
     persist_mentions,
     touch_session,
     update_session_model,
 )
 from src.db.store import append_message
 from src.realtime.bus import get_bus
+from src.services.author_resolver import attach_authors, author_for, mention_candidates
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +66,36 @@ def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
     feature_id = getattr(session, "feature_id", "") or ""
     kind = getattr(session, "kind", "thread") or "thread"
     return kind == "thread" and bool(feature_id)
+
+
+@router.get("/threads/{session_id}/messages")
+async def get_thread_messages(
+    session_id: str,
+    since: str = Query("", description="Return only messages after this message id (cursor)"),
+    _identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Return a thread/channel transcript, oldest-first.
+
+    Threads and channels are sessions, so this reuses the session transcript
+    store. ``since`` (a numeric message id) returns only newer messages — the
+    catch-up cursor used by the live subscription transport.
+    """
+    if since:
+        try:
+            since_id = int(since)
+        except ValueError:
+            since_id = 0
+        messages = await get_messages_since(db, session_id, since_id)
+    else:
+        messages = await get_session_messages(db, session_id)
+
+    # Enrich author display info (name/avatar) from user-service so the channel
+    # transcript shows real names rather than raw ids.
+    session = await get_session(db, session_id)
+    workspace_id = getattr(session, "workspace_id", "") or "" if session else ""
+    await attach_authors(workspace_id, messages)
+    return JSONResponse({"messages": messages})
 
 
 @router.post("/threads/{session_id}/messages", status_code=202)
@@ -96,13 +128,15 @@ async def send_message(
     if not caller_is_member:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
+    ws_id = getattr(session, "workspace_id", "") or ""
+
     # --- Mention parse + resolve ---
     handles = parse_mention_handles(body.content)
     has_agent_mention = "agent" in handles
 
-    # Resolve member handles from session_members.
-    members = await list_members(db, session_id)
-    resolved_mentions = resolve_mentions(handles, members)
+    # Resolve @handles against the whole workspace directory (user-service), so
+    # any workspace member can be mentioned — not only current channel members.
+    resolved_mentions = resolve_mentions(handles, await mention_candidates(ws_id))
 
     # --- Persist the human message (with author_id) ---
     message_id = await append_message(
@@ -125,6 +159,8 @@ async def send_message(
     await touch_session(db, session_id)
 
     # --- Fan-out to SSE stream subscribers ---
+    # Resolve author display info so other subscribers see the sender's name.
+    author = await author_for(ws_id, user_id)
     get_bus().publish(
         session_id,
         {
@@ -135,6 +171,7 @@ async def send_message(
                 "role": "user",
                 "content": body.content,
                 "author_id": user_id,
+                "author": author,
                 "created_at": _time.time(),
                 "mentions": resolved_mentions,
             },
@@ -160,7 +197,7 @@ async def send_message(
     history = await get_messages_as_conversation(db, session_id)
 
     loop = asyncio.get_running_loop()
-    workspace_id = getattr(session, "workspace_id", "") or ""
+    workspace_id = ws_id
     feature_id = getattr(session, "feature_id", "") or ""
 
     await schedule_agent_turn(

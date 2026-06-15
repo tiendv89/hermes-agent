@@ -30,6 +30,12 @@ class BusPublishingSSETranslator(HermesSSETranslator):
     def __init__(self, session_id: str, model: str = "hermes") -> None:
         super().__init__(model=model)
         self._session_id = session_id
+        self._full_parts: list[str] = []
+
+    @property
+    def full_text(self) -> str:
+        """The assistant reply accumulated from streamed deltas (for persistence backfill)."""
+        return "".join(self._full_parts)
 
     def _bus_publish(self, event: str, data: dict) -> None:
         # Callbacks are invoked from a worker thread (run_in_executor); use
@@ -44,6 +50,7 @@ class BusPublishingSSETranslator(HermesSSETranslator):
     def on_delta(self, delta: Any = None, **kwargs: Any) -> None:
         super().on_delta(delta=delta, **kwargs)
         if delta:
+            self._full_parts.append(str(delta))
             self._bus_publish("agent.delta", {"content": delta})
 
     def on_tool_start(

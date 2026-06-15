@@ -40,6 +40,24 @@ _pending_agent_turns: Dict[str, Dict[str, Any]] = {}
 _pending_lock = threading.Lock()
 
 
+async def _backfill_assistant(db_factory: Callable, session_id: str, content: str) -> None:
+    """Persist the assistant reply under session_id if it isn't already the last
+    stored message. Dedupes against the agent's own mirror (no double-write)."""
+    from src.db import get_session_messages
+    from src.db.store import append_message
+
+    async with db_factory() as db:
+        existing = await get_session_messages(db, session_id)
+        last = existing[-1] if existing else None
+        already = (
+            last is not None
+            and last.get("role") == "assistant"
+            and (last.get("content") or "").strip() == content.strip()
+        )
+        if not already:
+            await append_message(db, session_id, role="assistant", content=content)
+
+
 # ---------------------------------------------------------------------------
 # Worker-thread agent executor
 # ---------------------------------------------------------------------------
@@ -115,6 +133,24 @@ def _run_agent_turn(
             tool_complete_callback=translator.on_tool_complete,
         )
         agent.run_conversation(message, conversation_history=history)
+
+        # Backfill: ensure the assistant reply is persisted under THIS session.
+        # The agent's own mirror can miss it (e.g. conversation compression
+        # rotates agent.session_id, so the proxy stops mirroring to the channel
+        # id) — which showed up as the reply vanishing on reload. Append the
+        # accumulated reply only if it isn't already the last stored message
+        # (dedupe so we never double-write when the agent did persist it).
+        final_text = (getattr(translator, "full_text", "") or "").strip()
+        if final_text:
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    _backfill_assistant(db_factory, session_id, final_text), loop
+                )
+                fut.result(timeout=15)
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: assistant backfill failed for session %s", session_id
+                )
     except Exception as exc:
         logger.exception("agent_dispatch: agent turn failed for session %s", session_id)
         translator.on_error(str(exc))

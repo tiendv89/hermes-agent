@@ -31,6 +31,7 @@ from src.api.routers import (
     channels,
     chat,
     documents,
+    members,
     messages,
     models,
     sessions,
@@ -51,6 +52,7 @@ router.include_router(tools.router)
 router.include_router(stages.router)
 router.include_router(channels.router)
 router.include_router(threads.router)
+router.include_router(members.router)
 
 # Re-exported for callers/tests that reach for the in-flight run registry.
 # Both the legacy /chat handler and the new send service share this state via

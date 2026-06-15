@@ -64,12 +64,20 @@ async def list_sessions_endpoint(
     workspace_id: str = Query(..., description="Workspace slug or ID"),
     feature_id: str = Query(..., description="Feature slug or ID"),
     limit: int = Query(50, ge=1, le=200, description="Max sessions to return"),
-    _identity: Identity = Depends(require_identity),
+    identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Return non-archived sessions for a workspace+feature, newest-first."""
+    """Return the caller's own non-archived sessions for a workspace+feature.
+
+    Sessions are private single-user agent chats, so the list is scoped to the
+    caller (X-User-Id) — another user's sessions never appear here.
+    """
     sessions = await list_sessions(
-        db, workspace_id=workspace_id, feature_id=feature_id, limit=limit
+        db,
+        workspace_id=workspace_id,
+        feature_id=feature_id,
+        user_id=identity.user_id or None,
+        limit=limit,
     )
     return JSONResponse({"sessions": sessions})
 

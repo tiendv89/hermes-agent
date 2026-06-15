@@ -340,6 +340,7 @@ async def get_session_messages(
             "id": str(msg.id),
             "role": msg.role,
             "content": msg.content or "",
+            "author_id": msg.author_id,
             "created_at": msg.created_at,
         }
         if msg.tool_name:
@@ -419,9 +420,26 @@ async def list_sessions(
     db: AsyncSession,
     workspace_id: str,
     feature_id: str,
+    user_id: Optional[str] = None,
     limit: int = 50,
 ) -> list[Dict[str, Any]]:
-    """Return non-archived sessions for a workspace+feature, newest-first."""
+    """Return non-archived agent-chat sessions for a workspace+feature, newest-first.
+
+    Excludes channels (kind='channel'), which are feature-scoped sessions surfaced
+    in their own CHANNELS list — without this they'd double up under Sessions.
+
+    When ``user_id`` is provided, only that user's own sessions are returned —
+    sessions are private single-user agent chats, not shared like channels.
+    """
+    conditions = [
+        Session.workspace_id == workspace_id,
+        Session.feature_id == feature_id,
+        Session.kind != "channel",
+        Session.archived == False,  # noqa: E712
+    ]
+    if user_id:
+        conditions.append(Session.user_id == user_id)
+
     result = await db.execute(
         select(
             Session.id,
@@ -430,11 +448,7 @@ async def list_sessions(
             Session.last_active_at,
             Session.model,
         )
-        .where(
-            Session.workspace_id == workspace_id,
-            Session.feature_id == feature_id,
-            Session.archived == False,  # noqa: E712
-        )
+        .where(*conditions)
         .order_by(Session.last_active_at.desc())
         .limit(limit)
     )

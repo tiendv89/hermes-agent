@@ -102,33 +102,39 @@ def make_gateway_session_db(
             _author = author_id if role == "user" else None
 
             async def _save() -> None:
-                try:
-                    async with db_factory() as db:
-                        await pg_append(
-                            db,
-                            gateway_session_id,
-                            role=role,
-                            content=content,
-                            tool_name=tool_name,
-                            tool_calls=_to_json(tool_calls),
-                            tool_call_id=tool_call_id,
-                            token_count=token_count,
-                            finish_reason=finish_reason,
-                            reasoning=reasoning,
-                            reasoning_content=reasoning_content,
-                            reasoning_details=_to_json(reasoning_details),
-                            codex_reasoning_items=_to_json(codex_reasoning_items),
-                            codex_message_items=_to_json(codex_message_items),
-                            platform_message_id=platform_message_id,
-                            observed=observed,
-                            author_id=_author,
-                        )
-                except Exception:
-                    logger.exception(
-                        "GatewaySessionDB: failed to mirror append_message to Postgres"
+                async with db_factory() as db:
+                    await pg_append(
+                        db,
+                        gateway_session_id,
+                        role=role,
+                        content=content,
+                        tool_name=tool_name,
+                        tool_calls=_to_json(tool_calls),
+                        tool_call_id=tool_call_id,
+                        token_count=token_count,
+                        finish_reason=finish_reason,
+                        reasoning=reasoning,
+                        reasoning_content=reasoning_content,
+                        reasoning_details=_to_json(reasoning_details),
+                        codex_reasoning_items=_to_json(codex_reasoning_items),
+                        codex_message_items=_to_json(codex_message_items),
+                        platform_message_id=platform_message_id,
+                        observed=observed,
+                        author_id=_author,
                     )
 
-            asyncio.run_coroutine_threadsafe(_save(), loop)
+            # Message persistence must be reliable — fire-and-forget would
+            # silently drop the row on a transient error or a busy loop (the
+            # "agent message sometimes not stored" symptom). append_message is
+            # called on the agent's worker thread, so we block until the mirror
+            # completes (bounded), surfacing failures instead of losing them.
+            future = asyncio.run_coroutine_threadsafe(_save(), loop)
+            try:
+                future.result(timeout=15)
+            except Exception:
+                logger.exception(
+                    "GatewaySessionDB: failed to mirror append_message to Postgres"
+                )
             return result
 
         def update_token_counts(

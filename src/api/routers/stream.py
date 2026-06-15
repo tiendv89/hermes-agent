@@ -37,6 +37,7 @@ from src.db import (
     is_member,
 )
 from src.realtime.bus import get_bus
+from src.services.author_resolver import attach_authors
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,8 @@ async def stream_thread(
     replay_messages: list = []
     if since_id is not None:
         replay_messages = await get_messages_since(db, session_id, since_id)
+        # Enrich author display info so replayed messages show real names.
+        await attach_authors(getattr(session, "workspace_id", "") or "", replay_messages)
 
     async def event_generator():
         try:

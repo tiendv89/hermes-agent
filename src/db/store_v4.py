@@ -229,6 +229,27 @@ async def mark_mentions_read(
     await db.commit()
 
 
+async def get_unread_mentions_by_session(
+    db: AsyncSession,
+    workspace_id: str,
+    user_id: str,
+) -> Dict[str, int]:
+    """Return unread mention counts for user_id keyed by session id, scoped to a
+    workspace. Used by GET /unread to render per-channel/thread badges."""
+    result = await db.execute(
+        select(MessageMention.session_id, func.count(MessageMention.id))
+        .join(Session, Session.id == MessageMention.session_id)
+        .where(
+            Session.workspace_id == workspace_id,
+            MessageMention.mentioned_id == user_id,
+            MessageMention.mentioned_kind == "user",
+            MessageMention.read_at == None,  # noqa: E711
+        )
+        .group_by(MessageMention.session_id)
+    )
+    return {row[0]: int(row[1]) for row in result.all()}
+
+
 # ---------------------------------------------------------------------------
 # Channel store
 # ---------------------------------------------------------------------------
@@ -243,12 +264,14 @@ async def create_channel(
     workspace_id: str,
     name: str,
     creator_user_id: str,
+    feature_id: str = "",
     description: Optional[str] = None,
 ) -> str:
-    """Create a new public channel (kind='channel' session).
+    """Create a new public channel (kind='channel' session) scoped to a feature.
 
     The creator is auto-joined as the first member.
-    Raises sqlalchemy.exc.IntegrityError if the name already exists in the workspace.
+    Raises sqlalchemy.exc.IntegrityError if the name already exists for the same
+    (workspace, feature) pair.
     """
     now = time.time()
     metadata: Dict[str, Any] = {}
@@ -260,7 +283,7 @@ async def create_channel(
         source="hermes-agent",
         user_id=creator_user_id,
         workspace_id=workspace_id,
-        feature_id="",
+        feature_id=feature_id,
         title=name,
         kind="channel",
         started_at=now,
@@ -285,23 +308,33 @@ async def create_channel(
 async def list_channels(
     db: AsyncSession,
     workspace_id: str,
+    feature_id: Optional[str] = None,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """Return all non-archived channels for a workspace, ordered by started_at."""
+    """Return non-archived channels for a workspace, newest-first.
+
+    When ``feature_id`` is provided, only channels for that feature are
+    returned (channels are feature-scoped); otherwise all workspace channels.
+    """
+    conditions = [
+        Session.workspace_id == workspace_id,
+        Session.kind == "channel",
+        Session.archived == False,  # noqa: E712
+    ]
+    if feature_id is not None:
+        conditions.append(Session.feature_id == feature_id)
+
     result = await db.execute(
         select(
             Session.id,
             Session.title,
             Session.user_id,
+            Session.feature_id,
             Session.started_at,
             Session.last_active_at,
             Session.extra,
         )
-        .where(
-            Session.workspace_id == workspace_id,
-            Session.kind == "channel",
-            Session.archived == False,  # noqa: E712
-        )
+        .where(*conditions)
         .order_by(Session.started_at.desc())
         .limit(limit)
     )
@@ -310,6 +343,7 @@ async def list_channels(
             "id": row.id,
             "name": row.title or "(unnamed)",
             "creator_user_id": row.user_id,
+            "feature_id": row.feature_id,
             "started_at": row.started_at,
             "last_active_at": row.last_active_at,
             "description": (row.extra or {}).get("description"),

@@ -322,6 +322,36 @@ async def test_create_channel_returns_session_id():
 
 
 @pytest.mark.asyncio
+async def test_create_channel_is_feature_scoped():
+    """create_channel stores the feature_id so channels are feature-scoped."""
+    from src.db.store_v4 import create_channel
+    from src.db.models import Session
+
+    added_objects = []
+
+    def _fake_add(obj):
+        if isinstance(obj, Session):
+            obj.id = "sess_chan_feat"
+        added_objects.append(obj)
+
+    db = _mock_db()
+    db.add = MagicMock(side_effect=_fake_add)
+
+    await create_channel(
+        db,
+        workspace_id="ws-1",
+        name="#spec-design",
+        creator_user_id="user_a",
+        feature_id="feat-1",
+    )
+
+    sessions = [o for o in added_objects if isinstance(o, Session)]
+    assert len(sessions) == 1
+    assert sessions[0].kind == "channel"
+    assert sessions[0].feature_id == "feat-1"
+
+
+@pytest.mark.asyncio
 async def test_create_channel_duplicate_name_raises():
     """create_channel propagates IntegrityError on duplicate channel name."""
     from sqlalchemy.exc import IntegrityError

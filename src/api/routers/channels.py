@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
@@ -49,6 +49,7 @@ router = APIRouter()
 class CreateChannelRequest(BaseModel):
     workspace_id: str
     name: str
+    feature_id: str = ""
     description: Optional[str] = None
 
 
@@ -69,12 +70,15 @@ class ChannelResponse(BaseModel):
 @router.get("/channels")
 async def list_channels_endpoint(
     workspace_id: str = Query(..., description="Workspace slug or ID"),
+    feature_id: str = Query("", description="Feature slug/ID; channels are feature-scoped"),
     limit: int = Query(100, ge=1, le=500, description="Max channels to return"),
     _identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Return all non-archived channels for a workspace, newest-first."""
-    channels = await list_channels(db, workspace_id=workspace_id, limit=limit)
+    """Return non-archived channels for a workspace+feature, newest-first."""
+    channels = await list_channels(
+        db, workspace_id=workspace_id, feature_id=feature_id, limit=limit
+    )
     return JSONResponse({"channels": channels})
 
 
@@ -108,6 +112,7 @@ async def create_channel_endpoint(
             workspace_id=body.workspace_id,
             name=body.name.strip(),
             creator_user_id=user_id,
+            feature_id=body.feature_id,
             description=body.description,
         )
     except IntegrityError:
@@ -136,7 +141,7 @@ async def delete_channel_endpoint(
     channel_id: str,
     identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
-) -> JSONResponse:
+) -> Response:
     """Hard-delete a channel. Admin-gated: caller must be a workspace admin.
 
     Fetches the channel to resolve workspace_id, then verifies the caller's
@@ -184,7 +189,7 @@ async def delete_channel_endpoint(
         channel.workspace_id,
         user_id,
     )
-    return JSONResponse(None, status_code=204)
+    return Response(status_code=204)
 
 
 # ---------------------------------------------------------------------------
