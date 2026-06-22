@@ -229,8 +229,8 @@ def _coerce_content(content: Any) -> str:
                 "content before calling the tool. Regenerate the full markdown "
                 "document and pass it as the content string."
             )
-        # Model wrapped the markdown in {"content": "..."} — unwrap it.
-        if set(content.keys()) <= {"content"} and isinstance(content.get("content"), str):
+        # Model wrapped the markdown in {"content": "...", ...} — extract the string.
+        if isinstance(content.get("content"), str):
             return content["content"]
         return json.dumps(content, indent=2, ensure_ascii=False)
     if isinstance(content, list):
