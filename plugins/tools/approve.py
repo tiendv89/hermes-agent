@@ -18,9 +18,13 @@ from typing import Any, Dict, Optional
 
 import yaml
 
+import re as _re
+
 from ..db import _validate_id, get_feature_detail, get_workspace_context, update_feature_stage
 from ..document_repo import StaleBaseError, branch_exists, commit_to_branch, read_document
 from .artifacts import _resolve_management_repo
+
+_TASK_FILE_RE = _re.compile(r"^docs/features/[^/]+/tasks/(T\d+)\.yaml$")
 
 logger = logging.getLogger(__name__)
 
@@ -121,6 +125,182 @@ SCHEMA: Dict[str, Any] = {
         "additionalProperties": False,
     },
 }
+
+
+def _activate_tasks_git(
+    gh_owner: str,
+    gh_repo: str,
+    branch: str,
+    doc_dir: str,
+    actor: str,
+    github_token: str,
+) -> Dict[str, Any]:
+    """Read all tasks/T{n}.yaml on branch, set zero-dependency ones to ready, commit back.
+
+    Returns {"activated": [task_ids], "commit_sha": sha} or {"activated": [], "commit_sha": ""}
+    on any read/write error (logged, not fatal — the stage approval already succeeded).
+    """
+    import base64
+    import json
+    import requests as _requests
+
+    api = "https://api.github.com"
+    timeout = 30
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+
+    # List all files in the tasks/ directory
+    tasks_path = f"docs/features/{doc_dir}/tasks"
+    r = _requests.get(
+        f"{api}/repos/{gh_owner}/{gh_repo}/contents/{tasks_path}",
+        headers=headers,
+        params={"ref": branch},
+        timeout=timeout,
+    )
+    if r.status_code == 404:
+        return {"activated": [], "commit_sha": ""}
+    if not r.ok:
+        logger.warning("activate_tasks: listing %s failed: %s", tasks_path, r.text)
+        return {"activated": [], "commit_sha": ""}
+
+    entries = [e for e in r.json() if e.get("name", "").endswith(".yaml")]
+    if not entries:
+        return {"activated": [], "commit_sha": ""}
+
+    # Read all task YAMLs
+    tasks_by_id: Dict[str, dict] = {}
+    file_shas: Dict[str, str] = {}
+    for entry in entries:
+        m = _TASK_FILE_RE.match(entry["path"])
+        if not m:
+            continue
+        task_id = m.group(1)
+        fr = _requests.get(
+            f"{api}/repos/{gh_owner}/{gh_repo}/contents/{entry['path']}",
+            headers=headers,
+            params={"ref": branch},
+            timeout=timeout,
+        )
+        if not fr.ok:
+            continue
+        raw = base64.b64decode(fr.json()["content"].replace("\n", "")).decode("utf-8")
+        try:
+            t = yaml.safe_load(raw)
+        except Exception:
+            continue
+        tasks_by_id[task_id] = t
+        file_shas[task_id] = fr.json()["sha"]
+
+    if not tasks_by_id:
+        return {"activated": [], "commit_sha": ""}
+
+    done_ids = {tid for tid, t in tasks_by_id.items() if (t.get("status") or "") == "done"}
+    now = _now_utc()
+    activated = []
+    updated_files: Dict[str, str] = {}
+
+    for task_id, t in tasks_by_id.items():
+        if (t.get("status") or "todo") != "todo":
+            continue  # only activate todo tasks
+
+        deps = t.get("depends_on") or []
+        if isinstance(deps, str):
+            deps = [d.strip() for d in deps.split(",") if d.strip()]
+
+        can_start = not deps or all(d in done_ids for d in deps)
+        if not can_start:
+            continue
+
+        t["status"] = "ready"
+        if not isinstance(t.get("log"), list):
+            t["log"] = []
+        t["log"].append({
+            "action": "ready",
+            "by": actor,
+            "at": now,
+            "note": "Task activated on tasks-stage approval — dependencies met.",
+        })
+        updated_files[f"docs/features/{doc_dir}/tasks/{task_id}.yaml"] = yaml.dump(
+            t, default_flow_style=False, allow_unicode=True, sort_keys=False
+        )
+        activated.append(task_id)
+
+    if not updated_files:
+        return {"activated": [], "commit_sha": ""}
+
+    # Commit all updated task files in one shot via Git Data API
+    try:
+        from .tasks_write import _commit_files
+        commit_sha = _commit_files(
+            gh_owner, gh_repo, branch, updated_files,
+            f"chore: activate {len(activated)} task(s) on tasks approval",
+            github_token,
+        )
+        return {"activated": activated, "commit_sha": commit_sha}
+    except Exception as exc:
+        logger.warning("activate_tasks: commit failed: %s", exc)
+        return {"activated": activated, "commit_sha": ""}
+
+
+def _activate_tasks_db(workspace_id: str, feature_id: str, actor: str) -> list:
+    """Set zero-dependency tasks to ready in workspace_tasks (go features)."""
+    from ..db import _conn
+
+    activated = []
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT t.id, t.task_name, t.depends_on, t.status
+            FROM workspace_tasks t
+            JOIN workspace_features f ON f.id = t.feature_id
+            JOIN workspaces w ON w.id = f.workspace_id
+            WHERE (w.slug = %s OR w.id::text = %s)
+              AND (f.feature_name = %s OR f.feature_id::text = %s)
+              AND t.status = 'todo'
+            """,
+            (workspace_id, workspace_id, feature_id, feature_id),
+        ).fetchall()
+
+        # Collect done task names to evaluate dependencies
+        done_rows = conn.execute(
+            """
+            SELECT t.task_name
+            FROM workspace_tasks t
+            JOIN workspace_features f ON f.id = t.feature_id
+            JOIN workspaces w ON w.id = f.workspace_id
+            WHERE (w.slug = %s OR w.id::text = %s)
+              AND (f.feature_name = %s OR f.feature_id::text = %s)
+              AND t.status = 'done'
+            """,
+            (workspace_id, workspace_id, feature_id, feature_id),
+        ).fetchall()
+        done_names = {r["task_name"] for r in done_rows}
+
+        for row in rows:
+            import json as _json
+            deps = row["depends_on"]
+            if isinstance(deps, str):
+                try:
+                    deps = _json.loads(deps)
+                except Exception:
+                    deps = []
+            if not isinstance(deps, list):
+                deps = []
+
+            can_start = not deps or all(d in done_names for d in deps)
+            if not can_start:
+                continue
+
+            conn.execute(
+                "UPDATE workspace_tasks SET status = 'ready', updated_at = NOW() WHERE id = %s",
+                (row["id"],),
+            )
+            activated.append(row["task_name"])
+
+    return activated
 
 
 def _now_utc() -> str:
@@ -292,10 +472,10 @@ def handle(
     new_next_action = status_data.get("next_action", "")
 
     commit_sha = ""
+    activated_tasks: list = []
 
     if owner == "go":
         # go/postgres features: persist approval state directly in the DB.
-        # status.yaml is not used — the stages JSONB column is the source of truth.
         try:
             update_feature_stage(
                 workspace_id=wid,
@@ -310,12 +490,19 @@ def handle(
         except Exception as exc:
             logger.exception("approve_feature: DB update failed for feature %s", fid)
             return {"ok": False, "error": f"DB update failed: {exc}"}
+
+        # Activate zero-dependency tasks when approving the tasks stage.
+        if stage == "tasks" and action == "approve":
+            try:
+                activated_tasks = _activate_tasks_db(wid, fid, actor)
+            except Exception as exc:
+                logger.warning("approve_feature: task activation (DB) failed: %s", exc)
+
     else:
         # ts/git features: commit updated status.yaml to the feature branch or init branch.
         new_content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
         try:
             if branch.endswith("-init"):
-                # Commit directly to the init branch — PR already exists, no new PR needed.
                 commit_sha = commit_to_branch(
                     gh_owner, gh_repo, branch, path, new_content,
                     current["sha"], commit_msg, github_token,
@@ -333,6 +520,16 @@ def handle(
             logger.exception("approve_feature: commit failed for feature %s", fid)
             return {"ok": False, "error": str(exc)}
 
+        # Activate zero-dependency tasks when approving the tasks stage.
+        if stage == "tasks" and action == "approve":
+            doc_dir = feature_name or fid
+            activation = _activate_tasks_git(
+                gh_owner, gh_repo, branch, doc_dir, actor, github_token
+            )
+            activated_tasks = activation.get("activated", [])
+            if activation.get("commit_sha"):
+                commit_sha = activation["commit_sha"]
+
     return {
         "ok": True,
         "feature_id": fid,
@@ -344,4 +541,5 @@ def handle(
         "current_stage": new_current_stage,
         "commit_sha": commit_sha,
         "branch": branch if owner != "go" else None,
+        "activated_tasks": activated_tasks,
     }
