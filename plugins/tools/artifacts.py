@@ -218,10 +218,21 @@ def _coerce_content(content: Any) -> str:
     """
     if isinstance(content, str):
         return content
-    if isinstance(content, (dict, list)):
+    if isinstance(content, dict):
         if not content:
             raise ValueError(
                 "content is an empty object — the model did not generate document "
+                "content before calling the tool. Regenerate the full markdown "
+                "document and pass it as the content string."
+            )
+        # Model wrapped the markdown in {"content": "..."} — unwrap it.
+        if set(content.keys()) <= {"content"} and isinstance(content.get("content"), str):
+            return content["content"]
+        return json.dumps(content, indent=2, ensure_ascii=False)
+    if isinstance(content, list):
+        if not content:
+            raise ValueError(
+                "content is an empty list — the model did not generate document "
                 "content before calling the tool. Regenerate the full markdown "
                 "document and pass it as the content string."
             )
@@ -255,6 +266,7 @@ def _resolve_document_branch(
     gh_owner: str,
     gh_repo: str,
     feature_id: str,
+    feature_name: Optional[str],
     init_pr_url: Optional[str],
     base_branch: str,
     github_token: str,
@@ -262,14 +274,20 @@ def _resolve_document_branch(
     """Return (target_branch, known_pr_url) for the document write.
 
     Decision logic (backward-compatible):
-    - init_pr_url non-null + init branch exists  → commit to feature/<id>-init;
+    - init_pr_url non-null + init branch exists  → commit to feature/<slug>-init;
                                                     return (init branch, init_pr_url)
     - init_pr_url non-null + branch gone (merged) → commit to feature/<id>;
                                                     return (feature branch, None)
     - init_pr_url null (pre-existing feature)     → commit to feature/<id> directly;
                                                     return (feature branch, None)
+
+    The init branch uses the feature *slug* (feature_name) because that is what
+    workflow-backend creates: ``feature/{slug}-init``. The feature UUID is used
+    for the ongoing feature branch (``feature/{uuid}``).
     """
-    init_branch = f"feature/{feature_id}-init"
+    # Init branch: workflow-backend names it feature/{slug}-init, not feature/{uuid}-init.
+    init_slug = feature_name or feature_id
+    init_branch = f"feature/{init_slug}-init"
     feature_branch = f"feature/{feature_id}"
 
     if init_pr_url:
@@ -311,19 +329,25 @@ def _write_artifact(
     workspace_context = get_workspace_context(workspace_id)
     gh_owner, gh_repo = _resolve_management_repo(workspace_context)
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-    path = f"docs/features/{feature_id}/{filename}"
 
-    # Look up init_pr_url from the DB if WORKFLOW_DATABASE_URL is available.
+    # Look up init_pr_url and feature_name from the DB if WORKFLOW_DATABASE_URL is available.
     init_pr_url: Optional[str] = None
+    feature_name: Optional[str] = None
     try:
         feature_detail = get_feature_detail(workspace_id, feature_id)
         init_pr_url = feature_detail.get("init_pr_url")
+        feature_name = feature_detail.get("feature_name")
     except Exception as exc:
         logger.debug("_write_artifact: could not fetch feature_detail: %s", exc)
 
     target_branch, known_pr_url = _resolve_document_branch(
-        gh_owner, gh_repo, feature_id, init_pr_url, base_branch, github_token
+        gh_owner, gh_repo, feature_id, feature_name, init_pr_url, base_branch, github_token
     )
+
+    # Use the feature slug for the docs path on the init branch (workflow-backend
+    # scaffolds files at docs/features/{slug}/), and the UUID on the feature branch.
+    doc_dir = (feature_name or feature_id) if target_branch.endswith("-init") else feature_id
+    path = f"docs/features/{doc_dir}/{filename}"
 
     # Read-before-write: fetch the current SHA so GitHub accepts our PUT.
     current = read_document(gh_owner, gh_repo, target_branch, path, github_token)
