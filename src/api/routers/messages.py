@@ -34,6 +34,7 @@ from src.db import (
     get_session_messages,
     is_member,
     persist_mentions,
+    set_session_title,
     touch_session,
     update_session_model,
 )
@@ -157,6 +158,11 @@ async def send_message(
         )
 
     await touch_session(db, session_id)
+
+    # Auto-title the session from the first message if it has no title yet.
+    if not getattr(session, "title", None):
+        first_line = body.content.strip().splitlines()[0] if body.content.strip() else ""
+        await set_session_title(db, session_id, first_line[:60] or "New chat")
 
     # --- Fan-out to SSE stream subscribers ---
     # Resolve author display info so other subscribers see the sender's name.
