@@ -154,57 +154,69 @@ def _commit_files(
     commit_msg: str,
     github_token: str,
 ) -> str:
-    """Commit multiple files to a branch in a single commit using the Git Data API."""
+    """Commit multiple files to a branch in a single commit using the Git Data API.
+
+    Uses requests (same as document_repo.py) so the certifi CA bundle is used
+    for SSL verification, matching the rest of the hermes-agent GitHub client code.
+    """
     import base64
-    import json
-    import urllib.request
+    import requests as _requests
 
     api = "https://api.github.com"
+    timeout = 30
     headers = {
         "Authorization": f"Bearer {github_token}",
         "Accept": "application/vnd.github+json",
-        "Content-Type": "application/json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    def _req(method: str, url: str, body: Any = None) -> Any:
-        data = json.dumps(body).encode() if body is not None else None
-        req = urllib.request.Request(url, data=data, headers=headers, method=method)
-        with urllib.request.urlopen(req) as resp:
-            return json.loads(resp.read())
+    def _get(url: str) -> Any:
+        r = _requests.get(url, headers=headers, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+
+    def _post(url: str, body: Any) -> Any:
+        r = _requests.post(url, headers=headers, json=body, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
+
+    def _patch(url: str, body: Any) -> Any:
+        r = _requests.patch(url, headers=headers, json=body, timeout=timeout)
+        r.raise_for_status()
+        return r.json()
 
     # Get latest commit SHA on branch
-    ref = _req("GET", f"{api}/repos/{gh_owner}/{gh_repo}/git/refs/heads/{branch}")
+    ref = _get(f"{api}/repos/{gh_owner}/{gh_repo}/git/refs/heads/{branch}")
     base_sha = ref["object"]["sha"]
 
     # Get base tree SHA
-    commit_obj = _req("GET", f"{api}/repos/{gh_owner}/{gh_repo}/git/commits/{base_sha}")
+    commit_obj = _get(f"{api}/repos/{gh_owner}/{gh_repo}/git/commits/{base_sha}")
     base_tree = commit_obj["tree"]["sha"]
 
-    # Create blobs
+    # Create blobs for each file
     tree_entries = []
     for path, content in files.items():
-        blob = _req("POST", f"{api}/repos/{gh_owner}/{gh_repo}/git/blobs", {
+        blob = _post(f"{api}/repos/{gh_owner}/{gh_repo}/git/blobs", {
             "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
             "encoding": "base64",
         })
         tree_entries.append({"path": path.lstrip("/"), "mode": "100644", "type": "blob", "sha": blob["sha"]})
 
-    # Create tree
-    tree = _req("POST", f"{api}/repos/{gh_owner}/{gh_repo}/git/trees", {
+    # Create tree on top of base
+    tree = _post(f"{api}/repos/{gh_owner}/{gh_repo}/git/trees", {
         "base_tree": base_tree,
         "tree": tree_entries,
     })
 
     # Create commit
-    commit = _req("POST", f"{api}/repos/{gh_owner}/{gh_repo}/git/commits", {
+    commit = _post(f"{api}/repos/{gh_owner}/{gh_repo}/git/commits", {
         "message": commit_msg,
         "tree": tree["sha"],
         "parents": [base_sha],
     })
 
-    # Update branch ref
-    _req("PATCH", f"{api}/repos/{gh_owner}/{gh_repo}/git/refs/heads/{branch}", {
+    # Advance branch ref
+    _patch(f"{api}/repos/{gh_owner}/{gh_repo}/git/refs/heads/{branch}", {
         "sha": commit["sha"],
         "force": False,
     })
