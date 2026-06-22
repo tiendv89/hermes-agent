@@ -185,3 +185,7 @@ class HermesSSETranslator:
             if frame is _END:
                 return
             yield frame
+            # Let the event loop drain the write buffer before the next frame.
+            # Prevents uvicorn from batching multiple rapid delta frames into one
+            # TCP segment, which makes the UI render text in large chunks.
+            await asyncio.sleep(0)

@@ -16,10 +16,51 @@ import os
 import threading
 from typing import Any, Callable, Dict, Optional, Set
 
+import re as _re
+
 from src.realtime.bus import get_bus
 from src.streaming import BusPublishingSSETranslator, HermesSSETranslator
 
 logger = logging.getLogger(__name__)
+
+_WORD_RE = _re.compile(r"\S+\s*|\s+")
+
+
+def _make_delta_callback(cb: Callable) -> Callable:
+    """Wrap a stream-delta callback to split large chunks into word-sized pieces.
+
+    Controlled by HERMES_STREAM_CHUNK_CHARS (default 0 = word-split enabled).
+    Set to a positive integer to use fixed-size chunks, or -1 to disable
+    splitting entirely (raw model chunks, may be 50-100 chars each).
+
+    Example .env settings:
+        HERMES_STREAM_CHUNK_CHARS=0   # word-by-word split (default)
+        HERMES_STREAM_CHUNK_CHARS=4   # fixed 4-char chunks
+        HERMES_STREAM_CHUNK_CHARS=-1  # no splitting
+    """
+    chunk_chars = int(os.environ.get("HERMES_STREAM_CHUNK_CHARS", "0"))
+
+    if chunk_chars < 0:
+        # Splitting disabled — pass through raw.
+        return cb
+
+    if chunk_chars == 0:
+        # Word-by-word split.
+        def _word_cb(delta: Any = None, **kwargs: Any) -> None:
+            if not delta:
+                return
+            for part in (_WORD_RE.findall(str(delta)) or [str(delta)]):
+                cb(part, **kwargs)
+        return _word_cb
+
+    # Fixed-size chunks.
+    def _fixed_cb(delta: Any = None, **kwargs: Any) -> None:
+        if not delta:
+            return
+        text = str(delta)
+        for i in range(0, len(text), chunk_chars):
+            cb(text[i:i + chunk_chars], **kwargs)
+    return _fixed_cb
 
 # ---------------------------------------------------------------------------
 # Shared in-flight guard (also used by the legacy /chat route)
@@ -128,7 +169,7 @@ def _run_agent_turn(
             user_id=user_id or None,
             gateway_session_key=session_id,
             session_db=session_db,
-            stream_delta_callback=translator.on_delta,
+            stream_delta_callback=_make_delta_callback(translator.on_delta),
             tool_start_callback=translator.on_tool_start,
             tool_complete_callback=translator.on_tool_complete,
         )

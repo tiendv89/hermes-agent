@@ -117,6 +117,7 @@ async def stream_thread(
             # active so no in-flight live events are lost during this window.
             for msg in replay_messages:
                 yield _sse_frame("message.created", msg)
+                await asyncio.sleep(0)  # flush write buffer between replayed frames
 
             # Tail the live stream indefinitely.
             while True:
@@ -133,6 +134,12 @@ async def stream_thread(
                     continue
 
                 yield _sse_frame(event_name, data)
+                # Yield control back to the event loop so uvicorn flushes the
+                # write buffer before processing the next queued event. Without
+                # this, multiple frames that arrive in a burst (e.g. rapid agent
+                # deltas) are all written in the same asyncio cycle and land in
+                # one TCP segment, making the UI render text in large chunks.
+                await asyncio.sleep(0)
 
                 # Close the stream after the channel hosting this session is
                 # hard-deleted so the client knows to navigate away.
