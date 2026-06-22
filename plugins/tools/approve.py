@@ -21,7 +21,7 @@ import yaml
 import re as _re
 
 from ..db import _validate_id, get_feature_detail, get_workspace_context, update_feature_stage
-from ..document_repo import StaleBaseError, branch_exists, commit_to_branch, read_document
+from ..document_repo import StaleBaseError, commit_to_branch, read_document
 from .artifacts import _resolve_management_repo
 
 _TASK_FILE_RE = _re.compile(r"^docs/features/[^/]+/tasks/(T\d+)\.yaml$")
@@ -146,7 +146,6 @@ def _activate_tasks_git(
     on any read/write error (logged, not fatal — the stage approval already succeeded).
     """
     import base64
-    import json
     import requests as _requests
 
     api = "https://api.github.com"

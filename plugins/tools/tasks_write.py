@@ -23,7 +23,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from ..db import _validate_id, get_feature_detail, get_workspace_context
-from ..document_repo import StaleBaseError, branch_exists, commit_to_branch, read_document
+from ..document_repo import branch_exists
 from .artifacts import _resolve_management_repo
 
 logger = logging.getLogger(__name__)
