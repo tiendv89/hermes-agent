@@ -68,6 +68,7 @@ docker run --rm -p 8000:8000 --env-file .env hermes-workflow-gateway
 | Target | Description |
 |---|---|
 | `make submodules` | Sync git submodules to the pinned commits |
+| `make update-submodules` | Pull submodules to latest upstream and commit |
 | `make install` | Install the vendored agent + gateway dependencies |
 | `make lint` | Run ruff over the project (vendor excluded) |
 | `make dev` | Start with auto-reload |
@@ -138,12 +139,8 @@ vendor/hermes-agent/  — upstream agent (git submodule, editable dependency)
 
 ## Updating the vendored agent
 
-The submodule is pinned to a specific upstream commit. To advance it:
-
 ```bash
-scripts/sync-submodules.sh --remote     # fetch + move to upstream latest
-git add vendor/hermes-agent && git commit -m "chore: bump hermes-agent submodule"
+make update-submodules
 ```
 
-Re-run `make lint` and the test suite after bumping — the gateway depends on
-upstream module APIs that drift between commits.
+This fetches the latest upstream commit, stages the pointer change, and commits it. Re-run `make install` afterwards to pick up any new dependencies, and `make lint` to catch any API drift.
