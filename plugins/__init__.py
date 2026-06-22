@@ -32,24 +32,41 @@ def _as_tool_content(result: Any) -> str:
         return str(result)
 
 
+def _unpack_args(args: tuple, kwargs: dict) -> dict:
+    """Merge positional and keyword args into a single kwargs dict.
+
+    registry.dispatch calls entry.handler(args_dict, **extra_kwargs) where the
+    first positional argument is the full tool-call arguments dict from the
+    model. Handlers are defined with named parameters (``stage``, ``content``,
+    etc.), so the dict must be unpacked — not passed as a positional — or every
+    named parameter receives the entire dict as its value.
+
+    Extra registry kwargs (task_id, session_id, user_task) are merged in after
+    the tool args so handlers can absorb them with ``**_``.
+    """
+    fn_args = args[0] if args and isinstance(args[0], dict) else {}
+    return {**fn_args, **kwargs}
+
+
 def _json_result_handler(handler: Any, is_async: bool) -> Any:
     """Wrap a tool handler so its return value is JSON-stringified for the model.
 
-    Transparent to the dispatch calling convention (forwards *args/**kwargs) and
-    preserves sync vs async so the registry awaits async handlers correctly. The
-    underlying ``handle()`` still returns its dict to direct callers (hooks,
-    HTTP routes, unit tests) — only the registered tool handler is wrapped.
+    Unpacks the positional args-dict from registry.dispatch into keyword
+    arguments before calling the handler, then JSON-encodes the return value.
+    The underlying ``handle()`` still returns its dict to direct callers
+    (hooks, HTTP routes, unit tests) — only the registered tool handler is
+    wrapped.
     """
     if is_async:
         @functools.wraps(handler)
         async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
-            return _as_tool_content(await handler(*args, **kwargs))
+            return _as_tool_content(await handler(**_unpack_args(args, kwargs)))
 
         return _async_wrapper
 
     @functools.wraps(handler)
     def _sync_wrapper(*args: Any, **kwargs: Any) -> str:
-        return _as_tool_content(handler(*args, **kwargs))
+        return _as_tool_content(handler(**_unpack_args(args, kwargs)))
 
     return _sync_wrapper
 
