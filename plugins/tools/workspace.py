@@ -10,20 +10,22 @@ from ..db import get_workspace_context
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Read a workspace's context — its repos, roles, environments and "
         "workflow settings from workspace.yaml. Use this to learn which repos "
         "and stacks a feature spans before designing or breaking down work."
     ),
-    "properties": {
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier (slug or UUID). Omit to use the current workspace from context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier (slug or UUID). Omit to use the current workspace from context.",
+            },
         },
+        "required": [],
+        "additionalProperties": False,
     },
-    "required": [],
-    "additionalProperties": False,
 }
 
 

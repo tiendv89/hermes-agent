@@ -11,7 +11,6 @@ from ..mcp_client import call_mcp_tool, coerce_text
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Query the code-structure index (GitNexus) for symbol definitions, call graphs, "
         "and impact/blast-radius. Call this before answering 'where is X defined', 'what "
@@ -19,28 +18,31 @@ SCHEMA: Dict[str, Any] = {
         "Always pass a non-empty 'query' (the symbol name or natural-language question), "
         "e.g. query='AIAgent', tool='query'."
     ),
-    "properties": {
-        "query": {
-            "type": "string",
-            "description": (
-                "The lookup target — a symbol/function/class name for query/context/impact, "
-                "a natural-language question for group_query, or a comma-separated file list "
-                "for detect_changes. Required for every tool except list_repos."
-            ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "The lookup target — a symbol/function/class name for query/context/impact, "
+                    "a natural-language question for group_query, or a comma-separated file list "
+                    "for detect_changes. Required for every tool except list_repos."
+                ),
+            },
+            "tool": {
+                "type": "string",
+                "enum": ["query", "context", "impact", "detect_changes", "list_repos", "group_query"],
+                "default": "query",
+                "description": (
+                    "GitNexus operation: query (find a symbol) | context (callers/callees of a symbol) | "
+                    "impact (blast radius of changing a symbol) | detect_changes (symbols affected by a "
+                    "file list) | list_repos (no query needed) | group_query (cross-repo flow)."
+                ),
+            },
         },
-        "tool": {
-            "type": "string",
-            "enum": ["query", "context", "impact", "detect_changes", "list_repos", "group_query"],
-            "default": "query",
-            "description": (
-                "GitNexus operation: query (find a symbol) | context (callers/callees of a symbol) | "
-                "impact (blast radius of changing a symbol) | detect_changes (symbols affected by a "
-                "file list) | list_repos (no query needed) | group_query (cross-repo flow)."
-            ),
-        },
+        "required": ["query"],
+        "additionalProperties": False,
     },
-    "required": ["query"],
-    "additionalProperties": False,
 }
 
 

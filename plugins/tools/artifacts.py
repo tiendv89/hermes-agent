@@ -70,39 +70,40 @@ _PRODUCT_SPEC_TEMPLATE = _load_template("product-spec.md")
 _TECHNICAL_DESIGN_TEMPLATE = _load_template("technical-design.md")
 
 WRITE_SPEC_SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Write the feature's product-spec.md — commits the full Markdown to the "
         "feature branch (opening/updating its PR). Use when authoring or revising "
         "the product specification. The content must follow the product-spec "
         "template (see the content field); pass the complete document, not a diff."
     ),
-    "properties": {
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier. Omit to use the current workspace from context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier. Omit to use the current workspace from context.",
+            },
+            "feature_id": {
+                "type": "string",
+                "description": "Feature identifier. Omit to use the current feature from context.",
+            },
+            "content": {
+                "type": "string",
+                "description": _content_description(
+                    "product-spec.md", _PRODUCT_SPEC_TEMPLATE
+                ),
+            },
+            "commit_message": {
+                "type": "string",
+                "description": "Git commit message (optional).",
+            },
         },
-        "feature_id": {
-            "type": "string",
-            "description": "Feature identifier. Omit to use the current feature from context.",
-        },
-        "content": {
-            "type": "string",
-            "description": _content_description(
-                "product-spec.md", _PRODUCT_SPEC_TEMPLATE
-            ),
-        },
-        "commit_message": {
-            "type": "string",
-            "description": "Git commit message (optional).",
-        },
+        "required": ["content"],
+        "additionalProperties": False,
     },
-    "required": ["content"],
-    "additionalProperties": False,
 }
 
 WRITE_TD_SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Write the feature's technical-design.md — commits the full Markdown to "
         "the feature branch (opening/updating its PR). Use when authoring or "
@@ -110,28 +111,31 @@ WRITE_TD_SCHEMA: Dict[str, Any] = {
         "technical-design template (see the content field); pass the complete "
         "document, not a diff."
     ),
-    "properties": {
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier. Omit to use the current workspace from context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier. Omit to use the current workspace from context.",
+            },
+            "feature_id": {
+                "type": "string",
+                "description": "Feature identifier. Omit to use the current feature from context.",
+            },
+            "content": {
+                "type": "string",
+                "description": _content_description(
+                    "technical-design.md", _TECHNICAL_DESIGN_TEMPLATE
+                ),
+            },
+            "commit_message": {
+                "type": "string",
+                "description": "Git commit message (optional).",
+            },
         },
-        "feature_id": {
-            "type": "string",
-            "description": "Feature identifier. Omit to use the current feature from context.",
-        },
-        "content": {
-            "type": "string",
-            "description": _content_description(
-                "technical-design.md", _TECHNICAL_DESIGN_TEMPLATE
-            ),
-        },
-        "commit_message": {
-            "type": "string",
-            "description": "Git commit message (optional).",
-        },
+        "required": ["content"],
+        "additionalProperties": False,
     },
-    "required": ["content"],
-    "additionalProperties": False,
 }
 
 

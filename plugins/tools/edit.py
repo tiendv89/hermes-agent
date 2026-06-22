@@ -24,53 +24,55 @@ _DOCUMENT_FILES: Dict[str, str] = {
 }
 
 EDIT_DOCUMENT_SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Make targeted find-and-replace edits to a feature document "
         "(product_spec or technical_design) and commit them to the feature "
         "branch. Prefer this over a full rewrite when changing specific passages."
     ),
-    "properties": {
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier. Omit to use the current workspace from context.",
-        },
-        "feature_id": {
-            "type": "string",
-            "description": "Feature identifier. Omit to use the current feature from context.",
-        },
-        "document": {
-            "type": "string",
-            "enum": ["product_spec", "technical_design"],
-            "description": "Which document to edit: 'product_spec' or 'technical_design'.",
-        },
-        "edits": {
-            "type": "array",
-            "description": "Ordered list of targeted replacements to apply to the current document content.",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "old_string": {
-                        "type": "string",
-                        "description": "Exact text to find in the document (must match exactly).",
-                    },
-                    "new_string": {
-                        "type": "string",
-                        "description": "Replacement text.",
-                    },
-                },
-                "required": ["old_string", "new_string"],
-                "additionalProperties": False,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier. Omit to use the current workspace from context.",
             },
-            "minItems": 1,
+            "feature_id": {
+                "type": "string",
+                "description": "Feature identifier. Omit to use the current feature from context.",
+            },
+            "document": {
+                "type": "string",
+                "enum": ["product_spec", "technical_design"],
+                "description": "Which document to edit: 'product_spec' or 'technical_design'.",
+            },
+            "edits": {
+                "type": "array",
+                "description": "Ordered list of targeted replacements to apply to the current document content.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "old_string": {
+                            "type": "string",
+                            "description": "Exact text to find in the document (must match exactly).",
+                        },
+                        "new_string": {
+                            "type": "string",
+                            "description": "Replacement text.",
+                        },
+                    },
+                    "required": ["old_string", "new_string"],
+                    "additionalProperties": False,
+                },
+                "minItems": 1,
+            },
+            "commit_message": {
+                "type": "string",
+                "description": "Git commit message (optional).",
+            },
         },
-        "commit_message": {
-            "type": "string",
-            "description": "Git commit message (optional).",
-        },
+        "required": ["document", "edits"],
+        "additionalProperties": False,
     },
-    "required": ["document", "edits"],
-    "additionalProperties": False,
 }
 
 

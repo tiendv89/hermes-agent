@@ -14,25 +14,27 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Load a skill's full guidance on demand — returns the named skill's "
         "SKILL.md body plus any reference files. Use when you need detailed "
         "best-practices or workflow instructions; pick a name from the skill "
         "index injected in context (technical or workflow skills)."
     ),
-    "properties": {
-        "name": {
-            "type": "string",
-            "description": (
-                "Name of the skill to load (e.g. 'python-best-practices', "
-                "'typescript-best-practices', 'tech-lead', 'init-feature'). "
-                "Use the skill index (injected in system context) to find available names."
-            ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "name": {
+                "type": "string",
+                "description": (
+                    "Name of the skill to load (e.g. 'python-best-practices', "
+                    "'typescript-best-practices', 'tech-lead', 'init-feature'). "
+                    "Use the skill index (injected in system context) to find available names."
+                ),
+            },
         },
+        "required": ["name"],
+        "additionalProperties": False,
     },
-    "required": ["name"],
-    "additionalProperties": False,
 }
 
 

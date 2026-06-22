@@ -8,25 +8,27 @@ from typing import Any, Dict
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Return the live status of every task in the current feature, sourced from the "
         "database (status, blocked_reason, PR url, depends_on, actor). Call this to answer "
         "questions like 'which tasks are blocked / in progress / done' or 'what's left'. "
         "Omit workspace_id/feature_id to use the current feature from context."
     ),
-    "properties": {
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier. Omit to use the current workspace from context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier. Omit to use the current workspace from context.",
+            },
+            "feature_id": {
+                "type": "string",
+                "description": "Feature identifier. Omit to use the current feature from context.",
+            },
         },
-        "feature_id": {
-            "type": "string",
-            "description": "Feature identifier. Omit to use the current feature from context.",
-        },
+        "required": [],
+        "additionalProperties": False,
     },
-    "required": [],
-    "additionalProperties": False,
 }
 
 
