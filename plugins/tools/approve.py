@@ -18,8 +18,8 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from ..db import _validate_id, get_feature_detail, get_workspace_context
-from ..document_repo import StaleBaseError, read_document, write_document
+from ..db import _validate_id, get_feature_detail, get_workspace_context, update_feature_stage
+from ..document_repo import StaleBaseError, branch_exists, commit_to_branch, read_document
 from .artifacts import _resolve_management_repo
 
 logger = logging.getLogger(__name__)
@@ -204,13 +204,15 @@ def handle(
 
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
 
-    # Look up feature name and init PR URL for branch resolution.
+    # Look up feature name, owner, and init PR URL.
     feature_name: Optional[str] = None
     init_pr_url: Optional[str] = None
+    owner: Optional[str] = None
     try:
         detail = get_feature_detail(wid, fid)
         feature_name = detail.get("feature_name")
         init_pr_url = detail.get("init_pr_url")
+        owner = detail.get("owner")
     except Exception as exc:
         logger.debug("approve_feature: could not fetch feature_detail: %s", exc)
 
@@ -285,27 +287,61 @@ def handle(
         status_data["history"].append({"at": now, "by": actor, "action": "stage_reopened", "stage": stage, "note": f"{stage} reopened by {actor}."})
         commit_msg = f"chore: reopen {stage} stage"
 
-    new_content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
+    new_feature_status = status_data.get("feature_status", "")
+    new_current_stage = status_data.get("current_stage", "")
+    new_next_action = status_data.get("next_action", "")
 
-    try:
-        result = write_document(
-            gh_owner, gh_repo, fid, base_branch, path, new_content,
-            current["sha"], commit_msg, github_token,
-        )
-    except StaleBaseError as exc:
-        return {"ok": False, "conflict": True, "error": f"status.yaml changed since it was read. Retry. ({exc})"}
-    except Exception as exc:
-        logger.exception("approve_feature: write_document failed for feature %s", fid)
-        return {"ok": False, "error": str(exc)}
+    commit_sha = ""
+
+    if owner == "go":
+        # go/postgres features: persist approval state directly in the DB.
+        # status.yaml is not used — the stages JSONB column is the source of truth.
+        try:
+            update_feature_stage(
+                workspace_id=wid,
+                feature_id=fid,
+                stage=stage,
+                review_status=stage_block["review_status"],
+                feature_status=new_feature_status,
+                current_stage=new_current_stage,
+                next_action=new_next_action,
+                actor=actor,
+            )
+        except Exception as exc:
+            logger.exception("approve_feature: DB update failed for feature %s", fid)
+            return {"ok": False, "error": f"DB update failed: {exc}"}
+    else:
+        # ts/git features: commit updated status.yaml to the feature branch or init branch.
+        new_content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
+        try:
+            if branch.endswith("-init"):
+                # Commit directly to the init branch — PR already exists, no new PR needed.
+                commit_sha = commit_to_branch(
+                    gh_owner, gh_repo, branch, path, new_content,
+                    current["sha"], commit_msg, github_token,
+                )
+            else:
+                from ..document_repo import write_document
+                result = write_document(
+                    gh_owner, gh_repo, fid, base_branch, path, new_content,
+                    current["sha"], commit_msg, github_token,
+                )
+                commit_sha = result.get("commit_sha", "")
+        except StaleBaseError as exc:
+            return {"ok": False, "conflict": True, "error": f"status.yaml changed since it was read. Retry. ({exc})"}
+        except Exception as exc:
+            logger.exception("approve_feature: commit failed for feature %s", fid)
+            return {"ok": False, "error": str(exc)}
 
     return {
         "ok": True,
         "feature_id": fid,
         "stage": stage,
         "action": action,
+        "owner": owner,
         "review_status": stage_block["review_status"],
-        "feature_status": status_data.get("feature_status"),
-        "current_stage": status_data.get("current_stage"),
-        "commit_sha": result.get("commit_sha", ""),
-        "branch": branch,
+        "feature_status": new_feature_status,
+        "current_stage": new_current_stage,
+        "commit_sha": commit_sha,
+        "branch": branch if owner != "go" else None,
     }

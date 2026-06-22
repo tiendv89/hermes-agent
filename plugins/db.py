@@ -96,6 +96,76 @@ def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:
     }
 
 
+def update_feature_stage(
+    workspace_id: str,
+    feature_id: str,
+    stage: str,
+    review_status: str,
+    feature_status: str,
+    current_stage: str,
+    next_action: str,
+    actor: str,
+) -> None:
+    """Persist stage-review state into workspace_features.stages JSONB (go-owner features).
+
+    Merges the approval result into the stages column without touching fields
+    owned by other stages. Also updates feature_status, current_stage, and
+    next_action to advance the lifecycle.
+    """
+    import json as _json
+    import datetime as _dt
+
+    now = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    with _conn() as conn:
+        # Read current stages blob so we can merge.
+        row = conn.execute(
+            """
+            SELECT f.id, f.stages
+            FROM workspace_features f
+            JOIN workspaces w ON w.id = f.workspace_id
+            WHERE (w.slug = %s OR w.id::text = %s)
+              AND (f.feature_name = %s OR f.feature_id::text = %s)
+            LIMIT 1
+            """,
+            (workspace_id, workspace_id, feature_id, feature_id),
+        ).fetchone()
+
+        if row is None:
+            raise ValueError(f"Feature {feature_id!r} not found in workspace {workspace_id!r}")
+
+        stages: dict = row["stages"] if isinstance(row["stages"], dict) else {}
+        stage_block = stages.setdefault(stage, {})
+        stage_block["review_status"] = review_status
+        stage_block["reviewed_by"] = actor
+        stage_block["reviewed_at"] = now
+        if "review_history" not in stage_block or not isinstance(stage_block["review_history"], list):
+            stage_block["review_history"] = []
+        stage_block["review_history"].append({
+            "review_status": review_status,
+            "reviewed_by": actor,
+            "reviewed_at": now,
+        })
+
+        conn.execute(
+            """
+            UPDATE workspace_features
+               SET stages        = %s::jsonb,
+                   feature_status = %s,
+                   current_stage  = %s,
+                   next_action    = %s,
+                   updated_at     = NOW()
+             WHERE id = %s
+            """,
+            (
+                _json.dumps(stages),
+                feature_status,
+                current_stage,
+                next_action,
+                row["id"],
+            ),
+        )
+
+
 def get_feature_tasks(workspace_id: str, feature_id: str) -> list[dict]:
     """Return all tasks for the given workspace + feature, ordered by task_name."""
     with _conn() as conn:
