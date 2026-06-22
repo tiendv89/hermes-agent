@@ -90,7 +90,9 @@ def ensure_feature_branch(
 
     # Branch is absent — get the base branch SHA and create from it.
     base_url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/git/refs/heads/{base_branch}"
-    base_resp = requests.get(base_url, headers=_headers(token), timeout=_DEFAULT_TIMEOUT)
+    base_resp = requests.get(
+        base_url, headers=_headers(token), timeout=_DEFAULT_TIMEOUT
+    )
     base_resp.raise_for_status()
     base_sha = base_resp.json()["object"]["sha"]
 
@@ -104,7 +106,12 @@ def ensure_feature_branch(
     # 422 "Reference already exists" — lost a race with another writer; fine.
     if create_resp.status_code not in (201, 422):
         create_resp.raise_for_status()
-    logger.info("ensure_feature_branch: created %s from %s (%s)", branch, base_branch, base_sha[:7])
+    logger.info(
+        "ensure_feature_branch: created %s from %s (%s)",
+        branch,
+        base_branch,
+        base_sha[:7],
+    )
 
 
 def read_document(
@@ -167,7 +174,9 @@ def write_document(
         payload["sha"] = base_sha
 
     url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
-    resp = requests.put(url, headers=_headers(token), json=payload, timeout=_DEFAULT_TIMEOUT)
+    resp = requests.put(
+        url, headers=_headers(token), json=payload, timeout=_DEFAULT_TIMEOUT
+    )
 
     if resp.status_code in (409, 422):
         detail = ""
@@ -181,6 +190,66 @@ def write_document(
     commit_sha = resp.json().get("commit", {}).get("sha", "")
     pr = ensure_pr(owner, repo, feature_id, base_branch, token)
     return {"commit_sha": commit_sha, "pr": pr}
+
+
+def branch_exists(
+    owner: str,
+    repo: str,
+    branch: str,
+    token: str,
+) -> bool:
+    """Return True if *branch* exists on the remote, False if 404."""
+    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/git/refs/heads/{branch}"
+    resp = requests.get(url, headers=_headers(token), timeout=_DEFAULT_TIMEOUT)
+    if resp.status_code == 200:
+        return True
+    if resp.status_code == 404:
+        return False
+    resp.raise_for_status()
+    return False  # unreachable
+
+
+def commit_to_branch(
+    owner: str,
+    repo: str,
+    branch: str,
+    path: str,
+    content: str,
+    base_sha: Optional[str],
+    message: str,
+    token: str,
+) -> str:
+    """Commit *content* directly to *branch* at *path* and return the commit SHA.
+
+    Unlike write_document, this function does NOT call ensure_feature_branch or
+    ensure_pr — it is used when the caller has already resolved the target branch
+    (e.g. an existing init PR branch) and wants a bare commit.
+
+    Raises StaleBaseError on 409/422 SHA mismatch.
+    """
+    payload: Dict[str, Any] = {
+        "message": message,
+        "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
+        "branch": branch,
+    }
+    if base_sha is not None:
+        payload["sha"] = base_sha
+
+    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/contents/{path}"
+    resp = requests.put(
+        url, headers=_headers(token), json=payload, timeout=_DEFAULT_TIMEOUT
+    )
+
+    if resp.status_code in (409, 422):
+        detail = ""
+        try:
+            detail = resp.json().get("message", "")
+        except Exception:
+            pass
+        raise StaleBaseError(path, detail)
+
+    resp.raise_for_status()
+    return resp.json().get("commit", {}).get("sha", "")
 
 
 def ensure_pr(
