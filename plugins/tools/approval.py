@@ -16,26 +16,28 @@ logger = logging.getLogger(__name__)
 _VALID_STAGES = frozenset({"product_spec", "technical_design", "tasks", "handoff"})
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Request human approval for a feature lifecycle stage. "
         "Surfaces an Approve / Reject / Re-open card to the user — "
         "this tool does NOT approve or modify any state itself. "
         "The human's decision is applied via the stage-transition endpoint."
     ),
-    "properties": {
-        "feature_id": {
-            "type": "string",
-            "description": "Feature identifier. Omit to use the current feature from context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "feature_id": {
+                "type": "string",
+                "description": "Feature identifier. Omit to use the current feature from context.",
+            },
+            "stage": {
+                "type": "string",
+                "enum": ["product_spec", "technical_design", "tasks", "handoff"],
+                "description": "The lifecycle stage to request approval for.",
+            },
         },
-        "stage": {
-            "type": "string",
-            "enum": ["product_spec", "technical_design", "tasks", "handoff"],
-            "description": "The lifecycle stage to request approval for.",
-        },
+        "required": ["stage"],
+        "additionalProperties": False,
     },
-    "required": ["stage"],
-    "additionalProperties": False,
 }
 
 

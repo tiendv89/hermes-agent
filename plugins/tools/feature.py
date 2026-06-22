@@ -10,23 +10,25 @@ from ..db import get_feature_detail
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Return full feature metadata (title, stage, status, next_action). "
         "Omit workspace_id/feature_id to use the current feature from context."
     ),
-    "properties": {
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier (slug or UUID). Omit to use the current workspace from context.",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier (slug or UUID). Omit to use the current workspace from context.",
+            },
+            "feature_id": {
+                "type": "string",
+                "description": "Feature identifier (name or UUID). Omit to use the current feature from context.",
+            },
         },
-        "feature_id": {
-            "type": "string",
-            "description": "Feature identifier (name or UUID). Omit to use the current feature from context.",
-        },
+        "required": [],
+        "additionalProperties": False,
     },
-    "required": [],
-    "additionalProperties": False,
 }
 
 

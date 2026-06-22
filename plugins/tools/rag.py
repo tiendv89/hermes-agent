@@ -11,7 +11,6 @@ from ..mcp_client import call_mcp_tool, coerce_text
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
-    "type": "object",
     "description": (
         "Semantic search over indexed workspace documents — past specs, technical designs, "
         "task logs, skills, PR descriptions. Call this to recall prior decisions or find "
@@ -19,31 +18,34 @@ SCHEMA: Dict[str, Any] = {
         "non-empty 'query' describing what to recall, e.g. query='auth flow technical design'. "
         "workspace_id is filled from the current session context automatically."
     ),
-    "properties": {
-        "query": {
-            "type": "string",
-            "description": "Natural-language description of what to recall (required, non-empty).",
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "Natural-language description of what to recall (required, non-empty).",
+            },
+            "workspace_id": {
+                "type": "string",
+                "description": "Workspace identifier. Omit to use the current workspace from context.",
+            },
+            "top_k": {
+                "type": "integer",
+                "default": 5,
+                "description": "Number of ranked chunks to return.",
+            },
+            "source_types": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional filter: skill, task_log, product_spec, technical_design, readme, "
+                    "claude_md, pr_description."
+                ),
+            },
         },
-        "workspace_id": {
-            "type": "string",
-            "description": "Workspace identifier. Omit to use the current workspace from context.",
-        },
-        "top_k": {
-            "type": "integer",
-            "default": 5,
-            "description": "Number of ranked chunks to return.",
-        },
-        "source_types": {
-            "type": "array",
-            "items": {"type": "string"},
-            "description": (
-                "Optional filter: skill, task_log, product_spec, technical_design, readme, "
-                "claude_md, pr_description."
-            ),
-        },
+        "required": ["query"],
+        "additionalProperties": False,
     },
-    "required": ["query"],
-    "additionalProperties": False,
 }
 
 
