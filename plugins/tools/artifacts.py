@@ -208,13 +208,23 @@ def _coerce_content(content: Any) -> str:
     """Normalize tool ``content`` to a string before it is UTF-8 encoded.
 
     The tool schema declares ``content`` as a string, but over the MCP path the
-    model frequently passes a structured JSON object instead. That dict would
-    otherwise reach ``str.encode`` in document_repo and raise
+    model occasionally passes a structured JSON object instead of markdown. That
+    dict would otherwise reach ``str.encode`` in document_repo and raise
     ``'dict' object has no attribute 'encode'``.
+
+    An empty dict/list (``{}``, ``[]``) is a model mistake — the model called
+    the tool without generating actual content. We raise ValueError so the
+    caller returns an error rather than committing useless bytes to GitHub.
     """
     if isinstance(content, str):
         return content
     if isinstance(content, (dict, list)):
+        if not content:
+            raise ValueError(
+                "content is an empty object — the model did not generate document "
+                "content before calling the tool. Regenerate the full markdown "
+                "document and pass it as the content string."
+            )
         return json.dumps(content, indent=2, ensure_ascii=False)
     return str(content)
 
@@ -282,7 +292,18 @@ def _write_artifact(
 ) -> Dict[str, Any]:
     """Full-rewrite path: determine target branch, write document, call request_approval."""
     _validate_id(feature_id, "feature_id")
-    content = _coerce_content(content)
+    try:
+        content = _coerce_content(content)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc)}
+    if not content.strip():
+        return {
+            "ok": False,
+            "error": (
+                "content is empty — the document was not written to GitHub. "
+                "Generate the full markdown document and pass it as the content string."
+            ),
+        }
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
