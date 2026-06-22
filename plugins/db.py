@@ -69,7 +69,8 @@ def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:
     with _conn() as conn:
         row = conn.execute(
             """
-            SELECT f.feature_name, f.title, f.current_stage, f.feature_status, f.next_action
+            SELECT f.feature_name, f.title, f.current_stage, f.feature_status,
+                   f.next_action, f.owner, f.init_pr_url
             FROM workspace_features f
             JOIN workspaces w ON w.id = f.workspace_id
             WHERE (w.slug = %s OR w.id::text = %s)
@@ -90,6 +91,8 @@ def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:
         "stage": row["current_stage"],
         "status": row["feature_status"],
         "next_action": row["next_action"],
+        "owner": row["owner"],
+        "init_pr_url": row["init_pr_url"],
     }
 
 

@@ -101,9 +101,7 @@ class TestWorkflowGetTasks:
         assert result["tasks"] == fake_tasks
 
     def test_db_error_returns_ok_false(self):
-        with patch(
-            "plugins.db.get_feature_tasks", side_effect=RuntimeError("db down")
-        ):
+        with patch("plugins.db.get_feature_tasks", side_effect=RuntimeError("db down")):
             from plugins.tools.tasks import handle
 
             result = handle(workspace_id="ws-1", feature_id="feat-1")
@@ -223,9 +221,7 @@ class TestWorkflowQueryGitnexus:
 
             result = await handle(tool="list_repos")
         assert result["ok"] is True
-        mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "list_repos", {}
-        )
+        mock_call.assert_awaited_once_with("http://gitnexus:8002/sse", "list_repos", {})
 
     @pytest.mark.asyncio
     async def test_error_returns_ok_false(self, monkeypatch):
@@ -458,7 +454,8 @@ class TestRegisterT3:
         plugins_mod.register(ctx)
 
         spec_call = next(
-            c for c in ctx.register_tool.call_args_list
+            c
+            for c in ctx.register_tool.call_args_list
             if (c.kwargs.get("name") or c.args[0]) == "write_product_spec"
         )
         wrapped = spec_call.kwargs["handler"]
@@ -476,7 +473,8 @@ class TestRegisterT3:
         plugins_mod.register(ctx)
 
         rag_call = next(
-            c for c in ctx.register_tool.call_args_list
+            c
+            for c in ctx.register_tool.call_args_list
             if (c.kwargs.get("name") or c.args[0]) == "query_rag"
         )
         wrapped = rag_call.kwargs["handler"]
@@ -485,6 +483,7 @@ class TestRegisterT3:
         # With RAG_MCP_URL unset, the real async handle() returns an ok:False
         # dict; the wrapper must await it and return a JSON string.
         import json as _json
+
         out = await wrapped(query="q", workspace_id="ws")
         assert isinstance(out, str)
         assert _json.loads(out)["ok"] is False
@@ -550,14 +549,24 @@ class TestInjectContextT3:
         return {
             "ok": True,
             "tasks": [
-                {"task_name": "T1", "title": "Setup DB", "status": "done", "blocked_reason": None},
+                {
+                    "task_name": "T1",
+                    "title": "Setup DB",
+                    "status": "done",
+                    "blocked_reason": None,
+                },
                 {
                     "task_name": "T2",
                     "title": "API endpoints",
                     "status": "blocked",
                     "blocked_reason": "db_unreachable",
                 },
-                {"task_name": "T3", "title": "Frontend", "status": "in_progress", "blocked_reason": None},
+                {
+                    "task_name": "T3",
+                    "title": "Frontend",
+                    "status": "in_progress",
+                    "blocked_reason": None,
+                },
             ],
         }
 
@@ -565,8 +574,18 @@ class TestInjectContextT3:
         return {
             "ok": True,
             "tasks": [
-                {"task_name": "T1", "title": "Setup DB", "status": "done", "blocked_reason": None},
-                {"task_name": "T2", "title": "API endpoints", "status": "in_progress", "blocked_reason": None},
+                {
+                    "task_name": "T1",
+                    "title": "Setup DB",
+                    "status": "done",
+                    "blocked_reason": None,
+                },
+                {
+                    "task_name": "T2",
+                    "title": "API endpoints",
+                    "status": "in_progress",
+                    "blocked_reason": None,
+                },
             ],
         }
 
@@ -574,9 +593,17 @@ class TestInjectContextT3:
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
-            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("plugins.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
+            patch(
+                "plugins.tools.workspace.handle",
+                return_value=self._make_fake_workspace_result(),
+            ),
+            patch(
+                "plugins.tools.feature.handle",
+                return_value=self._make_fake_feature_result(),
+            ),
+            patch(
+                "plugins.tools.tasks.handle", return_value=self._make_tasks_no_blocked()
+            ),
         ):
             content = self._call_inject()
         assert "tasks:" in content
@@ -587,9 +614,18 @@ class TestInjectContextT3:
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
-            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("plugins.tools.tasks.handle", return_value=self._make_tasks_with_blocked()),
+            patch(
+                "plugins.tools.workspace.handle",
+                return_value=self._make_fake_workspace_result(),
+            ),
+            patch(
+                "plugins.tools.feature.handle",
+                return_value=self._make_fake_feature_result(),
+            ),
+            patch(
+                "plugins.tools.tasks.handle",
+                return_value=self._make_tasks_with_blocked(),
+            ),
         ):
             content = self._call_inject()
         assert "T2" in content
@@ -600,9 +636,17 @@ class TestInjectContextT3:
         monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
-            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
-            patch("plugins.tools.tasks.handle", return_value=self._make_tasks_no_blocked()),
+            patch(
+                "plugins.tools.workspace.handle",
+                return_value=self._make_fake_workspace_result(),
+            ),
+            patch(
+                "plugins.tools.feature.handle",
+                return_value=self._make_fake_feature_result(),
+            ),
+            patch(
+                "plugins.tools.tasks.handle", return_value=self._make_tasks_no_blocked()
+            ),
         ):
             content = self._call_inject()
         assert "blocked:" not in content
@@ -641,15 +685,36 @@ class TestInjectContextT3:
         tasks_result = {
             "ok": True,
             "tasks": [
-                {"task_name": "T1", "title": "Setup DB", "status": "done", "blocked_reason": None},
-                {"task_name": "T2", "title": "API layer", "status": "done", "blocked_reason": None},
-                {"task_name": "T3", "title": "Frontend", "status": "in_progress", "blocked_reason": None},
+                {
+                    "task_name": "T1",
+                    "title": "Setup DB",
+                    "status": "done",
+                    "blocked_reason": None,
+                },
+                {
+                    "task_name": "T2",
+                    "title": "API layer",
+                    "status": "done",
+                    "blocked_reason": None,
+                },
+                {
+                    "task_name": "T3",
+                    "title": "Frontend",
+                    "status": "in_progress",
+                    "blocked_reason": None,
+                },
             ],
         }
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
-            patch("plugins.tools.workspace.handle", return_value=self._make_fake_workspace_result()),
-            patch("plugins.tools.feature.handle", return_value=self._make_fake_feature_result()),
+            patch(
+                "plugins.tools.workspace.handle",
+                return_value=self._make_fake_workspace_result(),
+            ),
+            patch(
+                "plugins.tools.feature.handle",
+                return_value=self._make_fake_feature_result(),
+            ),
             patch("plugins.tools.tasks.handle", return_value=tasks_result),
         ):
             content = self._call_inject()
@@ -698,7 +763,9 @@ class TestMcpArgCoercionAndErrors:
     async def test_gitnexus_coerces_dict_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
-            "plugins.tools.gitnexus.call_mcp_tool", new_callable=AsyncMock, return_value=[]
+            "plugins.tools.gitnexus.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
         ) as mock_call:
             from plugins.tools.gitnexus import handle
 
@@ -733,8 +800,10 @@ class TestResolveManagementRepo:
     def test_resolves_from_workspace_context(self):
         from plugins.tools.artifacts import _resolve_management_repo
 
-        ctx = {"management_repo": "management-repo",
-               "repos": [{"id": "management-repo", "github": "git@github.com:org/ws.git"}]}
+        ctx = {
+            "management_repo": "management-repo",
+            "repos": [{"id": "management-repo", "github": "git@github.com:org/ws.git"}],
+        }
         assert _resolve_management_repo(ctx) == ("org", "ws")
 
     def test_env_fallback_when_no_repo_configured(self, monkeypatch):
@@ -742,20 +811,26 @@ class TestResolveManagementRepo:
 
         monkeypatch.setenv("MANAGEMENT_REPO_GITHUB", "git@github.com:org/ws.git")
         # repos == [] (the blocker case) → env override resolves it.
-        assert _resolve_management_repo({"management_repo": "management-repo", "repos": []}) == ("org", "ws")
+        assert _resolve_management_repo(
+            {"management_repo": "management-repo", "repos": []}
+        ) == ("org", "ws")
 
     def test_env_fallback_accepts_owner_repo_form(self, monkeypatch):
         from plugins.tools.artifacts import _resolve_management_repo
 
         monkeypatch.setenv("MANAGEMENT_REPO_GITHUB", "org/ws")
-        assert _resolve_management_repo({"management_repo": "management-repo", "repos": []}) == ("org", "ws")
+        assert _resolve_management_repo(
+            {"management_repo": "management-repo", "repos": []}
+        ) == ("org", "ws")
 
     def test_raises_when_unresolvable(self, monkeypatch):
         from plugins.tools.artifacts import _resolve_management_repo
 
         monkeypatch.delenv("MANAGEMENT_REPO_GITHUB", raising=False)
         with pytest.raises(ValueError, match="MANAGEMENT_REPO_GITHUB"):
-            _resolve_management_repo({"management_repo": "management-repo", "repos": []})
+            _resolve_management_repo(
+                {"management_repo": "management-repo", "repos": []}
+            )
 
 
 class TestWriteArtifactCoercesContent:
@@ -776,15 +851,32 @@ class TestWriteArtifactCoercesContent:
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         captured = {}
 
-        def fake_write(owner, repo, feature_id, base_branch, path, content, sha, message, token):
+        def fake_write(
+            owner, repo, feature_id, base_branch, path, content, sha, message, token
+        ):
             captured["content"] = content
             return {"commit_sha": "deadbeef", "pr": {"url": "http://pr"}}
 
         with (
             patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
-            patch("plugins.tools.artifacts._resolve_management_repo", return_value=("o", "r")),
-            patch("plugins.tools.artifacts.read_document", return_value={"sha": "base"}),
+            patch(
+                "plugins.tools.artifacts._resolve_management_repo",
+                return_value=("o", "r"),
+            ),
+            patch(
+                "plugins.tools.artifacts.get_feature_detail",
+                return_value={"init_pr_url": None, "owner": "ts"},
+            ),
+            patch(
+                "plugins.tools.artifacts._resolve_document_branch",
+                return_value=("feature/feat-1", None),
+            ),
+            patch(
+                "plugins.tools.artifacts.read_document",
+                return_value={"content": "", "sha": "base"},
+            ),
             patch("plugins.tools.artifacts.write_document", side_effect=fake_write),
+            patch("plugins.tools.approval.handle", return_value={"ok": False}),
         ):
             from plugins.tools.artifacts import handle_write_product_spec
 
