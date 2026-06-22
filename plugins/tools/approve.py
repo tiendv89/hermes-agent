@@ -88,10 +88,15 @@ SCHEMA: Dict[str, Any] = {
         "you to approve or reject a stage (e.g. 'approve the product spec'). "
         "Writes status.yaml on the feature branch and advances the feature "
         "lifecycle accordingly.\n\n"
+        "IMPORTANT: Always call this tool even if you believe the stage is already "
+        "approved. When stage=tasks, the tool will activate any tasks that are still "
+        "todo but have their dependencies met — it handles the already-approved case "
+        "safely (no duplicate commit, just task activation).\n\n"
         "Stage effects on approve:\n"
         "- product_spec → advances to technical_design (feature_status: in_tdd)\n"
         "- technical_design → advances to tasks (feature_status: in_tdd)\n"
-        "- tasks → advances to handoff (feature_status: ready_for_implementation)\n"
+        "- tasks → advances to handoff (feature_status: ready_for_implementation) "
+        "AND activates zero-dependency tasks to ready\n"
         "- handoff → marks feature done"
     ),
     "parameters": {
@@ -425,6 +430,40 @@ def handle(
         stage_block["review_history"] = []
     if not isinstance(status_data.get("history"), list):
         status_data["history"] = []
+
+    # Fast-path: stage already approved — skip the status.yaml write but still
+    # run task activation for stage=tasks so any unactivated tasks get set to ready.
+    already_approved = stage_block.get("review_status") == "approved" and action == "approve"
+    if already_approved:
+        activated_tasks: list = []
+        if stage == "tasks":
+            doc_dir = feature_name or fid
+            if owner == "go":
+                try:
+                    activated_tasks = _activate_tasks_db(wid, fid, actor)
+                except Exception as exc:
+                    logger.warning("approve_feature (already-approved fast-path): DB activation failed: %s", exc)
+            else:
+                activation = _activate_tasks_git(gh_owner, gh_repo, branch, doc_dir, actor, github_token)
+                activated_tasks = activation.get("activated", [])
+        return {
+            "ok": True,
+            "feature_id": fid,
+            "stage": stage,
+            "action": "noop",
+            "owner": owner,
+            "review_status": "approved",
+            "feature_status": status_data.get("feature_status", ""),
+            "current_stage": status_data.get("current_stage", ""),
+            "commit_sha": "",
+            "branch": branch if owner != "go" else None,
+            "activated_tasks": activated_tasks,
+            "note": (
+                f"Stage '{stage}' was already approved — status.yaml unchanged. "
+                + (f"Activated {len(activated_tasks)} task(s): {activated_tasks}." if activated_tasks
+                   else "No additional tasks to activate (all are already ready/in-progress/done).")
+            ),
+        }
 
     if action == "approve":
         stage_block["review_status"] = "approved"
