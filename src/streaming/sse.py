@@ -38,6 +38,7 @@ logger = logging.getLogger(__name__)
 ARTIFACT_BY_WRITE_TOOL: Dict[str, str] = {
     "write_product_spec": "product_spec",
     "write_technical_design": "technical_design",
+    "write_tasks": "tasks",
 }
 
 # How long stream() waits with no agent activity before sending an SSE comment
