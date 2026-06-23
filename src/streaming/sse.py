@@ -41,6 +41,54 @@ ARTIFACT_BY_WRITE_TOOL: Dict[str, str] = {
     "write_tasks": "tasks",
 }
 
+
+def coerce_tool_output(output: Any) -> Dict[str, Any]:
+    """Return the tool result as a dict.
+
+    Plugin handlers are wrapped by _json_result_handler, so the result that
+    reaches the tool-complete callback is a JSON *string* (e.g. '{"ok": true,
+    "path": "..."}'), not a dict. Parse it so artifact detection / the ok-check
+    work. Returns {} when it isn't a JSON object.
+    """
+    if isinstance(output, dict):
+        return output
+    if isinstance(output, str):
+        try:
+            parsed = json.loads(output)
+            return parsed if isinstance(parsed, dict) else {}
+        except (ValueError, TypeError):
+            return {}
+    return {}
+
+
+def artifact_for_tool(name: str, args: Any = None, output: Any = None) -> Optional[str]:
+    """Resolve which artifact a completed tool call wrote, for the FE refresh event.
+
+    Robust to toolset-prefixed names (``workflow_write_product_spec``), the
+    ``edit_document`` tool (whose target is in its args, not output), and falls
+    back to the committed file path in the output. Returns None when the tool
+    didn't write a feature document.
+    """
+    base = name[len("workflow_") :] if name.startswith("workflow_") else name
+    artifact = ARTIFACT_BY_WRITE_TOOL.get(base) or ARTIFACT_BY_WRITE_TOOL.get(name)
+    if artifact:
+        return artifact
+    # edit_document targets product_spec / technical_design via its args.
+    if base in ("edit_document",) and isinstance(args, dict):
+        doc = args.get("document")
+        if doc in ("product_spec", "technical_design"):
+            return doc
+    # Last resort: infer from the committed file path in the tool result.
+    out = coerce_tool_output(output)
+    path = str(out.get("path") or "")
+    if path.endswith("product-spec.md"):
+        return "product_spec"
+    if path.endswith("technical-design.md"):
+        return "technical_design"
+    if path.endswith("tasks.md"):
+        return "tasks"
+    return None
+
 # How long stream() waits with no agent activity before sending an SSE comment
 # to keep the connection alive (slow tools shouldn't trip idle proxy timeouts).
 # Comment frames (": ...") are ignored by SSE clients.
@@ -134,8 +182,8 @@ class HermesSSETranslator:
                 },
             )
         )
-        artifact = ARTIFACT_BY_WRITE_TOOL.get(name)
-        if artifact and isinstance(output, dict) and output.get("ok"):
+        artifact = artifact_for_tool(name, args, output)
+        if artifact and coerce_tool_output(output).get("ok"):
             self._emit(self._event("hermes.artifact.saved", {"artifact": artifact}))
 
     def on_usage(self, input_tokens: int = 0, output_tokens: int = 0, **_: Any) -> None:

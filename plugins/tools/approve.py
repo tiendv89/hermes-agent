@@ -322,19 +322,20 @@ def _resolve_status_branch_and_path(
 ) -> tuple[str, str]:
     """Return (branch, path) for status.yaml.
 
-    Tries the init branch first when the init PR is still open; falls back to
-    the feature UUID branch.
+    All git artifacts are slug-keyed and the init branch (feature/{slug}-init)
+    is the canonical design-phase branch. Prefer it whenever it exists,
+    independent of init_pr_url; fall back to feature/{slug} only when there is
+    no init branch.
     """
     slug = feature_name or feature_id
+    init_branch = f"feature/{slug}-init"
+    path = f"docs/features/{slug}/status.yaml"
 
-    if init_pr_url and slug:
-        init_branch = f"feature/{slug}-init"
-        # Check if init branch exists and has a status.yaml
-        from ..document_repo import branch_exists
-        if branch_exists(gh_owner, gh_repo, init_branch, github_token):
-            return init_branch, f"docs/features/{slug}/status.yaml"
+    from ..document_repo import branch_exists
+    if branch_exists(gh_owner, gh_repo, init_branch, github_token):
+        return init_branch, path
 
-    return f"feature/{feature_id}", f"docs/features/{feature_id}/status.yaml"
+    return f"feature/{slug}", path
 
 
 def handle(
@@ -547,8 +548,9 @@ def handle(
                 )
             else:
                 from ..document_repo import write_document
+                # Pass the slug so write_document commits to feature/{slug}.
                 result = write_document(
-                    gh_owner, gh_repo, fid, base_branch, path, new_content,
+                    gh_owner, gh_repo, (feature_name or fid), base_branch, path, new_content,
                     current["sha"], commit_msg, github_token,
                 )
                 commit_sha = result.get("commit_sha", "")

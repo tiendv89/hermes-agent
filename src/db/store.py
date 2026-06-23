@@ -9,10 +9,10 @@ import secrets
 import time
 from typing import Any, Dict, Optional
 
-from sqlalchemy import select, text, update
+from sqlalchemy import delete, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, Session
+from .models import Message, MessageMention, Session, SessionMember
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +221,52 @@ async def set_session_archived(
         update(Session).where(Session.id == session_id).values(archived=archived)
     )
     await db.commit()
+
+
+async def _delete_sessions_by_ids(db: AsyncSession, session_ids: list[str]) -> int:
+    """Hard-delete the given sessions and their child rows (messages, mentions,
+    members). Children are removed explicitly in FK order so deletion works even
+    where ON DELETE CASCADE isn't enforced at the DB level. Returns the count."""
+    if not session_ids:
+        return 0
+    await db.execute(
+        delete(MessageMention).where(MessageMention.session_id.in_(session_ids))
+    )
+    await db.execute(
+        delete(SessionMember).where(SessionMember.session_id.in_(session_ids))
+    )
+    await db.execute(delete(Message).where(Message.session_id.in_(session_ids)))
+    result = await db.execute(delete(Session).where(Session.id.in_(session_ids)))
+    await db.commit()
+    return result.rowcount or 0
+
+
+async def delete_session(db: AsyncSession, session_id: str) -> None:
+    """Hard-delete a single session and all its messages/mentions/members."""
+    await _delete_sessions_by_ids(db, [session_id])
+
+
+async def delete_sessions_for_feature(
+    db: AsyncSession,
+    workspace_id: str,
+    feature_id: str,
+    user_id: Optional[str] = None,
+) -> int:
+    """Hard-delete all of a user's non-channel sessions for a workspace+feature.
+
+    Scoped to the caller (user_id) and excludes channels, matching list_sessions.
+    Returns the number of sessions deleted.
+    """
+    conditions = [
+        Session.workspace_id == workspace_id,
+        Session.feature_id == feature_id,
+        Session.kind != "channel",
+    ]
+    if user_id:
+        conditions.append(Session.user_id == user_id)
+    rows = await db.execute(select(Session.id).where(*conditions))
+    ids = [r[0] for r in rows.all()]
+    return await _delete_sessions_by_ids(db, ids)
 
 
 # ---------------------------------------------------------------------------

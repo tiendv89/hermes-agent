@@ -1,8 +1,10 @@
 """Session lifecycle routes.
 
-POST /session                       — create a new session
-GET  /sessions                      — list sessions for a workspace+feature
-GET  /sessions/{session_id}/messages — load a session's transcript
+POST   /session                       — create a new session
+GET    /sessions                      — list sessions for a workspace+feature
+GET    /sessions/{session_id}/messages — load a session's transcript
+DELETE /sessions/{session_id}          — hard-delete a single session
+DELETE /sessions                       — hard-delete all of a feature's sessions
 """
 
 from __future__ import annotations
@@ -18,6 +20,8 @@ from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.db import (
     create_session,
+    delete_session,
+    delete_sessions_for_feature,
     get_session,
     get_session_messages,
     list_sessions,
@@ -94,3 +98,37 @@ async def get_session_messages_endpoint(
         raise HTTPException(status_code=404, detail="Session not found.")
     messages = await get_session_messages(db, session_id)
     return JSONResponse({"session_id": session_id, "messages": messages})
+
+
+@router.delete("/sessions")
+async def delete_all_sessions_endpoint(
+    workspace_id: str = Query(..., description="Workspace slug or ID"),
+    feature_id: str = Query(..., description="Feature slug or ID"),
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Hard-delete all of the caller's sessions for a workspace+feature."""
+    deleted = await delete_sessions_for_feature(
+        db,
+        workspace_id=workspace_id,
+        feature_id=feature_id,
+        user_id=identity.user_id or None,
+    )
+    return JSONResponse({"deleted": deleted})
+
+
+@router.delete("/sessions/{session_id}")
+async def delete_session_endpoint(
+    session_id: str,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Hard-delete a single session (and its messages) the caller owns."""
+    session = await get_session(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    owner_id = getattr(session, "user_id", None) or ""
+    if identity.user_id and owner_id and identity.user_id != owner_id:
+        raise HTTPException(status_code=403, detail="Not your session.")
+    await delete_session(db, session_id)
+    return JSONResponse({"ok": True, "session_id": session_id})

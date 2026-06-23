@@ -54,14 +54,30 @@ def _read_review_status(feature_id: str, stage: str) -> str:
     try:
         import yaml
 
-        from ..db import get_workspace_context
-        from ..document_repo import read_document
+        from ..db import get_feature_detail, get_workspace_context
+        from ..document_repo import branch_exists, read_document
         from .artifacts import _resolve_management_repo
 
         workspace_context = get_workspace_context(workspace_id)
         owner, repo = _resolve_management_repo(workspace_context)
-        branch = f"feature/{feature_id}"
-        path = f"docs/features/{feature_id}/status.yaml"
+
+        # All git artifacts are slug-keyed. Resolve the slug and prefer the
+        # init branch when the init PR is still open.
+        slug = feature_id
+        init_pr_url = None
+        try:
+            detail = get_feature_detail(workspace_id, feature_id)
+            slug = detail.get("feature_name") or feature_id
+            init_pr_url = detail.get("init_pr_url")
+        except Exception:
+            pass
+
+        path = f"docs/features/{slug}/status.yaml"
+        branch = f"feature/{slug}"
+        if init_pr_url:
+            init_branch = f"feature/{slug}-init"
+            if branch_exists(owner, repo, init_branch, github_token):
+                branch = init_branch
 
         result = read_document(owner, repo, branch, path, github_token)
         if not result["content"]:

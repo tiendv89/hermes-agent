@@ -20,11 +20,16 @@ from ..db import _validate_id, get_feature_detail, get_workspace_context
 from ..document_repo import (
     StaleBaseError,
     branch_exists,
+    commit_files,
     commit_to_branch,
+    ensure_branch,
     ensure_feature_branch,
+    ensure_pr_for_head,
     read_document,
     write_document,
 )
+
+import yaml as _yaml
 
 logger = logging.getLogger(__name__)
 
@@ -280,28 +285,126 @@ def _resolve_document_branch(
     Decision logic (backward-compatible):
     - init_pr_url non-null + init branch exists  → commit to feature/<slug>-init;
                                                     return (init branch, init_pr_url)
-    - init_pr_url non-null + branch gone (merged) → commit to feature/<id>;
+    - init_pr_url non-null + branch gone (merged) → commit to feature/<slug>;
                                                     return (feature branch, None)
-    - init_pr_url null (pre-existing feature)     → commit to feature/<id> directly;
+    - init_pr_url null (pre-existing feature)     → commit to feature/<slug> directly;
                                                     return (feature branch, None)
 
-    The init branch uses the feature *slug* (feature_name) because that is what
-    workflow-backend creates: ``feature/{slug}-init``. The feature UUID is used
-    for the ongoing feature branch (``feature/{uuid}``).
+    All git branches use the feature *slug* (feature_name), never the UUID:
+    workflow-backend creates ``feature/{slug}-init`` and that init branch is the
+    canonical design-phase authoring branch — every product-spec / tech-design /
+    tasks / status write lands there (one branch, one PR) until the init PR is
+    merged. Everything written to git is slug-keyed.
     """
-    # Init branch: workflow-backend names it feature/{slug}-init, not feature/{uuid}-init.
-    init_slug = feature_name or feature_id
-    init_branch = f"feature/{init_slug}-init"
-    feature_branch = f"feature/{feature_id}"
+    # Everything in git is slug-keyed. Fall back to feature_id only when the
+    # slug couldn't be resolved (the model may already have passed a slug).
+    slug = feature_name or feature_id
+    init_branch = f"feature/{slug}-init"
+    feature_branch = f"feature/{slug}"
 
+    # Prefer the init branch whenever it exists — it is the canonical design
+    # branch, independent of whether init_pr_url was persisted in the DB.
+    if branch_exists(gh_owner, gh_repo, init_branch, github_token):
+        return init_branch, init_pr_url
+    # Branch absent but the feature still carries an init PR — recreate it from
+    # base so design docs stay on the one init branch instead of spawning a
+    # separate feature/{slug} branch + PR.
     if init_pr_url:
-        if branch_exists(gh_owner, gh_repo, init_branch, github_token):
-            return init_branch, init_pr_url
-        # Branch gone — init PR was merged; fall through to feature branch.
+        ensure_branch(gh_owner, gh_repo, init_branch, base_branch, github_token)
+        return init_branch, init_pr_url
 
-    # Ensure feature/<id> exists before we try to read/write it.
-    ensure_feature_branch(gh_owner, gh_repo, feature_id, base_branch, github_token)
+    # Legacy feature with no init branch and no init PR — use the feature branch.
+    ensure_feature_branch(gh_owner, gh_repo, slug, base_branch, github_token)
     return feature_branch, None
+
+
+def _status_stage_block() -> Dict[str, Any]:
+    return {
+        "review_status": "draft",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "review_comment": None,
+        "review_history": [],
+    }
+
+
+def _build_status_yaml(slug: str, title: str, owner: str) -> str:
+    """Build a fresh status.yaml mirroring workflow-backend's feature scaffold."""
+    stages = {
+        "product_spec": _status_stage_block(),
+        "technical_design": _status_stage_block(),
+        "tasks": _status_stage_block(),
+        "handoff": _status_stage_block(),
+    }
+    data: Dict[str, Any] = {
+        "feature_id": slug,
+        "title": title or slug,
+    }
+    if owner == "go":
+        data["owner"] = "go"
+        del stages["tasks"]  # go features manage tasks in the DB, not git
+    data["feature_status"] = "in_design"
+    data["current_stage"] = "product_spec"
+    data["stages"] = stages
+    data["history"] = []
+    data["revalidation"] = {
+        "product_spec_required": False,
+        "technical_design_required": False,
+        "tasks_required": False,
+        "deployment_checklist_required": False,
+    }
+    return _yaml.dump(data, default_flow_style=False, allow_unicode=True, sort_keys=False)
+
+
+_TD_TEMPLATE = (
+    "# Technical Design\n\n## Feature\n- Feature ID: `{slug}`\n- Title: {title}\n\n"
+    "## Current State\n\n_Describe the current state._\n\n"
+    "## Chosen Design\n\n_Describe the chosen design._\n\n"
+    "## Dependency Analysis\n\n_Describe dependencies._\n\n"
+    "## Validation and Release Impact\n\n_Describe testing expectations and rollout concerns._\n"
+)
+
+
+def _ensure_feature_scaffold(
+    gh_owner: str,
+    gh_repo: str,
+    branch: str,
+    slug: str,
+    title: str,
+    owner: str,
+    github_token: str,
+) -> None:
+    """Ensure the feature scaffold exists on *branch*.
+
+    workflow-backend only scaffolds status.yaml + templates on the init branch
+    at feature creation. If that branch was deleted (or recreated from main,
+    which never received the scaffold), a doc write would land on a branch with
+    no status.yaml — breaking approve_feature / stage transitions / the UI.
+
+    When status.yaml is absent, commit it (plus the technical-design template
+    and the handoffs/tasks .gitkeep dirs) in one commit so the feature is
+    well-formed regardless of how the branch came to be. No-ops when present.
+    """
+    base = f"docs/features/{slug}/"
+    existing = read_document(gh_owner, gh_repo, branch, base + "status.yaml", github_token)
+    if existing.get("content"):
+        return  # already scaffolded
+
+    files: Dict[str, str] = {
+        base + "status.yaml": _build_status_yaml(slug, title, owner),
+        base + "handoffs/.gitkeep": "",
+    }
+    # Only add technical-design.md if absent — never clobber an agent-written one.
+    td = read_document(gh_owner, gh_repo, branch, base + "technical-design.md", github_token)
+    if not td.get("content"):
+        files[base + "technical-design.md"] = _TD_TEMPLATE.format(slug=slug, title=title or slug)
+    if owner != "go":
+        files[base + "tasks/.gitkeep"] = ""
+
+    commit_files(
+        gh_owner, gh_repo, branch, files,
+        f"chore({slug}): scaffold feature (status.yaml + templates)", github_token,
+    )
 
 
 def _write_artifact(
@@ -334,30 +437,46 @@ def _write_artifact(
     gh_owner, gh_repo = _resolve_management_repo(workspace_context)
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
 
-    # Look up init_pr_url and feature_name from the DB if WORKFLOW_DATABASE_URL is available.
+    # Look up init_pr_url, feature_name, title and owner from the DB.
     init_pr_url: Optional[str] = None
     feature_name: Optional[str] = None
+    feature_title: str = ""
+    owner: str = "ts"
     try:
         feature_detail = get_feature_detail(workspace_id, feature_id)
         init_pr_url = feature_detail.get("init_pr_url")
         feature_name = feature_detail.get("feature_name")
+        feature_title = feature_detail.get("title") or ""
+        owner = feature_detail.get("owner") or "ts"
     except Exception as exc:
         logger.debug("_write_artifact: could not fetch feature_detail: %s", exc)
+
+    # All git artifacts are slug-keyed (branch + docs path). Fall back to the
+    # passed id only when the slug couldn't be resolved from the DB.
+    slug = feature_name or feature_id
 
     target_branch, known_pr_url = _resolve_document_branch(
         gh_owner, gh_repo, feature_id, feature_name, init_pr_url, base_branch, github_token
     )
 
-    # Use the feature slug for the docs path on the init branch (workflow-backend
-    # scaffolds files at docs/features/{slug}/), and the UUID on the feature branch.
-    doc_dir = (feature_name or feature_id) if target_branch.endswith("-init") else feature_id
-    path = f"docs/features/{doc_dir}/{filename}"
+    # Ensure the feature scaffold (status.yaml + templates) exists on the target
+    # branch — it may be missing if the init branch was deleted or recreated
+    # from main. status.yaml is required by approve_feature / stage transitions.
+    try:
+        _ensure_feature_scaffold(gh_owner, gh_repo, target_branch, slug, feature_title, owner, github_token)
+    except Exception as exc:
+        logger.warning("_write_artifact: scaffold ensure failed (continuing): %s", exc)
+
+    # docs/features/{slug}/... — workflow-backend scaffolds docs under the slug.
+    path = f"docs/features/{slug}/{filename}"
 
     # Read-before-write: fetch the current SHA so GitHub accepts our PUT.
     current = read_document(gh_owner, gh_repo, target_branch, path, github_token)
 
-    if target_branch.endswith("-init") and known_pr_url:
-        # Init PR branch path: commit directly; PR URL is already known.
+    if target_branch.endswith("-init"):
+        # Init branch path: commit directly, then ensure a single open init PR
+        # exists (reuse the known one, else find/create it) — never spawn a
+        # separate feature/{slug} PR while the feature is still in design.
         commit_sha = commit_to_branch(
             gh_owner,
             gh_repo,
@@ -368,13 +487,23 @@ def _write_artifact(
             commit_message,
             github_token,
         )
-        pr_url = known_pr_url
+        pr = ensure_pr_for_head(
+            gh_owner,
+            gh_repo,
+            target_branch,
+            base_branch,
+            github_token,
+            title=f"docs({slug}): product spec + technical design",
+            body=f"Design-phase authoring PR for feature `{slug}` (hermes-agent).",
+        )
+        pr_url = pr.get("url", "") or (known_pr_url or "")
     else:
         # Feature branch path: write via the standard pipeline (ensures PR exists).
+        # Pass the slug so write_document commits to feature/{slug}.
         result = write_document(
             gh_owner,
             gh_repo,
-            feature_id,
+            slug,
             base_branch,
             path,
             content,

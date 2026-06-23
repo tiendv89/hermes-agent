@@ -141,9 +141,29 @@ async def stage_transition_endpoint(
         ) from exc
 
     base_branch = _os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-    branch = f"feature/{feature_id}"
-    path = f"docs/features/{feature_id}/status.yaml"
     actor = identity.user_id
+
+    # All git artifacts are slug-keyed (branch feature/{slug}, docs path
+    # docs/features/{slug}/...), never UUID-keyed. Resolve the slug and prefer
+    # the init branch while the init PR is still open.
+    from plugins.db import get_feature_detail
+    from plugins.document_repo import branch_exists
+
+    slug = feature_id
+    init_pr_url = None
+    try:
+        _detail = get_feature_detail(workspace_id, feature_id)
+        slug = _detail.get("feature_name") or feature_id
+        init_pr_url = _detail.get("init_pr_url")
+    except Exception as _exc:
+        logger.debug("stage_transition: could not fetch feature_detail: %s", _exc)
+
+    path = f"docs/features/{slug}/status.yaml"
+    branch = f"feature/{slug}"
+    commit_to_init = False
+    if init_pr_url and branch_exists(owner, repo, f"feature/{slug}-init", github_token):
+        branch = f"feature/{slug}-init"
+        commit_to_init = True
 
     # Read status.yaml from the feature branch.
     try:
@@ -271,17 +291,27 @@ async def stage_transition_endpoint(
     new_content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
 
     try:
-        result = write_document(
-            owner,
-            repo,
-            feature_id,
-            base_branch,
-            path,
-            new_content,
-            current["sha"],
-            commit_msg,
-            github_token,
-        )
+        if commit_to_init:
+            # Commit directly to the existing init branch — its PR is already open.
+            from plugins.document_repo import commit_to_branch
+            commit_sha = commit_to_branch(
+                owner, repo, branch, path, new_content,
+                current["sha"], commit_msg, github_token,
+            )
+            result = {"commit_sha": commit_sha, "pr": {"url": init_pr_url}}
+        else:
+            # Pass the slug so write_document commits to feature/{slug}.
+            result = write_document(
+                owner,
+                repo,
+                slug,
+                base_branch,
+                path,
+                new_content,
+                current["sha"],
+                commit_msg,
+                github_token,
+            )
     except StaleBaseError as exc:
         raise HTTPException(
             status_code=409,

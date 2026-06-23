@@ -137,13 +137,18 @@ def _resolve_target_branch(
     init_pr_url: Optional[str],
     github_token: str,
 ) -> tuple[str, str]:
-    """Return (branch, doc_dir) — the branch to commit to and the feature doc directory."""
+    """Return (branch, doc_dir) — the branch to commit to and the feature doc directory.
+
+    All git artifacts are slug-keyed and the init branch (feature/{slug}-init) is
+    the canonical design-phase branch. Prefer it whenever it exists, independent
+    of init_pr_url; fall back to feature/{slug} only when there is no init branch.
+    Docs always live under docs/features/{slug}/.
+    """
     slug = feature_name or feature_id
-    if init_pr_url:
-        init_branch = f"feature/{slug}-init"
-        if branch_exists(gh_owner, gh_repo, init_branch, github_token):
-            return init_branch, slug
-    return f"feature/{feature_id}", feature_id
+    init_branch = f"feature/{slug}-init"
+    if branch_exists(gh_owner, gh_repo, init_branch, github_token):
+        return init_branch, slug
+    return f"feature/{slug}", slug
 
 
 def _commit_files(

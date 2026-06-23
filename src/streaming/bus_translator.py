@@ -21,7 +21,7 @@ from __future__ import annotations
 from typing import Any
 
 from src.realtime.bus import get_bus
-from src.streaming.sse import ARTIFACT_BY_WRITE_TOOL, HermesSSETranslator
+from src.streaming.sse import HermesSSETranslator, artifact_for_tool, coerce_tool_output
 
 
 class BusPublishingSSETranslator(HermesSSETranslator):
@@ -77,8 +77,8 @@ class BusPublishingSSETranslator(HermesSSETranslator):
             "hermes.tool.progress",
             {"tool": name, "toolCallId": call_id or name, "status": "completed"},
         )
-        artifact = ARTIFACT_BY_WRITE_TOOL.get(name)
-        if artifact and isinstance(output, dict) and output.get("ok"):
+        artifact = artifact_for_tool(name, args, output)
+        if artifact and coerce_tool_output(output).get("ok"):
             self._bus_publish("hermes.artifact.saved", {"artifact": artifact})
 
     def on_error(self, message: str = "", **kwargs: Any) -> None:

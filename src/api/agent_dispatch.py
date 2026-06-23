@@ -82,20 +82,34 @@ _pending_lock = threading.Lock()
 
 
 async def _backfill_assistant(db_factory: Callable, session_id: str, content: str) -> None:
-    """Persist the assistant reply under session_id if it isn't already the last
-    stored message. Dedupes against the agent's own mirror (no double-write)."""
+    """Safety-net persist of the assistant reply.
+
+    The agent's own GatewaySessionDB mirror normally persists the turn's
+    assistant message(s) per model iteration (text/tool_calls/tool rows) —
+    that full-fidelity record is what the model's follow-up context needs, and
+    the UI coalesces it into one bubble on reload.
+
+    This backfill only writes when the mirror persisted NO assistant row for
+    the turn at all (the conversation-compression edge case where the agent's
+    session_id rotated mid-turn). Writing unconditionally would append a
+    concatenated duplicate on top of the per-iteration rows, so the live stream
+    (one coalesced bubble) and the reloaded transcript would diverge.
+    """
     from src.db import get_session_messages
     from src.db.store import append_message
 
     async with db_factory() as db:
         existing = await get_session_messages(db, session_id)
-        last = existing[-1] if existing else None
-        already = (
-            last is not None
-            and last.get("role") == "assistant"
-            and (last.get("content") or "").strip() == content.strip()
+        # Find the last user message; an assistant row after it means the
+        # mirror already captured this turn — nothing to backfill.
+        last_user_idx = -1
+        for i, m in enumerate(existing):
+            if m.get("role") == "user":
+                last_user_idx = i
+        has_assistant_this_turn = any(
+            m.get("role") == "assistant" for m in existing[last_user_idx + 1 :]
         )
-        if not already:
+        if not has_assistant_this_turn:
             await append_message(db, session_id, role="assistant", content=content)
 
 

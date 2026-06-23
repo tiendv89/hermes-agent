@@ -12,9 +12,9 @@ import logging
 import os
 from typing import Any, Dict, List
 
-from ..db import _validate_id, get_workspace_context
-from ..document_repo import StaleBaseError, read_document, write_document
-from .artifacts import _resolve_management_repo
+from ..db import _validate_id, get_feature_detail, get_workspace_context
+from ..document_repo import StaleBaseError, commit_to_branch, read_document, write_document
+from .artifacts import _resolve_document_branch, _resolve_management_repo
 
 logger = logging.getLogger(__name__)
 
@@ -128,17 +128,37 @@ def handle_edit_document(
         return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
 
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-    branch = f"feature/{fid}"
-    path = f"docs/features/{fid}/{filename}"
+
+    # Resolve the feature slug + init PR. All git artifacts are slug-keyed
+    # (branch feature/{slug}, docs path docs/features/{slug}/...).
+    slug = fid
+    init_pr_url = None
+    try:
+        detail = get_feature_detail(wid, fid)
+        slug = detail.get("feature_name") or fid
+        init_pr_url = detail.get("init_pr_url")
+    except Exception as exc:
+        logger.debug("edit_document: could not fetch feature_detail: %s", exc)
+
+    target_branch, known_pr_url = _resolve_document_branch(
+        owner, repo, fid, slug, init_pr_url, base_branch, github_token
+    )
+    path = f"docs/features/{slug}/{filename}"
 
     try:
-        current = read_document(owner, repo, branch, path, github_token)
+        current = read_document(owner, repo, target_branch, path, github_token)
         new_content, warnings = _apply_edits(current["content"], edits)
         if not commit_message:
             commit_message = f"docs: edit {document.replace('_', '-')} (targeted)"
-        result = write_document(
-            owner, repo, fid, base_branch, path, new_content, current["sha"], commit_message, github_token
-        )
+        if target_branch.endswith("-init") and known_pr_url:
+            commit_sha = commit_to_branch(
+                owner, repo, target_branch, path, new_content, current["sha"], commit_message, github_token
+            )
+            result = {"commit_sha": commit_sha, "pr": {"url": known_pr_url}}
+        else:
+            result = write_document(
+                owner, repo, slug, base_branch, path, new_content, current["sha"], commit_message, github_token
+            )
     except StaleBaseError as exc:
         return {"ok": False, "conflict": True, "error": str(exc)}
     except Exception as exc:

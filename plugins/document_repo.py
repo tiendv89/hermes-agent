@@ -68,6 +68,89 @@ def _validate_feature_id(feature_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def ensure_branch(
+    owner: str,
+    repo: str,
+    branch: str,
+    base_branch: str,
+    token: str,
+) -> None:
+    """Create ``branch`` from ``base_branch`` if it does not exist (generic).
+
+    Unlike ensure_feature_branch this takes the full branch name, so it works
+    for the init branch (``feature/<slug>-init``) too. No-ops when present.
+    """
+    ref_url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/git/refs/heads/{branch}"
+    check = requests.get(ref_url, headers=_headers(token), timeout=_DEFAULT_TIMEOUT)
+    if check.status_code == 200:
+        return
+    if check.status_code != 404:
+        check.raise_for_status()
+    base_url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/git/refs/heads/{base_branch}"
+    base_resp = requests.get(base_url, headers=_headers(token), timeout=_DEFAULT_TIMEOUT)
+    base_resp.raise_for_status()
+    base_sha = base_resp.json()["object"]["sha"]
+    create_resp = requests.post(
+        f"{_GITHUB_API_URL}/repos/{owner}/{repo}/git/refs",
+        headers=_headers(token),
+        json={"ref": f"refs/heads/{branch}", "sha": base_sha},
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    if create_resp.status_code not in (201, 422):
+        create_resp.raise_for_status()
+    logger.info("ensure_branch: created %s from %s (%s)", branch, base_branch, base_sha[:7])
+
+
+def ensure_pr_for_head(
+    owner: str,
+    repo: str,
+    head_branch: str,
+    base_branch: str,
+    token: str,
+    title: str,
+    body: str = "",
+) -> Dict[str, Any]:
+    """Find an open PR for ``head_branch`` → ``base_branch`` or create one.
+
+    Generic over the head branch (used for the init branch). Returns
+    ``{number, url, state}``.
+    """
+    list_url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/pulls"
+    resp = requests.get(
+        list_url,
+        headers=_headers(token),
+        params={"state": "open", "head": f"{owner}:{head_branch}", "base": base_branch},
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    resp.raise_for_status()
+    pulls = resp.json()
+    if pulls:
+        pr = pulls[0]
+        return {"number": pr["number"], "url": pr["html_url"], "state": pr["state"]}
+
+    create_resp = requests.post(
+        list_url,
+        headers=_headers(token),
+        json={"title": title, "head": head_branch, "base": base_branch, "body": body},
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    if create_resp.status_code == 422:
+        resp2 = requests.get(
+            list_url,
+            headers=_headers(token),
+            params={"state": "open", "head": f"{owner}:{head_branch}", "base": base_branch},
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        resp2.raise_for_status()
+        existing = resp2.json()
+        if existing:
+            pr = existing[0]
+            return {"number": pr["number"], "url": pr["html_url"], "state": pr["state"]}
+    create_resp.raise_for_status()
+    pr = create_resp.json()
+    return {"number": pr["number"], "url": pr["html_url"], "state": pr["state"]}
+
+
 def ensure_feature_branch(
     owner: str,
     repo: str,
@@ -250,6 +333,72 @@ def commit_to_branch(
 
     resp.raise_for_status()
     return resp.json().get("commit", {}).get("sha", "")
+
+
+def commit_files(
+    owner: str,
+    repo: str,
+    branch: str,
+    files: Dict[str, str],
+    message: str,
+    token: str,
+) -> str:
+    """Commit multiple files to *branch* in a single commit (Git Data API).
+
+    Used to scaffold a feature (status.yaml + templates) in one commit. The
+    branch must already exist. Returns the new commit SHA.
+    """
+    api = _GITHUB_API_URL
+    ref = requests.get(
+        f"{api}/repos/{owner}/{repo}/git/refs/heads/{branch}",
+        headers=_headers(token), timeout=_DEFAULT_TIMEOUT,
+    )
+    ref.raise_for_status()
+    base_sha = ref.json()["object"]["sha"]
+
+    commit_obj = requests.get(
+        f"{api}/repos/{owner}/{repo}/git/commits/{base_sha}",
+        headers=_headers(token), timeout=_DEFAULT_TIMEOUT,
+    )
+    commit_obj.raise_for_status()
+    base_tree = commit_obj.json()["tree"]["sha"]
+
+    tree_entries = []
+    for path, content in files.items():
+        blob = requests.post(
+            f"{api}/repos/{owner}/{repo}/git/blobs",
+            headers=_headers(token),
+            json={"content": base64.b64encode(content.encode("utf-8")).decode("ascii"), "encoding": "base64"},
+            timeout=_DEFAULT_TIMEOUT,
+        )
+        blob.raise_for_status()
+        tree_entries.append({"path": path.lstrip("/"), "mode": "100644", "type": "blob", "sha": blob.json()["sha"]})
+
+    tree = requests.post(
+        f"{api}/repos/{owner}/{repo}/git/trees",
+        headers=_headers(token),
+        json={"base_tree": base_tree, "tree": tree_entries},
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    tree.raise_for_status()
+
+    commit = requests.post(
+        f"{api}/repos/{owner}/{repo}/git/commits",
+        headers=_headers(token),
+        json={"message": message, "tree": tree.json()["sha"], "parents": [base_sha]},
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    commit.raise_for_status()
+    new_sha = commit.json()["sha"]
+
+    upd = requests.patch(
+        f"{api}/repos/{owner}/{repo}/git/refs/heads/{branch}",
+        headers=_headers(token),
+        json={"sha": new_sha, "force": False},
+        timeout=_DEFAULT_TIMEOUT,
+    )
+    upd.raise_for_status()
+    return new_sha
 
 
 def ensure_pr(
