@@ -27,6 +27,13 @@ _lock = threading.Lock()
 _by_session: dict[str, tuple[str, str]] = {}
 _local = threading.local()
 
+# Features for which the agent has gathered code context (query_rag /
+# query_gitnexus) during this process. Keyed by feature id (or slug). Used to
+# hard-gate design-doc writes — see plugins/tools/artifacts.py. Set once context
+# is gathered and never cleared, so doc revisions later in the session are not
+# re-blocked.
+_context_gathered: set[str] = set()
+
 
 def set_context(session_id: str, workspace_id: str, feature_id: str) -> None:
     """Record the workspace/feature IDs for a session (and the current thread)."""
@@ -54,6 +61,27 @@ def get_context_for_session(session_id: str) -> tuple[str, str]:
         if found is not None:
             return found
     return get_workspace_id(), get_feature_id()
+
+
+def mark_context_gathered(feature_id: str = "") -> None:
+    """Record that code context (RAG/GitNexus) was gathered for a feature.
+
+    Called by the query_rag / query_gitnexus tool handlers. Falls back to the
+    current thread-local feature when no id is passed.
+    """
+    fid = feature_id or get_feature_id()
+    if fid:
+        with _lock:
+            _context_gathered.add(fid)
+
+
+def was_context_gathered(feature_id: str = "") -> bool:
+    """Return True if RAG/GitNexus context was gathered for the feature."""
+    fid = feature_id or get_feature_id()
+    if not fid:
+        return False
+    with _lock:
+        return fid in _context_gathered
 
 
 def get_workspace_id() -> str:

@@ -79,6 +79,11 @@ async def handle(query: Any = "", tool: str = "query", **_: Any) -> Dict[str, An
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return {"ok": False, "error": "GITNEXUS_MCP_URL is not configured."}
+    # Record the context-gathering attempt so the design-write gate is satisfied
+    # (see artifacts.py) — marking on attempt, not only on hits.
+    from ..context import mark_context_gathered
+
+    mark_context_gathered()
     try:
         results = await call_mcp_tool(url, tool, _build_arguments(tool, query))
         return {"ok": True, "results": results}

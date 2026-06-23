@@ -77,6 +77,13 @@ async def handle(
     arguments: Dict[str, Any] = {"query": query, "workspace_id": wid, "top_k": top_k}
     if source_types:
         arguments["source_types"] = source_types
+    # Record the context-gathering attempt so the design-write gate is satisfied
+    # (see artifacts.py). Marking on attempt — not only on hits — is intentional:
+    # a query against an empty/unavailable index still discharges the "gather
+    # context first" requirement.
+    from ..context import mark_context_gathered
+
+    mark_context_gathered()
     try:
         results = await call_mcp_tool(url, "rag_query", arguments)
         return {"ok": True, "results": results}

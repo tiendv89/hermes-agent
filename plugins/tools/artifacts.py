@@ -79,7 +79,12 @@ WRITE_SPEC_SCHEMA: Dict[str, Any] = {
         "Write the feature's product-spec.md — commits the full Markdown to the "
         "feature branch (opening/updating its PR). Use when authoring or revising "
         "the product specification. The content must follow the product-spec "
-        "template (see the content field); pass the complete document, not a diff."
+        "template (see the content field); pass the complete document, not a diff. "
+        "REQUIRED FIRST: gather repository context with query_rag and "
+        "query_gitnexus (start with tool='list_repos') before calling this — "
+        "ground the spec in real repos/tables/symbols, not assumptions. If both "
+        "return nothing, note the unresolved questions in the document rather "
+        "than inventing names."
     ),
     "parameters": {
         "type": "object",
@@ -114,7 +119,12 @@ WRITE_TD_SCHEMA: Dict[str, Any] = {
         "the feature branch (opening/updating its PR). Use when authoring or "
         "revising the technical design. The content must follow the "
         "technical-design template (see the content field); pass the complete "
-        "document, not a diff."
+        "document, not a diff. REQUIRED FIRST: gather repository context with "
+        "query_rag and query_gitnexus (start with tool='list_repos', then "
+        "tool='query'/'context'/'impact' for the symbols the design touches) "
+        "before calling this — ground the design in real repos/files/symbols, "
+        "not assumptions. If both return nothing, note the unresolved repo/symbol "
+        "questions in the document rather than inventing names."
     ),
     "parameters": {
         "type": "object",
@@ -417,6 +427,30 @@ def _write_artifact(
 ) -> Dict[str, Any]:
     """Full-rewrite path: determine target branch, write document, call request_approval."""
     _validate_id(feature_id, "feature_id")
+
+    # Hard gate: a product spec / technical design must be grounded in the
+    # indexed codebase. Block the write until the agent has gathered context via
+    # query_rag or query_gitnexus for this feature in the session. Marking is set
+    # by those tool handlers (see plugins/context.py); once set it persists, so
+    # later revisions of the same doc are not re-blocked.
+    from ..context import was_context_gathered
+
+    if not was_context_gathered(feature_id):
+        return {
+            "ok": False,
+            "needs_context": True,
+            "error": (
+                "Context not gathered. Before writing the "
+                f"{stage.replace('_', ' ')}, you must ground it in the codebase: "
+                "call query_rag for the feature's domain/entities, and "
+                "query_gitnexus (tool='list_repos', then tool='query') for the "
+                "relevant repos/symbols. Run at least one of them for this "
+                "feature, then call this tool again. If both return nothing, that "
+                "still satisfies this gate — record the unresolved questions in "
+                "the document instead of inventing repo/table/symbol names."
+            ),
+        }
+
     try:
         content = _coerce_content(content)
     except ValueError as exc:

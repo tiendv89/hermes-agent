@@ -146,6 +146,40 @@ def _run_agent_turn(
 
         workflow_context.set_context(session_id, workspace_id, feature_id)
 
+        # Input scope guard — enforce shared.md's "stay on-topic" rule before
+        # the agent runs. Confidently off-topic messages get the canned decline
+        # without invoking the agent at all. Fails open (see scope_guard).
+        from src.api.scope_guard import SCOPE_DECLINE, is_out_of_scope
+
+        if is_out_of_scope(
+            message, provider=provider, model=model, api_key=api_key, base_url=base_url
+        ):
+            logger.info(
+                "agent_dispatch: declining out-of-scope message for session %s",
+                session_id,
+            )
+            _make_delta_callback(translator.on_delta)(SCOPE_DECLINE)
+
+            async def _persist_decline() -> None:
+                from src.db.store import append_message
+
+                async with db_factory() as db:
+                    if not skip_user_persist:
+                        await append_message(
+                            db, session_id, role="user", content=message, author_id=author_id
+                        )
+                    await append_message(
+                        db, session_id, role="assistant", content=SCOPE_DECLINE
+                    )
+
+            try:
+                asyncio.run_coroutine_threadsafe(_persist_decline(), loop).result(timeout=15)
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: scope-decline persist failed for session %s", session_id
+                )
+            return  # finally-block runs: done(), clear context, release run, coalesce
+
         try:
             from src.db.session_db_proxy import make_gateway_session_db
 

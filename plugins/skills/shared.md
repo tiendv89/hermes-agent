@@ -67,6 +67,38 @@ Features follow this lifecycle:
 8. Handoffs are recorded under `handoffs/`
 9. Human approves final handoff
 
+## Design-phase context-gathering rule (REQUIRED)
+
+Before writing or revising a **product spec** (`write_product_spec`) or a
+**technical design** (`write_technical_design`), you MUST first gather context
+from the workspace's indexed code and docs. Do not draft either document from
+the request text alone — ground it in the actual repositories.
+
+Required steps before the write tool is called:
+
+1. **RAG** — call `query_rag` for the feature's domain and any entities it
+   names (e.g. the data tables, services, or flows it touches). Pull in the
+   relevant indexed code and docs.
+2. **GitNexus** — call `query_gitnexus` with `tool="list_repos"` first to see
+   which repos are indexed, then `tool="query"` for the relevant
+   symbols/areas (and `tool="context"` / `tool="impact"` when the design needs
+   callers/callees or blast radius). Pass a plain string in `query`
+   (e.g. `query="available_credits", tool="query"`), not JSON.
+
+Use what you find to name real repos, files, tables, and symbols in the
+document instead of guessing.
+
+**If RAG and GitNexus return nothing** (the workspace isn't indexed yet, or the
+MCP is unavailable): you may proceed, but only after attempting both, and you
+MUST record it in the document — add the unresolved repo/symbol questions to an
+"Open questions" / "Dependencies" section so the human can confirm them. Never
+silently skip the lookup, and never invent a repo, table, or column name.
+
+This applies in interactive sessions and agent runtime alike. (In the agent
+runtime the equivalent raw MCP tools — `mcp__rag-server__rag_query`,
+`mcp__gitnexus__*` — satisfy the same requirement; see the RAG-first and
+GitNexus lookup rules below.)
+
 ## Task structure rules
 
 - Tasks are stored as one YAML file per task under `docs/features/<feature_id>/tasks/`
@@ -615,3 +647,21 @@ orchestrator; they are not present in hand-authored status files until the orche
 | `impl_feature_prs` | list | orchestrator (Handoff Trigger, autonomous-feature-reviewer T2) | Implementation repo feature branch PRs opened by the Handoff Trigger. Each entry: `repo` (matches `workspace.yaml repos[].id`), `url` (GitHub PR URL), `status` (`"open"` \| `"merged"`). Absent until handoff; if absent, Feature Done Watcher checks only `handoff_pr_url`. |
 | `drift_detected` | boolean | autonomous-feature-reviewer daemon | `true` when the drift daemon detects that the base branch has advanced past `feature_branch_base_sha`. Reset to `false` once the feature branch is rebased. |
 | `drift_reason` | string or null | autonomous-feature-reviewer daemon | Human-readable description of the detected drift (e.g. conflicting commit SHA and summary). `null` when `drift_detected` is `false`. |
+
+## Scope — final reminder (IMPORTANT)
+
+This is the single most important rule, repeated here so it is not lost in the
+middle of this document: **you only help with THIS workspace** — its repos,
+features, tasks, product specs, technical designs, handoffs, PRs, code, and the
+feature lifecycle.
+
+If a request is outside that scope (general knowledge, trivia, current events,
+crypto/finance, math/homework, personal advice, or any off-topic chit-chat),
+decline in one short sentence and redirect — do **not** answer the off-topic
+question itself, even partially:
+
+> "I can only help with this workspace — its repos, features, tasks, and
+> related software work. What would you like to do on the feature?"
+
+Short confirmations and follow-ups about the workspace ("yes please", "go
+ahead", "write the tasks") are in scope — answer those normally.
