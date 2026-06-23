@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from mcp import ClientSession
 from mcp.client.sse import sse_client
+
+_MCP_TIMEOUT_SECONDS = float(os.environ.get("MCP_CALL_TIMEOUT_SECONDS", "60"))
 
 
 def coerce_text(value: Any) -> str:
@@ -80,15 +84,26 @@ async def call_mcp_tool(base_url: str, tool: str, arguments: dict) -> list[dict]
     (the ``/sse`` path is appended automatically) or http://gitnexus:8002/sse.
     """
     endpoint = _sse_endpoint(base_url)
-    try:
+
+    async def _run() -> list[dict]:
         async with sse_client(endpoint) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool(tool, arguments)
                 return [_content_to_dict(c) for c in result.content]
+
+    try:
+        return await asyncio.wait_for(_run(), timeout=_MCP_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError as exc:
+        raise MCPCallError(
+            f"MCP {tool!r} call to {endpoint} timed out after {_MCP_TIMEOUT_SECONDS:.0f}s "
+            f"— the server is unreachable from this host (check network egress, the "
+            f"configured URL/scheme, and that the server is up)."
+        ) from exc
     except BaseExceptionGroup as eg:
-        # Connection/transport failures arrive as a TaskGroup ExceptionGroup;
-        # unwrap it so callers get the real cause instead of "unhandled errors
-        # in a TaskGroup".
         leaf = _unwrap_exception(eg)
         raise MCPCallError(f"MCP {tool!r} call to {endpoint} failed: {leaf}") from leaf
+    except MCPCallError:
+        raise
+    except Exception as exc:
+        raise MCPCallError(f"MCP {tool!r} call to {endpoint} failed: {type(exc).__name__}: {exc}") from exc
