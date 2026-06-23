@@ -13,7 +13,13 @@ import os
 from typing import Any, Dict, List
 
 from ..db import _validate_id, get_feature_detail, get_workspace_context
-from ..document_repo import StaleBaseError, commit_to_branch, read_document, write_document
+from ..document_repo import (
+    StaleBaseError,
+    commit_to_branch,
+    ensure_pr_for_head,
+    read_document,
+    write_document,
+)
 from .artifacts import _resolve_document_branch, _resolve_management_repo
 
 logger = logging.getLogger(__name__)
@@ -150,11 +156,27 @@ def handle_edit_document(
         new_content, warnings = _apply_edits(current["content"], edits)
         if not commit_message:
             commit_message = f"docs: edit {document.replace('_', '-')} (targeted)"
-        if target_branch.endswith("-init") and known_pr_url:
+        if target_branch.endswith("-init"):
+            # Init branch is the canonical design-phase branch: commit there and
+            # keep a single init PR. Mirrors _write_artifact — do NOT gate this on
+            # known_pr_url, or an init feature whose init_pr_url wasn't recorded
+            # would have its edits land on feature/{slug} instead of -init.
             commit_sha = commit_to_branch(
                 owner, repo, target_branch, path, new_content, current["sha"], commit_message, github_token
             )
-            result = {"commit_sha": commit_sha, "pr": {"url": known_pr_url}}
+            pr_url = known_pr_url
+            if not pr_url:
+                pr = ensure_pr_for_head(
+                    owner,
+                    repo,
+                    target_branch,
+                    base_branch,
+                    github_token,
+                    title=f"docs({slug}): product spec + technical design",
+                    body=f"Design-phase authoring PR for feature `{slug}` (hermes-agent).",
+                )
+                pr_url = pr.get("url", "")
+            result = {"commit_sha": commit_sha, "pr": {"url": pr_url or ""}}
         else:
             result = write_document(
                 owner, repo, slug, base_branch, path, new_content, current["sha"], commit_message, github_token
