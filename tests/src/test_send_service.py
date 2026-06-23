@@ -76,31 +76,37 @@ def _inject_stub_modules():
 
 def test_parse_handles_basic():
     from src.api.mentions import parse_mention_handles
+
     assert parse_mention_handles("Hello @agent, cc @alice!") == ["agent", "alice"]
 
 
 def test_parse_handles_deduped():
     from src.api.mentions import parse_mention_handles
+
     assert parse_mention_handles("@agent @agent @bob @agent") == ["agent", "bob"]
 
 
 def test_parse_handles_empty():
     from src.api.mentions import parse_mention_handles
+
     assert parse_mention_handles("No mentions here") == []
 
 
 def test_parse_handles_case_insensitive():
     from src.api.mentions import parse_mention_handles
+
     assert parse_mention_handles("@Agent says hi") == ["agent"]
 
 
 def test_mentions_agent_true():
     from src.api.mentions import mentions_agent
+
     assert mentions_agent("Hey @agent, help!") is True
 
 
 def test_mentions_agent_false():
     from src.api.mentions import mentions_agent
+
     assert mentions_agent("Hello everyone") is False
 
 
@@ -111,12 +117,14 @@ def test_mentions_agent_false():
 
 def test_resolve_agent_sentinel():
     from src.api.mentions import resolve_mentions
+
     result = resolve_mentions(["agent"], [])
     assert result == [{"mentioned_id": "agent", "mentioned_kind": "agent"}]
 
 
 def test_resolve_user_by_handle():
     from src.api.mentions import resolve_mentions
+
     members = [{"user_id": "usr_1", "handle": "alice"}]
     result = resolve_mentions(["alice"], members)
     assert result == [{"mentioned_id": "usr_1", "mentioned_kind": "user"}]
@@ -124,6 +132,7 @@ def test_resolve_user_by_handle():
 
 def test_resolve_user_by_username_fallback():
     from src.api.mentions import resolve_mentions
+
     members = [{"user_id": "usr_2", "username": "bob"}]
     result = resolve_mentions(["bob"], members)
     assert result == [{"mentioned_id": "usr_2", "mentioned_kind": "user"}]
@@ -131,6 +140,7 @@ def test_resolve_user_by_username_fallback():
 
 def test_resolve_unknown_handle_skipped():
     from src.api.mentions import resolve_mentions
+
     members = [{"user_id": "usr_1", "handle": "alice"}]
     result = resolve_mentions(["ghost"], members)
     assert result == []
@@ -138,6 +148,7 @@ def test_resolve_unknown_handle_skipped():
 
 def test_resolve_mixed():
     from src.api.mentions import resolve_mentions
+
     members = [{"user_id": "usr_1", "handle": "alice"}]
     result = resolve_mentions(["agent", "alice", "ghost"], members)
     assert len(result) == 2
@@ -147,6 +158,7 @@ def test_resolve_mixed():
 
 def test_resolve_deduped_ids():
     from src.api.mentions import resolve_mentions
+
     members = [{"user_id": "usr_1", "handle": "alice"}]
     result = resolve_mentions(["alice", "alice"], members)
     assert len(result) == 1
@@ -166,12 +178,14 @@ def _make_session(kind="thread", feature_id="feat-1"):
 
 def test_dispatch_gate_explicit_agent():
     from src.api.routers.messages import _should_trigger_agent
+
     session = _make_session(kind="thread", feature_id="feat-1")
     assert _should_trigger_agent(session, has_explicit_agent_mention=True) is True
 
 
 def test_dispatch_gate_channel_explicit_agent():
     from src.api.routers.messages import _should_trigger_agent
+
     session = _make_session(kind="channel", feature_id="")
     assert _should_trigger_agent(session, has_explicit_agent_mention=True) is True
 
@@ -179,6 +193,7 @@ def test_dispatch_gate_channel_explicit_agent():
 def test_dispatch_gate_channel_bare_no_trigger():
     """Channel + bare message ⇒ no agent turn."""
     from src.api.routers.messages import _should_trigger_agent
+
     session = _make_session(kind="channel", feature_id="")
     assert _should_trigger_agent(session, has_explicit_agent_mention=False) is False
 
@@ -186,6 +201,7 @@ def test_dispatch_gate_channel_bare_no_trigger():
 def test_dispatch_gate_feature_thread_bare_triggers():
     """Feature thread + bare message ⇒ agent turn (v3 feel)."""
     from src.api.routers.messages import _should_trigger_agent
+
     session = _make_session(kind="thread", feature_id="some-feature")
     assert _should_trigger_agent(session, has_explicit_agent_mention=False) is True
 
@@ -193,6 +209,7 @@ def test_dispatch_gate_feature_thread_bare_triggers():
 def test_dispatch_gate_thread_no_feature_bare_no_trigger():
     """Plain thread with no feature_id + bare message ⇒ no trigger (not a feature thread)."""
     from src.api.routers.messages import _should_trigger_agent
+
     session = _make_session(kind="thread", feature_id="")
     assert _should_trigger_agent(session, has_explicit_agent_mention=False) is False
 
@@ -271,10 +288,17 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
-        patch("src.api.routers.messages.get_messages_as_conversation", AsyncMock(return_value=[])),
-        patch("src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)) as mock_dispatch,
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post(
                 "/api/v1/threads/sess_1/messages",
                 json={"content": "hey @agent, help me"},
@@ -320,9 +344,13 @@ async def test_send_message_channel_bare_no_agent():
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=10)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.schedule_agent_turn", AsyncMock()) as mock_dispatch,
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock()
+        ) as mock_dispatch,
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post(
                 "/api/v1/threads/sess_ch/messages",
                 json={"content": "Hello channel, no agent here"},
@@ -368,10 +396,17 @@ async def test_send_message_feature_thread_bare_triggers():
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
-        patch("src.api.routers.messages.get_messages_as_conversation", AsyncMock(return_value=[])),
-        patch("src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)) as mock_dispatch,
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post(
                 "/api/v1/threads/sess_2/messages",
                 json={"content": "What is the status?"},
@@ -411,7 +446,9 @@ async def test_send_message_not_member_returns_403():
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post(
                 "/api/v1/threads/sess_1/messages",
                 json={"content": "Hi!"},
@@ -436,7 +473,9 @@ async def test_send_message_unknown_thread_returns_404():
     app.state.db_session = _make_db_session_factory(mock_db)
 
     with patch("src.api.routers.messages.get_session", AsyncMock(return_value=None)):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post(
                 "/api/v1/threads/no_such_sess/messages",
                 json={"content": "Hi"},
@@ -464,10 +503,11 @@ async def test_coalescing_second_agent_mention_does_not_start_new_turn():
     )
 
     session_id = "sess_coalesce_test"
+    from src.api.agent_dispatch import ActiveRun
 
     # Simulate an in-flight turn.
     with _active_runs_lock:
-        _active_runs.add(session_id)
+        _active_runs[session_id] = ActiveRun(task=None, triggered_by="user_a")
 
     # Clear any stale pending state.
     with _pending_lock:
@@ -504,7 +544,7 @@ async def test_coalescing_second_agent_mention_does_not_start_new_turn():
 
     # Cleanup.
     with _active_runs_lock:
-        _active_runs.discard(session_id)
+        _active_runs.pop(session_id, None)
     with _pending_lock:
         _pending_agent_turns.pop(session_id, None)
 
@@ -521,34 +561,42 @@ async def test_schedule_agent_turn_when_no_active_run():
 
     session_id = "sess_free_test"
     with _active_runs_lock:
-        _active_runs.discard(session_id)
+        _active_runs.pop(session_id, None)
 
     db_factory_mock = AsyncMock()
     loop = asyncio.get_event_loop()
 
-    with patch("src.api.agent_dispatch.HermesSSETranslator", MagicMock()):
-        with patch.object(loop, "run_in_executor", MagicMock()) as mock_executor:
-            result = await schedule_agent_turn(
-                session_id=session_id,
-                message="hello @agent",
-                history=[],
-                workspace_id="ws-1",
-                feature_id="feat-1",
-                user_id="user_a",
-                model="claude-sonnet-4-6",
-                provider=None,
-                api_key=None,
-                base_url=None,
-                db_factory=db_factory_mock,
-                loop=loop,
-            )
+    async def _noop_turn(**kwargs):
+        pass
+
+    with (
+        patch("src.api.agent_dispatch._run_agent_turn_async", new=_noop_turn),
+        patch("src.api.agent_dispatch.BusPublishingSSETranslator", MagicMock()),
+        patch(
+            "src.api.agent_dispatch.get_bus",
+            MagicMock(return_value=MagicMock(publish=MagicMock())),
+        ),
+    ):
+        result = await schedule_agent_turn(
+            session_id=session_id,
+            message="hello @agent",
+            history=[],
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            user_id="user_a",
+            model="claude-sonnet-4-6",
+            provider=None,
+            api_key=None,
+            base_url=None,
+            db_factory=db_factory_mock,
+            loop=loop,
+        )
 
     assert result is True
-    mock_executor.assert_called_once()
 
     # Cleanup: remove from active_runs so tests are isolated.
     with _active_runs_lock:
-        _active_runs.discard(session_id)
+        _active_runs.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -563,6 +611,7 @@ def test_channel_session_dispatch_gate_no_feature_tools():
     channels (NG12) — no new guard code needed.
     """
     from src.api.routers.messages import _should_trigger_agent
+
     # Channel: kind='channel', feature_id='' → bare message = no trigger
     session = MagicMock()
     session.kind = "channel"

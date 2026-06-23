@@ -6,7 +6,6 @@ POST /chat — run one agent turn and stream the reply back as SSE
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -15,9 +14,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.agent_dispatch import (
+    ActiveRun,
     _active_runs,
     _active_runs_lock,
-    _run_agent_turn,
+    _run_agent_turn_async,
 )
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
@@ -81,10 +81,8 @@ async def chat(
                 status_code=409,
                 detail=f"Session {session_id!r} already has a turn in flight.",
             )
-        _active_runs.add(session_id)
 
-    # Until the worker thread takes ownership of the marker, any setup failure
-    # here must release it or the session would stay locked forever.
+    # Until the task takes ownership, any setup failure must release the slot.
     try:
         session = await get_session(db, session_id)
         if session is None:
@@ -110,22 +108,22 @@ async def chat(
 
         await touch_session(db, session_id)
     except Exception:
-        with _active_runs_lock:
-            _active_runs.discard(session_id)
         raise
 
+    caller_id = identity.user_id or body.user_id
     translator = HermesSSETranslator(model=resolved["model"])
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(
-        None,
-        functools.partial(
-            _run_agent_turn,
+
+    # Create an asyncio Task so the cancel endpoint can call task.cancel().
+    task = asyncio.ensure_future(
+        _run_agent_turn_async(
             session_id=session_id,
+            triggered_by=caller_id,
             message=body.message,
             history=history,
             workspace_id=body.workspace_id,
             feature_id=body.feature_id,
-            user_id=identity.user_id or body.user_id,
+            user_id=caller_id,
             model=resolved["model"],
             provider=resolved["provider"],
             api_key=resolved["api_key"],
@@ -133,8 +131,10 @@ async def chat(
             db_factory=request.app.state.db_session,
             loop=loop,
             translator=translator,
-        ),
+        )
     )
+    with _active_runs_lock:
+        _active_runs[session_id] = ActiveRun(task=task, triggered_by=caller_id)
 
     return StreamingResponse(
         translator.stream(),

@@ -197,7 +197,9 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     session_mock.title = "existing title"
 
     # Pretend a run for this session is already in flight.
-    router_mod._active_runs.add("sess_busy")
+    from src.api.agent_dispatch import ActiveRun
+
+    router_mod._active_runs["sess_busy"] = ActiveRun(task=None, triggered_by="user_x")
     try:
         with (
             patch(
@@ -222,4 +224,4 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
                 )
         assert resp.status_code == 409, f"Expected 409, got {resp.status_code}"
     finally:
-        router_mod._active_runs.discard("sess_busy")
+        router_mod._active_runs.pop("sess_busy", None)
