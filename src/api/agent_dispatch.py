@@ -14,7 +14,9 @@ import functools
 import logging
 import os
 import threading
-from typing import Any, Callable, Dict, Optional, Set
+import uuid
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional
 
 import re as _re
 
@@ -49,8 +51,9 @@ def _make_delta_callback(cb: Callable) -> Callable:
         def _word_cb(delta: Any = None, **kwargs: Any) -> None:
             if not delta:
                 return
-            for part in (_WORD_RE.findall(str(delta)) or [str(delta)]):
+            for part in _WORD_RE.findall(str(delta)) or [str(delta)]:
                 cb(part, **kwargs)
+
         return _word_cb
 
     # Fixed-size chunks.
@@ -59,14 +62,26 @@ def _make_delta_callback(cb: Callable) -> Callable:
             return
         text = str(delta)
         for i in range(0, len(text), chunk_chars):
-            cb(text[i:i + chunk_chars], **kwargs)
+            cb(text[i : i + chunk_chars], **kwargs)
+
     return _fixed_cb
+
 
 # ---------------------------------------------------------------------------
 # Shared in-flight guard (also used by the legacy /chat route)
 # ---------------------------------------------------------------------------
 
-_active_runs: Set[str] = set()
+
+@dataclass
+class ActiveRun:
+    """Tracks a live agent turn for the cancellation endpoint."""
+
+    run_id: str  # unique run sentinel; guards finally-block pop against stale threads
+    task: Optional[asyncio.Task]  # asyncio Task wrapping the worker thread
+    triggered_by: str  # X-User-Id that started this turn (required; no empty default)
+
+
+_active_runs: Dict[str, ActiveRun] = {}
 _active_runs_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
@@ -81,7 +96,9 @@ _pending_agent_turns: Dict[str, Dict[str, Any]] = {}
 _pending_lock = threading.Lock()
 
 
-async def _backfill_assistant(db_factory: Callable, session_id: str, content: str) -> None:
+async def _backfill_assistant(
+    db_factory: Callable, session_id: str, content: str
+) -> None:
     """Safety-net persist of the assistant reply.
 
     The agent's own GatewaySessionDB mirror normally persists the turn's
@@ -113,6 +130,90 @@ async def _backfill_assistant(db_factory: Callable, session_id: str, content: st
             await append_message(db, session_id, role="assistant", content=content)
 
 
+async def _run_agent_turn_async(
+    *,
+    run_id: str,
+    session_id: str,
+    triggered_by: str,
+    db_factory: Callable,
+    loop: asyncio.AbstractEventLoop,
+    translator: HermesSSETranslator,
+    **kwargs: Any,
+) -> None:
+    """Async Task wrapper for the blocking turn executor.
+
+    Runs _run_agent_turn in a thread pool and catches asyncio.CancelledError
+    so the cancel endpoint can stop a turn mid-flight: partial tokens are
+    flushed to the DB, turn.stopped is published to the bus, and the session
+    slot is freed immediately.
+
+    run_id is propagated to _run_agent_turn's finally block so that the old
+    thread cannot pop a newer turn's _active_runs entry after early cleanup.
+    """
+    cancelled = False
+    try:
+        await loop.run_in_executor(
+            None,
+            functools.partial(
+                _run_agent_turn,
+                run_id=run_id,
+                session_id=session_id,
+                db_factory=db_factory,
+                loop=loop,
+                translator=translator,
+                **kwargs,
+            ),
+        )
+    except asyncio.CancelledError:
+        cancelled = True
+        partial = translator.mark_stopped()
+
+        message_id: Optional[str] = None
+        if partial.strip():
+            try:
+                from src.db.store import append_message
+
+                async with db_factory() as db:
+                    mid = await append_message(
+                        db,
+                        session_id=session_id,
+                        role="assistant",
+                        content=partial,
+                        finish_reason="stopped",
+                    )
+                    message_id = str(mid) if mid is not None else None
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: failed to persist stopped message for %s",
+                    session_id,
+                )
+
+        # Discard any coalesced pending turn — it would start right after cancel.
+        with _pending_lock:
+            _pending_agent_turns.pop(session_id, None)
+
+        get_bus().publish(
+            session_id,
+            {
+                "event": "turn.stopped",
+                "data": {
+                    "session_id": session_id,
+                    "message_id": message_id,
+                },
+            },
+        )
+        # Do NOT re-raise — the task exits cleanly after cancellation.
+    finally:
+        if cancelled:
+            # Free the session slot so a new turn can start immediately.
+            # Guard with run_id: the still-running thread's finally will also try
+            # to pop — it must not remove a newer turn's entry.
+            with _active_runs_lock:
+                run = _active_runs.get(session_id)
+                if run is not None and run.run_id == run_id:
+                    _active_runs.pop(session_id, None)
+
+
 # ---------------------------------------------------------------------------
 # Worker-thread agent executor
 # ---------------------------------------------------------------------------
@@ -120,6 +221,7 @@ async def _backfill_assistant(db_factory: Callable, session_id: str, content: st
 
 def _run_agent_turn(
     *,
+    run_id: str,
     session_id: str,
     message: str,
     history: list,
@@ -166,17 +268,24 @@ def _run_agent_turn(
                 async with db_factory() as db:
                     if not skip_user_persist:
                         await append_message(
-                            db, session_id, role="user", content=message, author_id=author_id
+                            db,
+                            session_id,
+                            role="user",
+                            content=message,
+                            author_id=author_id,
                         )
                     await append_message(
                         db, session_id, role="assistant", content=SCOPE_DECLINE
                     )
 
             try:
-                asyncio.run_coroutine_threadsafe(_persist_decline(), loop).result(timeout=15)
+                asyncio.run_coroutine_threadsafe(_persist_decline(), loop).result(
+                    timeout=15
+                )
             except Exception:
                 logger.exception(
-                    "agent_dispatch: scope-decline persist failed for session %s", session_id
+                    "agent_dispatch: scope-decline persist failed for session %s",
+                    session_id,
                 )
             return  # finally-block runs: done(), clear context, release run, coalesce
 
@@ -238,7 +347,8 @@ def _run_agent_turn(
                 fut.result(timeout=15)
             except Exception:
                 logger.exception(
-                    "agent_dispatch: assistant backfill failed for session %s", session_id
+                    "agent_dispatch: assistant backfill failed for session %s",
+                    session_id,
                 )
     except Exception as exc:
         logger.exception("agent_dispatch: agent turn failed for session %s", session_id)
@@ -247,8 +357,13 @@ def _run_agent_turn(
         translator.done()
         if workflow_context is not None:
             workflow_context.clear_context(session_id)
+        # Guard with run_id: if this turn was cancelled, _run_agent_turn_async
+        # already freed the slot and a new turn may have registered. Only pop if
+        # the current dict entry still belongs to this run.
         with _active_runs_lock:
-            _active_runs.discard(session_id)
+            run = _active_runs.get(session_id)
+            if run is not None and run.run_id == run_id:
+                _active_runs.pop(session_id, None)
 
         # Coalescing: if a follow-up @agent mention arrived while we were running,
         # schedule exactly one new turn now (not N).
@@ -282,19 +397,19 @@ async def _schedule_follow_up(
             if session_id in _active_runs:
                 # Shouldn't happen, but guard against races.
                 return
-            _active_runs.add(session_id)
 
+        run_id = uuid.uuid4().hex
         follow_translator = BusPublishingSSETranslator(
             session_id=session_id, model=resolved["model"]
         )
         get_bus().publish(
             session_id, {"event": "agent.working", "data": {"session_id": session_id}}
         )
-        loop.run_in_executor(
-            None,
-            functools.partial(
-                _run_agent_turn,
+        task = asyncio.ensure_future(
+            _run_agent_turn_async(
+                run_id=run_id,
                 session_id=session_id,
+                triggered_by=pending["user_id"],
                 message=pending["message"],
                 history=history,
                 workspace_id=pending["workspace_id"],
@@ -308,14 +423,18 @@ async def _schedule_follow_up(
                 loop=loop,
                 translator=follow_translator,
                 skip_user_persist=True,
-            ),
+            )
         )
+        with _active_runs_lock:
+            _active_runs[session_id] = ActiveRun(
+                run_id=run_id, task=task, triggered_by=pending["user_id"]
+            )
     except Exception:
         logger.exception(
             "agent_dispatch: failed to schedule follow-up turn for %s", session_id
         )
         with _active_runs_lock:
-            _active_runs.discard(session_id)
+            _active_runs.pop(session_id, None)
 
 
 async def schedule_agent_turn(
@@ -361,8 +480,8 @@ async def schedule_agent_turn(
                 session_id,
             )
             return False
-        _active_runs.add(session_id)
 
+    run_id = uuid.uuid4().hex
     translator = BusPublishingSSETranslator(session_id=session_id, model=model)
 
     # Signal to all stream subscribers that the agent is starting work.
@@ -370,11 +489,14 @@ async def schedule_agent_turn(
         session_id, {"event": "agent.working", "data": {"session_id": session_id}}
     )
 
-    loop.run_in_executor(
-        None,
-        functools.partial(
-            _run_agent_turn,
+    # Create an asyncio Task so the cancel endpoint can call task.cancel().
+    # asyncio.ensure_future is synchronous — no await between the claim check and
+    # the ActiveRun store, so no other coroutine can interleave here.
+    task = asyncio.ensure_future(
+        _run_agent_turn_async(
+            run_id=run_id,
             session_id=session_id,
+            triggered_by=user_id,
             message=message,
             history=history,
             workspace_id=workspace_id,
@@ -389,6 +511,8 @@ async def schedule_agent_turn(
             translator=translator,
             author_id=author_id,
             skip_user_persist=skip_user_persist,
-        ),
+        )
     )
+    with _active_runs_lock:
+        _active_runs[session_id] = ActiveRun(run_id=run_id, task=task, triggered_by=user_id)
     return True

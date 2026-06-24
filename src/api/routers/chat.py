@@ -6,8 +6,8 @@ POST /chat — run one agent turn and stream the reply back as SSE
 from __future__ import annotations
 
 import asyncio
-import functools
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -15,9 +15,10 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.agent_dispatch import (
+    ActiveRun,
     _active_runs,
     _active_runs_lock,
-    _run_agent_turn,
+    _run_agent_turn_async,
 )
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
@@ -74,17 +75,22 @@ async def chat(
     if not session_id:
         raise HTTPException(status_code=400, detail="session_id is required.")
 
-    # Reserve the session before doing any work — reject a second concurrent run.
+    caller_id = identity.user_id or body.user_id
+    run_id = uuid.uuid4().hex
+
+    # Atomically check and reserve the slot with a sentinel — no await may
+    # occur between the check and the store, otherwise a concurrent request
+    # for the same session can slip through the 409 guard.
     with _active_runs_lock:
         if session_id in _active_runs:
             raise HTTPException(
                 status_code=409,
                 detail=f"Session {session_id!r} already has a turn in flight.",
             )
-        _active_runs.add(session_id)
+        _active_runs[session_id] = ActiveRun(
+            run_id=run_id, task=None, triggered_by=caller_id
+        )
 
-    # Until the worker thread takes ownership of the marker, any setup failure
-    # here must release it or the session would stay locked forever.
     try:
         session = await get_session(db, session_id)
         if session is None:
@@ -110,22 +116,27 @@ async def chat(
 
         await touch_session(db, session_id)
     except Exception:
+        # Release the sentinel so no future request is blocked forever.
         with _active_runs_lock:
-            _active_runs.discard(session_id)
+            run = _active_runs.get(session_id)
+            if run is not None and run.run_id == run_id:
+                _active_runs.pop(session_id, None)
         raise
 
     translator = HermesSSETranslator(model=resolved["model"])
     loop = asyncio.get_running_loop()
-    loop.run_in_executor(
-        None,
-        functools.partial(
-            _run_agent_turn,
+
+    # Create an asyncio Task so the cancel endpoint can call task.cancel().
+    task = asyncio.ensure_future(
+        _run_agent_turn_async(
+            run_id=run_id,
             session_id=session_id,
+            triggered_by=caller_id,
             message=body.message,
             history=history,
             workspace_id=body.workspace_id,
             feature_id=body.feature_id,
-            user_id=identity.user_id or body.user_id,
+            user_id=caller_id,
             model=resolved["model"],
             provider=resolved["provider"],
             api_key=resolved["api_key"],
@@ -133,8 +144,13 @@ async def chat(
             db_factory=request.app.state.db_session,
             loop=loop,
             translator=translator,
-        ),
+        )
     )
+    # Replace the sentinel with the real ActiveRun (task is now known).
+    with _active_runs_lock:
+        run = _active_runs.get(session_id)
+        if run is not None and run.run_id == run_id:
+            run.task = task
 
     return StreamingResponse(
         translator.stream(),
