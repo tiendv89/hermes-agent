@@ -5,7 +5,7 @@ description: Address PR review comments (review-fixes mode) or rebase the task b
 
 ## GitNexus code lookup
 
-If `mcp__gitnexus__*` tools are in your tool list, use them for structural lookups (symbol definitions, callers, impact analysis) before falling back to grep or file reads. If the MCP is unavailable or returns no results, fall back to grep/Read — do not stop.
+If `query_gitnexus` is in your tool list, use it for structural lookups (symbol definitions, callers, impact analysis) before falling back to grep or file reads — it is one tool with a `tool=` selector; call `tool="list_repos"` first, then pass `repo="<name>"` on `query`/`context`/`impact`. If it is unavailable or returns no results, fall back to grep/Read — do not stop.
 
 ---
 

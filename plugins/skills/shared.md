@@ -79,25 +79,32 @@ Required steps before the write tool is called:
 1. **RAG** — call `query_rag` for the feature's domain and any entities it
    names (e.g. the data tables, services, or flows it touches). Pull in the
    relevant indexed code and docs.
-2. **GitNexus** — call `query_gitnexus` with `tool="list_repos"` first to see
-   which repos are indexed, then `tool="query"` for the relevant
-   symbols/areas (and `tool="context"` / `tool="impact"` when the design needs
-   callers/callees or blast radius). Pass a plain string in `query`
-   (e.g. `query="available_credits", tool="query"`), not JSON.
+2. **GitNexus** — call `query_gitnexus` with `tool="list_repos"` first to
+   discover which repos are indexed and pick the implementation repo by name
+   (e.g. `voyager-interface`). Then call `tool="query"` for the relevant
+   symbols/areas — **passing `repo="<name>"`** — and `tool="context"` /
+   `tool="impact"` (with `repo=`) when the design needs callers/callees or
+   blast radius. Pass a plain string in `query`
+   (e.g. `query="NotificationBell", tool="query", repo="voyager-interface"`),
+   not JSON.
 
-Use what you find to name real repos, files, tables, and symbols in the
-document instead of guessing.
+**The repo universe comes from GitNexus `list_repos`, not from `workspace.yaml`.**
+If `list_repos` shows the repo you need (even if it is not listed in
+`workspace.yaml` or the injected `repos:` line), query it directly. Do NOT block
+the design on a repo being "registered in `workspace.yaml`" — that registration
+is irrelevant to what you can look up. Use what you find to name real repos,
+files, tables, and symbols in the document instead of guessing.
 
-**If RAG and GitNexus return nothing** (the workspace isn't indexed yet, or the
-MCP is unavailable): you may proceed, but only after attempting both, and you
-MUST record it in the document — add the unresolved repo/symbol questions to an
-"Open questions" / "Dependencies" section so the human can confirm them. Never
-silently skip the lookup, and never invent a repo, table, or column name.
+**If RAG and GitNexus genuinely return nothing** (the symbols truly are not
+indexed, or the tools are unavailable): you may proceed, but only after
+attempting `list_repos` + repo-scoped queries, and you MUST record it in the
+document — add the unresolved repo/symbol questions to an "Open questions" /
+"Dependencies" section so the human can confirm them. Never silently skip the
+lookup, and never invent a repo, table, or column name. A `'repo' is a required
+property` error means you omitted `repo=` on a multi-repo index — retry with the
+repo name from `list_repos`; it is not an "empty results" condition.
 
-This applies in interactive sessions and agent runtime alike. (In the agent
-runtime the equivalent raw MCP tools — `mcp__rag-server__rag_query`,
-`mcp__gitnexus__*` — satisfy the same requirement; see the RAG-first and
-GitNexus lookup rules below.)
+This applies in interactive sessions and agent runtime alike.
 
 ## Task structure rules
 
@@ -611,27 +618,31 @@ This rule applies in both interactive sessions and agent runtime. Its purpose is
 
 ## GitNexus lookup priority rule
 
-When the GitNexus MCP tools (`mcp__gitnexus__*`) are available, agents must use them for structural code questions before falling back to grep or file reads.
+When the `query_gitnexus` tool is available, use it for structural code questions before falling back to grep or file reads. It is a single tool with a `tool=` selector (NOT separate `mcp__gitnexus__*` tools) plus a `repo=` argument.
+
+**GitNexus is the source of truth for which repos exist.** Discover repos from GitNexus — do NOT rely on `workspace.yaml` or the injected `repos:` list to decide what you can query. A repo being indexed in GitNexus is sufficient; it does not need to be registered in `workspace.yaml`.
 
 **Lookup order:**
-1. Use `mcp__gitnexus__query` to locate a symbol, function, class, or pattern across the repo
-2. Use `mcp__gitnexus__context` to get callers, callees, and type relationships for a symbol
-3. Run `mcp__gitnexus__impact` before any refactor or deletion to understand blast radius
-4. Fall back to `grep` or `Read` only when GitNexus returns no results or the MCP is unavailable
+1. `query_gitnexus(tool="list_repos")` — FIRST, to see which repos are indexed and pick the target repo name (e.g. `voyager-interface`).
+2. `query_gitnexus(query="<symbol or keyword>", tool="query", repo="<name>")` — locate a symbol, function, class, or flow.
+3. `query_gitnexus(query="<symbol>", tool="context", repo="<name>")` — callers, callees, and type relationships for a symbol.
+4. `query_gitnexus(query="<symbol>", tool="impact", repo="<name>")` — blast radius before any refactor or deletion (`direction="upstream"` = what depends on it).
+5. Fall back to `grep`/`Read` only when GitNexus returns no results or the tool is unavailable.
+
+**Always pass `repo=`** on `query`/`context`/`impact`/`detect_changes` once more than one repo is indexed — the server rejects the call (`'repo' is a required property`) without it. Omit `repo` only when `list_repos` shows a single indexed repo. Pass a plain string in `query` (e.g. `query="NotificationBell"`), not JSON.
 
 **Other tools:**
-- `mcp__gitnexus__detect_changes` — map a git diff or changed file list to the symbols it affects
-- `mcp__gitnexus__list_repos` — discover which repos are indexed
-- `mcp__gitnexus__group_query` — trace execution flows across multiple indexed repos
+- `tool="detect_changes"` — flows affected by the current uncommitted git diff (takes `repo=`, no query).
+- `tool="list_repos"` — discover indexed repos (no query, no repo).
 
 **Exceptions** — grep or direct read without a prior GitNexus query is acceptable when:
 - GitNexus returns no results for the query
 - The question is about raw file content, not code structure (e.g. reading a config, checking a comment)
-- The `mcp__gitnexus__*` tools are absent from the tool list (indexer may not have completed a cycle yet)
+- `query_gitnexus` is absent from the tool list (indexer may not have completed a cycle yet)
 
-**Never open an entire file** just to find a symbol when GitNexus can answer it directly. **Never skip GitNexus** when the tools are available and the question is structural.
+**Never open an entire file** just to find a symbol when GitNexus can answer it directly. **Never skip GitNexus** when the tool is available and the question is structural.
 
-The `mcp__gitnexus__*` tools appear when `GITNEXUS_MCP_URL` is set in the executor environment. TypeScript and Python are the primary indexed languages; for other languages verify coverage with grep if results seem incomplete. This rule applies in both interactive sessions and agent runtime. Its purpose is to leverage the pre-built AST + call-graph index for structural questions rather than doing expensive full-file reads or grep scans.
+`query_gitnexus` appears when `GITNEXUS_MCP_URL` is set in the executor environment. TypeScript and Python are the primary indexed languages; for other languages verify coverage with grep if results seem incomplete. This rule applies in both interactive sessions and agent runtime. Its purpose is to leverage the pre-built AST + call-graph index for structural questions rather than doing expensive full-file reads or grep scans.
 
 ## status.yaml — feature-branch fields
 

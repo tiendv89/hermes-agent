@@ -156,11 +156,46 @@ class TestWorkflowQueryGitnexus:
             result = await handle(query="where is register() defined", tool="query")
         assert result["ok"] is True
         assert result["results"] == fake_results
-        # GitNexus's `query` tool takes `q`, not `query`.
+        # GitNexus's `query` tool takes `query` (live contract).
         mock_call.assert_awaited_once_with(
             "http://gitnexus:8002/sse",
             "query",
-            {"q": "where is register() defined"},
+            {"query": "where is register() defined"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_repo_is_forwarded(self, monkeypatch):
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
+        with patch(
+            "plugins.tools.gitnexus.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from plugins.tools.gitnexus import handle
+
+            await handle(query="TopNav", tool="query", repo="voyager-interface")
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002/sse",
+            "query",
+            {"query": "TopNav", "repo": "voyager-interface"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_impact_passes_target_and_direction(self, monkeypatch):
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
+        with patch(
+            "plugins.tools.gitnexus.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from plugins.tools.gitnexus import handle
+
+            await handle(query="NotificationBell", tool="impact", repo="voyager-interface")
+        # `impact` takes `target` + `direction` (default upstream), not `symbol`.
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002/sse",
+            "impact",
+            {"target": "NotificationBell", "direction": "upstream", "repo": "voyager-interface"},
         )
 
     @pytest.mark.asyncio
@@ -175,7 +210,7 @@ class TestWorkflowQueryGitnexus:
 
             await handle(query="find X")
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "query", {"q": "find X"}
+            "http://gitnexus:8002/sse", "query", {"query": "find X"}
         )
 
     @pytest.mark.asyncio
@@ -189,13 +224,13 @@ class TestWorkflowQueryGitnexus:
             from plugins.tools.gitnexus import handle
 
             await handle(query="register", tool="context")
-        # `context` and `impact` take `symbol`.
+        # `context` takes `name` (live contract), not `symbol`.
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "context", {"symbol": "register"}
+            "http://gitnexus:8002/sse", "context", {"name": "register"}
         )
 
     @pytest.mark.asyncio
-    async def test_detect_changes_passes_file_list(self, monkeypatch):
+    async def test_detect_changes_uses_diff_scope_no_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -204,9 +239,13 @@ class TestWorkflowQueryGitnexus:
         ) as mock_call:
             from plugins.tools.gitnexus import handle
 
-            await handle(query="a.py, b.py", tool="detect_changes")
+            # detect_changes analyzes the git diff; it takes no query/file list.
+            result = await handle(tool="detect_changes", repo="voyager-interface")
+        assert result["ok"] is True
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "detect_changes", {"files": ["a.py", "b.py"]}
+            "http://gitnexus:8002/sse",
+            "detect_changes",
+            {"scope": "unstaged", "repo": "voyager-interface"},
         )
 
     @pytest.mark.asyncio
@@ -771,7 +810,7 @@ class TestMcpArgCoercionAndErrors:
 
             result = await handle(query={"q": "AIAgent"}, tool="query")
         assert result["ok"] is True
-        assert mock_call.await_args[0][2] == {"q": "AIAgent"}
+        assert mock_call.await_args[0][2] == {"query": "AIAgent"}
 
     @pytest.mark.asyncio
     async def test_call_mcp_tool_unwraps_transport_taskgroup(self, monkeypatch):

@@ -5,7 +5,7 @@ description: Produce technical design and implementation task structure from an 
 
 ## GitNexus code lookup
 
-If `mcp__gitnexus__*` tools are in your tool list, use them for structural lookups (symbol definitions, callers, impact analysis) before falling back to grep or file reads. If the MCP is unavailable or returns no results, fall back to grep/Read — do not stop.
+If `query_gitnexus` is in your tool list, use it for structural lookups (symbol definitions, callers, impact analysis) before falling back to grep or file reads. Call `tool="list_repos"` first to find the implementation repo, then pass `repo="<name>"` on every `query`/`context`/`impact` call. GitNexus — not `workspace.yaml` — is the source of truth for which repos you can query; an indexed repo does not need to be registered in `workspace.yaml`. If the tool is unavailable or returns no results, fall back to grep/Read — do not stop, and do not block the design on registering a repo in `workspace.yaml`.
 
 ---
 
@@ -68,7 +68,7 @@ RAG context is read-only pre-flight — it does not change what you produce, onl
 
 ## Inputs
 Read from:
-- `workspace.yaml`
+- `workspace.yaml` (for workflow settings only — NOT as the authority on which repos exist; discover queryable repos via GitNexus `list_repos`)
 - project `CLAUDE.md`
 - `docs/features/<feature_id>/product-spec.md`
 - `docs/features/<feature_id>/status.yaml`

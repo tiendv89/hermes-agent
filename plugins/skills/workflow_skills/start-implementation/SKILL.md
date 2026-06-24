@@ -8,23 +8,26 @@ already claimed the task on the management repo and set status to `in_progress`
 on branch `feature/<feature_id>-<task_id>`. Your job is to do the work, push
 commits, open the PR, and write `result.json` before exiting.
 
-## Code-graph lookup (GitNexus MCP)
+## Code-graph lookup (GitNexus)
 
-If `mcp__gitnexus__*` tools appear in your tool list, use them for structural
-code questions **before** falling back to grep or full-file reads:
+If `query_gitnexus` appears in your tool list, use it for structural code
+questions **before** falling back to grep or full-file reads. It is one tool
+with a `tool=` selector and a `repo=` argument. Call `tool="list_repos"` first
+to find the repo, then pass `repo="<name>"` on every other call:
 
-- `mcp__gitnexus__query` — locate a symbol, function, class, or pattern
-- `mcp__gitnexus__context` — get callers, callees, type relationships
-- `mcp__gitnexus__impact` — run before refactors or deletions to understand
-  blast radius
-- `mcp__gitnexus__detect_changes` — map a git diff to affected symbols
-- `mcp__gitnexus__route_map` / `tool_map` — for service / agent topologies
+- `query_gitnexus(tool="list_repos")` — discover indexed repos (do this first)
+- `query_gitnexus(query="<name>", tool="query", repo="<r>")` — locate a symbol, function, class, or pattern
+- `query_gitnexus(query="<name>", tool="context", repo="<r>")` — get callers, callees, type relationships
+- `query_gitnexus(query="<name>", tool="impact", repo="<r>")` — run before refactors or deletions to understand blast radius
+- `query_gitnexus(tool="detect_changes", repo="<r>")` — map the current git diff to affected symbols
 
-Fall back to `grep` or `Read` only when GitNexus returns no results or the
+Pass `repo=` whenever more than one repo is indexed (the server requires it).
+GitNexus — not `workspace.yaml` — is the source of truth for which repos you can
+query. Fall back to `grep` or `Read` only when GitNexus returns no results or the
 question is about raw file content (config, comments) rather than code
 structure. Never open an entire file just to find a symbol.
 
-If `mcp__gitnexus__*` tools are absent, the indexer hasn't completed a cycle
+If `query_gitnexus` is absent, the indexer hasn't completed a cycle
 yet — fall back to grep without trying to "wait" for the MCP.
 
 ## Environment
