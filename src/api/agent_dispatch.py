@@ -342,6 +342,7 @@ def _run_agent_turn(
             stream_delta_callback=_make_delta_callback(translator.on_delta),
             tool_start_callback=translator.on_tool_start,
             tool_complete_callback=translator.on_tool_complete,
+            reasoning_callback=_make_delta_callback(translator.on_reasoning),
         )
 
         # Publish the live agent so the cancel endpoint can interrupt the

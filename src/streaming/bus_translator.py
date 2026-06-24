@@ -10,6 +10,7 @@ Bus event schema
 Each event is a dict ``{"event": "<name>", "data": {...}}``:
 
     agent.delta             — {"content": "<text token>"}
+    agent.reasoning         — {"content": "<reasoning delta>"}
     hermes.tool.progress    — {"tool": "...", "toolCallId": "...", "status": "running"|"completed"}
     hermes.artifact.saved   — {"artifact": "<kind>"}
     agent.done              — {"finish_reason": "stop"|"error", "error": "<msg>"}  (error optional)
@@ -40,6 +41,13 @@ class BusPublishingSSETranslator(HermesSSETranslator):
         )
 
     # -- overridden callbacks -----------------------------------------------
+
+    def on_reasoning(self, delta: Any = None, **kwargs: Any) -> None:
+        if self._stopped:
+            return
+        super().on_reasoning(delta=delta, **kwargs)
+        if delta:
+            self._bus_publish("agent.reasoning", {"content": str(delta)})
 
     def on_delta(self, delta: Any = None, **kwargs: Any) -> None:
         if self._stopped:
