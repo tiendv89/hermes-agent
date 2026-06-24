@@ -14,24 +14,22 @@ thread-local — is deliberate: the gateway runs agent turns in a reused
 ThreadPoolExecutor, so thread-local state can leak between sessions. The
 session-keyed map is authoritative; the thread-local is a convenience for the
 tool path only and is always overwritten at the start of each turn.
+
+:func:`set_agent_context` stores additional per-turn data (event loop,
+db_factory) needed by local tool handlers such as ``suggest_next_actions``.
 """
 
 from __future__ import annotations
 
 import logging
 import threading
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _by_session: dict[str, tuple[str, str]] = {}
 _local = threading.local()
-
-# Features for which the agent has gathered code context (query_rag /
-# query_gitnexus) during this process. Keyed by feature id (or slug). Used to
-# hard-gate design-doc writes — see plugins/tools/artifacts.py. Set once context
-# is gathered and never cleared, so doc revisions later in the session are not
-# re-blocked.
 _context_gathered: set[str] = set()
 
 
@@ -45,6 +43,34 @@ def set_context(session_id: str, workspace_id: str, feature_id: str) -> None:
         "workflow context set: session=%s workspace_id=%r feature_id=%r",
         session_id, workspace_id, feature_id,
     )
+
+
+def set_agent_context(
+    session_id: str,
+    loop: Any,
+    db_factory: Optional[Callable] = None,
+) -> None:
+    """Store per-turn agent context (session_id, event loop, db_factory) on the thread-local.
+
+    Called from _run_agent_turn before the agent executes. Allows local tool
+    handlers (e.g. suggest_next_actions) to perform async DB operations and
+    bus.publish without needing the loop or db_factory passed as arguments.
+    """
+    _local.agent_session_id = session_id
+    _local.agent_loop = loop
+    _local.agent_db_factory = db_factory
+
+
+def get_agent_session_id() -> str:
+    return getattr(_local, "agent_session_id", "")
+
+
+def get_agent_loop() -> Any:
+    return getattr(_local, "agent_loop", None)
+
+
+def get_agent_db_factory() -> Optional[Callable]:
+    return getattr(_local, "agent_db_factory", None)
 
 
 def clear_context(session_id: str) -> None:

@@ -513,3 +513,33 @@ async def list_sessions(
             }
         )
     return out
+
+
+async def get_latest_assistant_message_id(
+    db: AsyncSession,
+    session_id: str,
+) -> Optional[int]:
+    """Return the id of the most recently created assistant message for session_id."""
+    result = await db.execute(
+        select(Message.id)
+        .where(Message.session_id == session_id, Message.role == "assistant")
+        .order_by(Message.id.desc())
+        .limit(1)
+    )
+    row = result.scalar_one_or_none()
+    return row
+
+
+async def update_message_cta_suggestions(
+    db: AsyncSession,
+    session_id: str,
+    message_id: int,
+    suggestions: list,
+) -> None:
+    """Persist CTA suggestions JSON onto the given assistant message row."""
+    await db.execute(
+        update(Message)
+        .where(Message.id == message_id, Message.session_id == session_id)
+        .values(cta_suggestions=json.dumps(suggestions))
+    )
+    await db.commit()
