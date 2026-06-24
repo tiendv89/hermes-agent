@@ -43,6 +43,8 @@ class BusPublishingSSETranslator(HermesSSETranslator):
     # -- overridden callbacks -----------------------------------------------
 
     def on_reasoning(self, delta: Any = None, **kwargs: Any) -> None:
+        if self._stopped:
+            return
         super().on_reasoning(delta=delta, **kwargs)
         if delta:
             self._bus_publish("agent.reasoning", {"content": str(delta)})

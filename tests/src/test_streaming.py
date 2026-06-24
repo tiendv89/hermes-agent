@@ -379,6 +379,27 @@ class TestHermesSSETranslator:
         assert {rf["content"] for rf in reasoning_frames} == {"burst one", "burst two"}
         assert len(content_frames) == 2
 
+    def test_on_reasoning_does_not_call_append_message(self):
+        """on_reasoning must not invoke append_message — reasoning is ephemeral."""
+        import types
+        from unittest.mock import MagicMock
+
+        streaming = _load_streaming()
+
+        # Inject a stub for src.db.store so that if on_reasoning ever tries to
+        # persist reasoning deltas, the mock records the call and fails the assertion.
+        mock_append = MagicMock()
+        db_stub = types.ModuleType("src.db.store")
+        db_stub.append_message = mock_append  # type: ignore[attr-defined]
+        sys.modules["src.db.store"] = db_stub
+
+        def do(t):
+            t.on_reasoning("should not persist this")
+            t.done()
+
+        self._collect(streaming, do)
+        mock_append.assert_not_called()
+
     def test_content_stream_parity_with_reasoning(self):
         """Assistant content frames are byte-identical whether or not reasoning is emitted."""
         streaming = _load_streaming()
