@@ -19,6 +19,8 @@ from src.db.store import (
     get_messages_since,
     get_session_messages,
     list_sessions,
+    get_latest_assistant_message_id,
+    update_message_cta_suggestions,
 )
 from src.db.store_v4 import (
     add_member,
@@ -65,6 +67,8 @@ __all__ = [
     "get_messages_since",
     "get_session_messages",
     "list_sessions",
+    "get_latest_assistant_message_id",
+    "update_message_cta_suggestions",
     # v4 team-chat
     "AGENT_SENTINEL",
     "add_member",

@@ -10,6 +10,7 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase
@@ -96,6 +97,9 @@ class Message(Base):
 
     # v4 team-chat: sender X-User-Id or 'agent' sentinel; NULL for legacy rows
     author_id = Column(String)
+
+    # m3-agent-cta: CTA suggestions attached to an assistant turn
+    cta_suggestions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
     __table_args__ = (
         Index("idx_messages_session", "session_id", "created_at"),
