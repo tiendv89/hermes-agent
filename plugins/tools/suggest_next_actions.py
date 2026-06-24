@@ -150,7 +150,7 @@ def handle(suggestions: Any = None, **_: Any) -> Dict[str, Any]:
     # Persist to messages.cta_suggestions and publish SSE event.
     if loop is not None and db_factory is not None:
         future = asyncio.run_coroutine_threadsafe(
-            _persist_and_publish(session_id, validated, db_factory, loop),
+            _persist_and_publish(session_id, validated, db_factory),
             loop,
         )
         try:
@@ -166,7 +166,11 @@ def handle(suggestions: Any = None, **_: Any) -> Dict[str, Any]:
             "suggest_next_actions: loop or db_factory unavailable — "
             "publishing SSE event only (no DB persist)"
         )
-        _publish_bus(session_id, None, validated, loop)
+        from src.realtime.bus import get_bus
+        get_bus().publish(session_id, {
+            "event": "turn.cta_suggestions",
+            "data": {"message_id": None, "suggestions": validated},
+        })
 
     return {"status": "ok"}
 
@@ -175,10 +179,10 @@ async def _persist_and_publish(
     session_id: str,
     suggestions: List[Dict[str, Any]],
     db_factory: Any,
-    loop: Any,
 ) -> None:
     """Persist suggestions to the DB and publish the SSE event."""
     from src.db.store import get_latest_assistant_message_id, update_message_cta_suggestions
+    from src.realtime.bus import get_bus
 
     message_id: int | None = None
     async with db_factory() as db:
@@ -186,18 +190,8 @@ async def _persist_and_publish(
         if message_id is not None:
             await update_message_cta_suggestions(db, session_id, message_id, suggestions)
 
-    _publish_bus(session_id, message_id, suggestions, loop)
-
-
-def _publish_bus(
-    session_id: str,
-    message_id: int | None,
-    suggestions: List[Dict[str, Any]],
-    loop: Any,
-) -> None:
-    """Publish the turn.cta_suggestions event on the SSE bus."""
-    from src.realtime.bus import get_bus
-
+    # When no assistant message exists yet, the event is published with message_id: null.
+    # The frontend must handle this gracefully.
     event: Dict[str, Any] = {
         "event": "turn.cta_suggestions",
         "data": {
@@ -205,9 +199,5 @@ def _publish_bus(
             "suggestions": suggestions,
         },
     }
-    bus = get_bus()
-    if loop is not None:
-        loop.call_soon_threadsafe(bus.publish, session_id, event)
-    else:
-        # Fallback: call directly (only safe from the event loop thread).
-        bus.publish(session_id, event)
+    # Already on the event loop — call publish directly.
+    get_bus().publish(session_id, event)

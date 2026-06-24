@@ -257,7 +257,7 @@ class TestHandleHappyPath:
         self.fake_store.update_message_cta_suggestions = AsyncMock()
 
         self.mod.handle(suggestions=suggestions)
-        # Drain call_soon_threadsafe callbacks.
+        # Drain the event loop so the run_coroutine_threadsafe task runs to completion.
         loop.run_until_complete(asyncio.sleep(0))
         loop.close()
 
