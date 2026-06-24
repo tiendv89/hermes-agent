@@ -118,6 +118,7 @@ class HermesSSETranslator:
         self._terminated = False
         self._stopped = False
         self._full_parts: list = []
+        self._reasoning_parts: list = []
 
     # -- frame construction -------------------------------------------------
 
@@ -165,6 +166,22 @@ class HermesSSETranslator:
         if delta:
             self._full_parts.append(str(delta))
             self._emit(self._chunk({"content": delta}))
+
+    def on_reasoning(self, delta: Any = None, **_: Any) -> None:
+        """Emit an ephemeral agent.reasoning frame for a reasoning-trace delta.
+
+        Reasoning is accumulated separately from assistant content — it is never
+        appended to self._full_parts and never persisted. Falsy deltas (the
+        model's flush sentinel) are silently skipped.
+        """
+        if delta:
+            self._reasoning_parts.append(str(delta))
+            self._emit(
+                self._event(
+                    "agent.reasoning",
+                    {"object": "reasoning.delta", "content": str(delta)},
+                )
+            )
 
     def on_tool_start(
         self, call_id: str = "", name: str = "", args: Any = None, **_: Any
@@ -230,6 +247,13 @@ class HermesSSETranslator:
         if self._terminated or self._stopped:
             return
         self._terminated = True
+
+        # Emit reasoning.done before the finish frame when any reasoning was streamed,
+        # giving the FE a clean signal to collapse the thinking area.
+        if self._reasoning_parts:
+            self._emit(
+                self._event("agent.reasoning", {"object": "reasoning.done"})
+            )
 
         siblings: Dict[str, Any] = {
             "finish_reason": finish_reason,
