@@ -9,7 +9,7 @@ from typing import Any
 
 from .db import check_workflow_available
 from .hooks import inject_context
-from .tools import workspace, feature, artifacts, edit as edit_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool, approval, approve as approve_tool, tasks_write as tasks_write_tool
+from .tools import workspace, feature, artifacts, edit as edit_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool, approval, approve as approve_tool, tasks_write as tasks_write_tool, suggest_next_actions as suggest_next_actions_tool
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +144,11 @@ _TOOLS = (
         "schema": tasks_write_tool.SCHEMA,
         "handler": tasks_write_tool.handle,
         "check_fn": check_workflow_available,
+    },
+    {
+        "name": "suggest_next_actions",
+        "schema": suggest_next_actions_tool.SCHEMA,
+        "handler": suggest_next_actions_tool.handle,
     },
 )
 

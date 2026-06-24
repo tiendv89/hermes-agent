@@ -43,8 +43,6 @@ class StreamChatRequest(BaseModel):
     user_id: str = ""
     workspace_id: str = ""
     feature_id: str = ""
-    # Catalog model id (see model_catalog). Empty → reuse the session's model,
-    # then the server default. Unknown ids fall back to the default.
     model: str = ""
 
 
@@ -78,9 +76,6 @@ async def chat(
     caller_id = identity.user_id or body.user_id
     run_id = uuid.uuid4().hex
 
-    # Atomically check and reserve the slot with a sentinel — no await may
-    # occur between the check and the store, otherwise a concurrent request
-    # for the same session can slip through the 409 guard.
     with _active_runs_lock:
         if session_id in _active_runs:
             raise HTTPException(
@@ -98,9 +93,6 @@ async def chat(
 
         history = await get_messages_as_conversation(db, session_id)
 
-        # Resolve the model for this turn: a per-turn FE selection wins and is
-        # persisted on the session; otherwise reuse the session's last model,
-        # then the server default. Unknown ids fall back inside resolve_model.
         chosen = (
             (body.model or "").strip()
             or getattr(session, "model", None)
@@ -110,13 +102,11 @@ async def chat(
         if resolved["model"] != getattr(session, "model", None):
             await update_session_model(db, session_id, resolved["model"])
 
-        # First turn with no title yet → derive one from the opening message.
         if not getattr(session, "title", None):
             await set_session_title(db, session_id, _derive_title(body.message))
 
         await touch_session(db, session_id)
     except Exception:
-        # Release the sentinel so no future request is blocked forever.
         with _active_runs_lock:
             run = _active_runs.get(session_id)
             if run is not None and run.run_id == run_id:
@@ -126,8 +116,6 @@ async def chat(
     translator = HermesSSETranslator(model=resolved["model"])
     loop = asyncio.get_running_loop()
 
-    # Reuse the sentinel's cancel_event so the worker thread and the cancel
-    # endpoint share one flag (the sentinel was stored before the task existed).
     with _active_runs_lock:
         run = _active_runs.get(session_id)
         cancel_event = run.cancel_event if run is not None else None

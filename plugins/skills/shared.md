@@ -648,6 +648,22 @@ orchestrator; they are not present in hand-authored status files until the orche
 | `drift_detected` | boolean | autonomous-feature-reviewer daemon | `true` when the drift daemon detects that the base branch has advanced past `feature_branch_base_sha`. Reset to `false` once the feature branch is rebased. |
 | `drift_reason` | string or null | autonomous-feature-reviewer daemon | Human-readable description of the detected drift (e.g. conflicting commit SHA and summary). `null` when `drift_detected` is `false`. |
 
+## Suggesting next actions
+
+After delivering your main response, you MAY call `suggest_next_actions` with
+1–3 CTA objects when a natural follow-up exists. Guidelines:
+
+- Prefer lifecycle actions (approve, advance) when the conversation just
+  completed a document draft.
+- Prefer clarifying follow-ups when your answer introduced a concept the user
+  might want to explore.
+- OMIT the call when you answered a simple factual question or when no clear
+  next step exists.
+- Never suggest more than 3 options.
+- `action_text` must be the literal text that will be submitted as the user's
+  next message (e.g. "/approve-product-spec").
+- `button_label` is the human-facing button text (3–4 words max, ≤ 20 chars).
+
 ## Scope — final reminder (IMPORTANT)
 
 This is the single most important rule, repeated here so it is not lost in the
