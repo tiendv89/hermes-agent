@@ -126,6 +126,12 @@ async def chat(
     translator = HermesSSETranslator(model=resolved["model"])
     loop = asyncio.get_running_loop()
 
+    # Reuse the sentinel's cancel_event so the worker thread and the cancel
+    # endpoint share one flag (the sentinel was stored before the task existed).
+    with _active_runs_lock:
+        run = _active_runs.get(session_id)
+        cancel_event = run.cancel_event if run is not None else None
+
     # Create an asyncio Task so the cancel endpoint can call task.cancel().
     task = asyncio.ensure_future(
         _run_agent_turn_async(
@@ -144,6 +150,7 @@ async def chat(
             db_factory=request.app.state.db_session,
             loop=loop,
             translator=translator,
+            cancel_event=cancel_event,
         )
     )
     # Replace the sentinel with the real ActiveRun (task is now known).

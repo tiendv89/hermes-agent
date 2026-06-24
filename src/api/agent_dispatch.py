@@ -15,7 +15,7 @@ import logging
 import os
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 import re as _re
@@ -79,6 +79,8 @@ class ActiveRun:
     run_id: str  # unique run sentinel; guards finally-block pop against stale threads
     task: Optional[asyncio.Task]  # asyncio Task wrapping the worker thread
     triggered_by: str  # X-User-Id that started this turn (required; no empty default)
+    cancel_event: threading.Event = field(default_factory=threading.Event)
+    agent: Optional[Any] = None
 
 
 _active_runs: Dict[str, ActiveRun] = {}
@@ -237,11 +239,20 @@ def _run_agent_turn(
     translator: HermesSSETranslator,
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
+    cancel_event: Optional[threading.Event] = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
 
     Handles the full run lifecycle including coalescing pending follow-up turns.
+
+    *cancel_event* is set by the cancel endpoint. The thread interrupts the agent
+    when it fires, stops mirroring writes to the DB, and skips the backfill so a
+    cancelled turn does not finish and persist its reply behind the user's back.
     """
+
+    def _is_cancelled() -> bool:
+        return cancel_event is not None and cancel_event.is_set()
+
     workflow_context = None
     try:
         from plugins import context as workflow_context
@@ -298,6 +309,7 @@ def _run_agent_turn(
                 session_id,
                 author_id=author_id,
                 skip_user_persist=skip_user_persist,
+                is_cancelled=_is_cancelled,
             )
         except Exception:
             logger.exception(
@@ -330,14 +342,27 @@ def _run_agent_turn(
             tool_start_callback=translator.on_tool_start,
             tool_complete_callback=translator.on_tool_complete,
         )
+
+        # Publish the live agent so the cancel endpoint can interrupt the
+        # in-flight LLM call (socket-level abort). Guard with run_id so a stale
+        # thread can't attach itself to a newer turn's entry. If cancel already
+        # fired during setup (before the agent existed), honour it now.
+        with _active_runs_lock:
+            run = _active_runs.get(session_id)
+            if run is not None and run.run_id == run_id:
+                run.agent = agent
+        if _is_cancelled():
+            agent.interrupt()
+
         agent.run_conversation(message, conversation_history=history)
 
-        # Backfill: ensure the assistant reply is persisted under THIS session.
-        # The agent's own mirror can miss it (e.g. conversation compression
-        # rotates agent.session_id, so the proxy stops mirroring to the channel
-        # id) — which showed up as the reply vanishing on reload. Append the
-        # accumulated reply only if it isn't already the last stored message
-        # (dedupe so we never double-write when the agent did persist it).
+        if _is_cancelled():
+            logger.info(
+                "agent_dispatch: turn cancelled for session %s; skipping backfill",
+                session_id,
+            )
+            return  # finally-block still runs: done() (suppressed), context, cleanup
+
         final_text = (getattr(translator, "full_text", "") or "").strip()
         if final_text:
             try:
@@ -402,6 +427,7 @@ async def _schedule_follow_up(
         follow_translator = BusPublishingSSETranslator(
             session_id=session_id, model=resolved["model"]
         )
+        cancel_event = threading.Event()
         get_bus().publish(
             session_id, {"event": "agent.working", "data": {"session_id": session_id}}
         )
@@ -423,11 +449,15 @@ async def _schedule_follow_up(
                 loop=loop,
                 translator=follow_translator,
                 skip_user_persist=True,
+                cancel_event=cancel_event,
             )
         )
         with _active_runs_lock:
             _active_runs[session_id] = ActiveRun(
-                run_id=run_id, task=task, triggered_by=pending["user_id"]
+                run_id=run_id,
+                task=task,
+                triggered_by=pending["user_id"],
+                cancel_event=cancel_event,
             )
     except Exception:
         logger.exception(
@@ -483,6 +513,7 @@ async def schedule_agent_turn(
 
     run_id = uuid.uuid4().hex
     translator = BusPublishingSSETranslator(session_id=session_id, model=model)
+    cancel_event = threading.Event()
 
     # Signal to all stream subscribers that the agent is starting work.
     get_bus().publish(
@@ -511,8 +542,11 @@ async def schedule_agent_turn(
             translator=translator,
             author_id=author_id,
             skip_user_persist=skip_user_persist,
+            cancel_event=cancel_event,
         )
     )
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(run_id=run_id, task=task, triggered_by=user_id)
+        _active_runs[session_id] = ActiveRun(
+            run_id=run_id, task=task, triggered_by=user_id, cancel_event=cancel_event
+        )
     return True

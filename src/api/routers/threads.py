@@ -141,9 +141,16 @@ async def cancel_agent_turn(
     Returns 404 if no agent turn is currently running for this session.
     Returns 403 if the caller is not the member who triggered the turn.
 
-    The running asyncio Task receives CancelledError at its next await point,
-    flushes any accumulated partial tokens to the DB with finish_reason='stopped',
-    and publishes a turn.stopped event to all SSE subscribers.
+    Cancellation has three parts that must all fire — task.cancel() alone leaves
+    the blocking worker thread running (run_in_executor threads aren't cancellable),
+    which is why a cancelled turn used to finish and persist its reply anyway:
+      1. cancel_event — tells the worker thread to suppress DB mirror writes and
+         skip the backfill, so nothing produced after Stop is persisted.
+      2. agent.interrupt() — aborts the in-flight LLM call at the socket level and
+         stops the agent's tool loop so generation actually halts.
+      3. task.cancel() — the async Task receives CancelledError at its next await,
+         flushes any accumulated partial tokens to the DB with
+         finish_reason='stopped', and publishes turn.stopped to all subscribers.
     """
     user_id = identity.user_id
     if not user_id:
@@ -158,6 +165,21 @@ async def cancel_agent_turn(
     if active_run.triggered_by != user_id:
         raise HTTPException(status_code=403, detail="not_triggering_member")
 
+    # 1. Flag the worker thread before anything else so it stops persisting.
+    active_run.cancel_event.set()
+
+    # 2. Interrupt the live agent so the in-flight LLM call/tool loop unwinds.
+    #    May be None if cancel races setup before the agent is built — the
+    #    cancel_event still makes the worker bail at its next checkpoint.
+    if active_run.agent is not None:
+        try:
+            active_run.agent.interrupt()
+        except Exception:
+            logger.exception(
+                "threads: agent.interrupt() failed for session %s", session_id
+            )
+
+    # 3. Cancel the async task — drives the turn.stopped event and partial flush.
     active_run.task.cancel()
     logger.info(
         "threads: cancel requested for session %s by user %s", session_id, user_id

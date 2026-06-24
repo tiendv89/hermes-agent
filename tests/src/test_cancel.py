@@ -180,6 +180,72 @@ async def test_cancel_by_triggering_member_returns_202(cancel_app):
 
 
 @pytest.mark.asyncio
+async def test_cancel_interrupts_agent_and_sets_event(cancel_app):
+    """Cancel must set cancel_event and interrupt the live agent — not just
+    cancel the asyncio task — so the blocking worker thread actually stops."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_cancel_interrupt"
+    fake_task = MagicMock(spec=asyncio.Task)
+    fake_agent = MagicMock()
+    run = ActiveRun(run_id="test-run-interrupt", task=fake_task, triggered_by="user_a")
+    run.agent = fake_agent
+    with _active_runs_lock:
+        _active_runs[session_id] = run
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(
+                f"/api/v1/threads/{session_id}/cancel",
+                headers={"X-User-Id": "user_a"},
+            )
+
+        assert resp.status_code == 202, resp.text
+        assert run.cancel_event.is_set(), "cancel_event must be set for the worker"
+        fake_agent.interrupt.assert_called_once()
+        fake_task.cancel.assert_called_once()
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_cancel_with_no_agent_still_sets_event(cancel_app):
+    """If cancel races setup before the agent is built, cancel_event still fires
+    (the worker bails at its next checkpoint) and no interrupt is attempted."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_cancel_no_agent"
+    fake_task = MagicMock(spec=asyncio.Task)
+    run = ActiveRun(run_id="test-run-no-agent", task=fake_task, triggered_by="user_a")
+    with _active_runs_lock:
+        _active_runs[session_id] = run
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(
+                f"/api/v1/threads/{session_id}/cancel",
+                headers={"X-User-Id": "user_a"},
+            )
+
+        assert resp.status_code == 202, resp.text
+        assert run.cancel_event.is_set()
+        assert run.agent is None
+        fake_task.cancel.assert_called_once()
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
+
+
+@pytest.mark.asyncio
 async def test_cancel_missing_identity_returns_400(cancel_app):
     """Cancel with no X-User-Id header → 400."""
     _inject_stubs()
@@ -384,6 +450,61 @@ async def test_cancelled_session_freed_from_active_runs():
         assert session_id not in _active_runs, (
             "Session should be removed from _active_runs after cancellation"
         )
+
+
+# ---------------------------------------------------------------------------
+# GatewaySessionDB suppresses mirror writes once cancelled
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_gateway_db_skips_mirror_when_cancelled():
+    """Once is_cancelled() is True, append_message must not mirror to Postgres —
+    so a turn cancelled mid-flight does not persist messages behind the user."""
+    _inject_stubs()
+    import threading
+
+    from src.db.session_db_proxy import make_gateway_session_db
+
+    loop = asyncio.get_event_loop()
+    session_id = "sess_mirror_guard"
+    cancel_event = threading.Event()
+
+    pg_calls: list = []
+
+    @asynccontextmanager
+    async def _db_factory():
+        yield MagicMock()
+
+    session_db = make_gateway_session_db(
+        loop,
+        _db_factory,
+        session_id,
+        is_cancelled=lambda: cancel_event.is_set(),
+    )
+
+    # The mirror is scheduled onto the loop via run_coroutine_threadsafe; stub it
+    # so we can count attempts without needing a live cross-thread loop. The
+    # returned future must be result()-able (the proxy blocks on it).
+    def _fake_schedule(coro, _loop):
+        coro.close()  # avoid "never awaited" warning
+        pg_calls.append(1)
+        fut = MagicMock()
+        fut.result.return_value = None
+        return fut
+
+    with patch(
+        "src.db.session_db_proxy.asyncio.run_coroutine_threadsafe",
+        side_effect=_fake_schedule,
+    ):
+        # Not cancelled yet → mirrors to Postgres.
+        session_db.append_message(session_id, "assistant", content="before")
+        assert len(pg_calls) == 1, "write before cancel should mirror"
+
+        # Cancelled → mirror suppressed.
+        cancel_event.set()
+        session_db.append_message(session_id, "assistant", content="after stop")
+        assert len(pg_calls) == 1, "write after cancel must NOT mirror"
 
 
 # ---------------------------------------------------------------------------
