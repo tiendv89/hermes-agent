@@ -14,7 +14,8 @@ import functools
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
+import uuid
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional
 
 import re as _re
@@ -75,8 +76,9 @@ def _make_delta_callback(cb: Callable) -> Callable:
 class ActiveRun:
     """Tracks a live agent turn for the cancellation endpoint."""
 
+    run_id: str  # unique run sentinel; guards finally-block pop against stale threads
     task: Optional[asyncio.Task]  # asyncio Task wrapping the worker thread
-    triggered_by: str = field(default="")  # X-User-Id that started this turn
+    triggered_by: str  # X-User-Id that started this turn (required; no empty default)
 
 
 _active_runs: Dict[str, ActiveRun] = {}
@@ -130,6 +132,7 @@ async def _backfill_assistant(
 
 async def _run_agent_turn_async(
     *,
+    run_id: str,
     session_id: str,
     triggered_by: str,
     db_factory: Callable,
@@ -143,12 +146,17 @@ async def _run_agent_turn_async(
     so the cancel endpoint can stop a turn mid-flight: partial tokens are
     flushed to the DB, turn.stopped is published to the bus, and the session
     slot is freed immediately.
+
+    run_id is propagated to _run_agent_turn's finally block so that the old
+    thread cannot pop a newer turn's _active_runs entry after early cleanup.
     """
+    cancelled = False
     try:
         await loop.run_in_executor(
             None,
             functools.partial(
                 _run_agent_turn,
+                run_id=run_id,
                 session_id=session_id,
                 db_factory=db_factory,
                 loop=loop,
@@ -157,6 +165,7 @@ async def _run_agent_turn_async(
             ),
         )
     except asyncio.CancelledError:
+        cancelled = True
         partial = translator.mark_stopped()
 
         message_id: Optional[str] = None
@@ -183,10 +192,6 @@ async def _run_agent_turn_async(
         with _pending_lock:
             _pending_agent_turns.pop(session_id, None)
 
-        # Free the session slot immediately so a new turn can start.
-        with _active_runs_lock:
-            _active_runs.pop(session_id, None)
-
         get_bus().publish(
             session_id,
             {
@@ -198,6 +203,15 @@ async def _run_agent_turn_async(
             },
         )
         # Do NOT re-raise — the task exits cleanly after cancellation.
+    finally:
+        if cancelled:
+            # Free the session slot so a new turn can start immediately.
+            # Guard with run_id: the still-running thread's finally will also try
+            # to pop — it must not remove a newer turn's entry.
+            with _active_runs_lock:
+                run = _active_runs.get(session_id)
+                if run is not None and run.run_id == run_id:
+                    _active_runs.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +221,7 @@ async def _run_agent_turn_async(
 
 def _run_agent_turn(
     *,
+    run_id: str,
     session_id: str,
     message: str,
     history: list,
@@ -342,8 +357,13 @@ def _run_agent_turn(
         translator.done()
         if workflow_context is not None:
             workflow_context.clear_context(session_id)
+        # Guard with run_id: if this turn was cancelled, _run_agent_turn_async
+        # already freed the slot and a new turn may have registered. Only pop if
+        # the current dict entry still belongs to this run.
         with _active_runs_lock:
-            _active_runs.pop(session_id, None)
+            run = _active_runs.get(session_id)
+            if run is not None and run.run_id == run_id:
+                _active_runs.pop(session_id, None)
 
         # Coalescing: if a follow-up @agent mention arrived while we were running,
         # schedule exactly one new turn now (not N).
@@ -378,6 +398,7 @@ async def _schedule_follow_up(
                 # Shouldn't happen, but guard against races.
                 return
 
+        run_id = uuid.uuid4().hex
         follow_translator = BusPublishingSSETranslator(
             session_id=session_id, model=resolved["model"]
         )
@@ -386,6 +407,7 @@ async def _schedule_follow_up(
         )
         task = asyncio.ensure_future(
             _run_agent_turn_async(
+                run_id=run_id,
                 session_id=session_id,
                 triggered_by=pending["user_id"],
                 message=pending["message"],
@@ -405,7 +427,7 @@ async def _schedule_follow_up(
         )
         with _active_runs_lock:
             _active_runs[session_id] = ActiveRun(
-                task=task, triggered_by=pending["user_id"]
+                run_id=run_id, task=task, triggered_by=pending["user_id"]
             )
     except Exception:
         logger.exception(
@@ -459,6 +481,7 @@ async def schedule_agent_turn(
             )
             return False
 
+    run_id = uuid.uuid4().hex
     translator = BusPublishingSSETranslator(session_id=session_id, model=model)
 
     # Signal to all stream subscribers that the agent is starting work.
@@ -471,6 +494,7 @@ async def schedule_agent_turn(
     # the ActiveRun store, so no other coroutine can interleave here.
     task = asyncio.ensure_future(
         _run_agent_turn_async(
+            run_id=run_id,
             session_id=session_id,
             triggered_by=user_id,
             message=message,
@@ -490,5 +514,5 @@ async def schedule_agent_turn(
         )
     )
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(task=task, triggered_by=user_id)
+        _active_runs[session_id] = ActiveRun(run_id=run_id, task=task, triggered_by=user_id)
     return True

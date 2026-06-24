@@ -507,7 +507,7 @@ async def test_coalescing_second_agent_mention_does_not_start_new_turn():
 
     # Simulate an in-flight turn.
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(task=None, triggered_by="user_a")
+        _active_runs[session_id] = ActiveRun(run_id="test-run-coalesce", task=None, triggered_by="user_a")
 
     # Clear any stale pending state.
     with _pending_lock:

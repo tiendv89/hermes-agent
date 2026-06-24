@@ -134,7 +134,6 @@ async def list_threads_endpoint(
 async def cancel_agent_turn(
     session_id: str,
     identity: Identity = Depends(require_identity),
-    db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Cancel an in-progress agent turn for the given thread/session.
 
@@ -156,7 +155,7 @@ async def cancel_agent_turn(
     if active_run is None or active_run.task is None:
         raise HTTPException(status_code=404, detail="no_active_turn")
 
-    if active_run.triggered_by and active_run.triggered_by != user_id:
+    if active_run.triggered_by != user_id:
         raise HTTPException(status_code=403, detail="not_triggering_member")
 
     active_run.task.cancel()

@@ -128,7 +128,7 @@ async def test_cancel_non_triggering_member_returns_403(cancel_app):
     session_id = "sess_cancel_403"
     fake_task = MagicMock(spec=asyncio.Task)
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(task=fake_task, triggered_by="user_owner")
+        _active_runs[session_id] = ActiveRun(run_id="test-run-403", task=fake_task, triggered_by="user_owner")
 
     try:
         async with AsyncClient(
@@ -158,7 +158,7 @@ async def test_cancel_by_triggering_member_returns_202(cancel_app):
     session_id = "sess_cancel_202"
     fake_task = MagicMock(spec=asyncio.Task)
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(task=fake_task, triggered_by="user_a")
+        _active_runs[session_id] = ActiveRun(run_id="test-run-202", task=fake_task, triggered_by="user_a")
 
     try:
         async with AsyncClient(
@@ -189,7 +189,7 @@ async def test_cancel_missing_identity_returns_400(cancel_app):
     session_id = "sess_cancel_no_identity"
     fake_task = MagicMock(spec=asyncio.Task)
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(task=fake_task, triggered_by="user_a")
+        _active_runs[session_id] = ActiveRun(run_id="test-run-identity", task=fake_task, triggered_by="user_a")
 
     try:
         async with AsyncClient(
@@ -246,6 +246,7 @@ async def test_cancelled_error_persists_partial_message():
 
         with patch.object(loop, "run_in_executor", side_effect=_cancelled_executor):
             await _run_agent_turn_async(
+                run_id="test-run-persist",
                 session_id=session_id,
                 triggered_by="user_a",
                 message="hello",
@@ -301,6 +302,7 @@ async def test_cancelled_error_no_tokens_no_persist():
 
         with patch.object(loop, "run_in_executor", side_effect=_cancelled_executor):
             await _run_agent_turn_async(
+                run_id="test-run-no-tokens",
                 session_id=session_id,
                 triggered_by="user_a",
                 message="hello",
@@ -349,9 +351,11 @@ async def test_cancelled_session_freed_from_active_runs():
     async def _cancelled_executor(*args, **kwargs):
         raise asyncio.CancelledError()
 
-    # Place session in active_runs.
+    test_run_id = "test-run-cleanup"
+
+    # Place session in active_runs using the same run_id as the async wrapper.
     with _active_runs_lock:
-        _active_runs[session_id] = ActiveRun(task=None, triggered_by="user_a")
+        _active_runs[session_id] = ActiveRun(run_id=test_run_id, task=None, triggered_by="user_a")
 
     with patch(
         "src.api.agent_dispatch.get_bus",
@@ -359,6 +363,7 @@ async def test_cancelled_session_freed_from_active_runs():
     ):
         with patch.object(loop, "run_in_executor", side_effect=_cancelled_executor):
             await _run_agent_turn_async(
+                run_id=test_run_id,
                 session_id=session_id,
                 triggered_by="user_a",
                 message="hello",

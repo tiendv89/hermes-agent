@@ -199,7 +199,7 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     # Pretend a run for this session is already in flight.
     from src.api.agent_dispatch import ActiveRun
 
-    router_mod._active_runs["sess_busy"] = ActiveRun(task=None, triggered_by="user_x")
+    router_mod._active_runs["sess_busy"] = ActiveRun(run_id="test-run-busy", task=None, triggered_by="user_x")
     try:
         with (
             patch(
