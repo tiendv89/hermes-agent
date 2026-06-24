@@ -21,6 +21,7 @@ from typing import Any, Callable, Dict, Optional
 import re as _re
 
 from src.realtime.bus import get_bus
+from src.services.bff_client import QuotaCheckResult, check_quota, emit_turn_cost
 from src.streaming import BusPublishingSSETranslator, HermesSSETranslator
 
 logger = logging.getLogger(__name__)
@@ -194,6 +195,31 @@ async def _run_agent_turn_async(
         with _pending_lock:
             _pending_agent_turns.pop(session_id, None)
 
+        # Stopped-turn cost emission (Decision B1): emit accumulated partial
+        # token counts with stopped=True. Grab whatever the agent accumulated
+        # before the interrupt; fails silently if the agent wasn't constructed.
+        with _active_runs_lock:
+            _stopped_run = _active_runs.get(session_id)
+        _stopped_agent = _stopped_run.agent if _stopped_run is not None else None
+        _stopped_model = kwargs.get("model", "unknown")
+        _stopped_user_id = kwargs.get("user_id", triggered_by)
+        try:
+            await emit_turn_cost(
+                session_id,
+                _stopped_user_id,
+                _stopped_model,
+                input_tokens=getattr(_stopped_agent, "session_input_tokens", 0),
+                output_tokens=getattr(_stopped_agent, "session_output_tokens", 0),
+                cache_read_tokens=getattr(_stopped_agent, "session_cache_read_tokens", 0),
+                cache_write_tokens=getattr(_stopped_agent, "session_cache_write_tokens", 0),
+                stopped=True,
+            )
+        except Exception:
+            logger.exception(
+                "agent_dispatch: stopped-turn cost emission failed for session %s",
+                session_id,
+            )
+
         get_bus().publish(
             session_id,
             {
@@ -301,6 +327,78 @@ def _run_agent_turn(
                 )
             return  # finally-block runs: done(), clear context, release run, coalesce
 
+        # Pre-turn quota guard (G8): reject before any tokens are spent.
+        # Fails open — if the BFF is unreachable the turn proceeds normally.
+        try:
+            quota: QuotaCheckResult = asyncio.run_coroutine_threadsafe(
+                check_quota(session_id, user_id),
+                loop,
+            ).result(timeout=5)
+        except Exception:
+            logger.exception(
+                "agent_dispatch: quota check timed out for session %s (fail-open)",
+                session_id,
+            )
+            quota = QuotaCheckResult.fail_open()
+
+        if not quota.allowed:
+            reason = quota.reason or "quota_exceeded"
+            resets_at = quota.resets_at or ""
+            if reason == "daily_exceeded":
+                cap_label = f"daily credit limit ({quota.daily_cap})" if quota.daily_cap else "daily credit limit"
+                block_msg = (
+                    f"You've reached your {cap_label}. "
+                    f"Your quota resets at {resets_at}." if resets_at
+                    else f"You've reached your {cap_label}."
+                )
+            elif reason == "weekly_exceeded":
+                cap_label = f"weekly credit limit ({quota.weekly_cap})" if quota.weekly_cap else "weekly credit limit"
+                block_msg = (
+                    f"You've reached your {cap_label}. "
+                    f"Your quota resets at {resets_at}." if resets_at
+                    else f"You've reached your {cap_label}."
+                )
+            else:
+                block_msg = (
+                    f"You've reached your credit limit. "
+                    f"Your quota resets at {resets_at}." if resets_at
+                    else "You've reached your credit limit."
+                )
+            logger.info(
+                "agent_dispatch: quota blocked turn for session %s reason=%s",
+                session_id,
+                reason,
+            )
+
+            async def _persist_quota_block() -> None:
+                from src.db.store import append_message
+
+                async with db_factory() as db:
+                    if not skip_user_persist:
+                        await append_message(
+                            db,
+                            session_id,
+                            role="user",
+                            content=message,
+                            author_id=author_id,
+                        )
+                    await append_message(
+                        db, session_id, role="system", content=block_msg
+                    )
+
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    _persist_quota_block(), loop
+                ).result(timeout=15)
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: quota block persist failed for session %s",
+                    session_id,
+                )
+            # Stream the quota message so the UI renders it without requiring a reload.
+            _make_delta_callback(translator.on_delta)(block_msg)
+            return  # zero tokens consumed; composer stays enabled
+
         try:
             from src.db.session_db_proxy import make_gateway_session_db
 
@@ -363,6 +461,28 @@ def _run_agent_turn(
                 session_id,
             )
             return  # finally-block still runs: done() (suppressed), context, cleanup
+
+        # Post-turn cost emission: read the normalized usage block from the agent
+        # and emit to the BFF. Errors are logged but never block the turn.
+        try:
+            asyncio.run_coroutine_threadsafe(
+                emit_turn_cost(
+                    session_id,
+                    user_id,
+                    model,
+                    input_tokens=getattr(agent, "session_input_tokens", 0),
+                    output_tokens=getattr(agent, "session_output_tokens", 0),
+                    cache_read_tokens=getattr(agent, "session_cache_read_tokens", 0),
+                    cache_write_tokens=getattr(agent, "session_cache_write_tokens", 0),
+                    stopped=False,
+                ),
+                loop,
+            ).result(timeout=15)
+        except Exception:
+            logger.exception(
+                "agent_dispatch: post-turn cost emission failed for session %s",
+                session_id,
+            )
 
         final_text = (getattr(translator, "full_text", "") or "").strip()
         if final_text:
