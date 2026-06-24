@@ -145,6 +145,7 @@ def _run_agent_turn(
         from plugins import context as workflow_context
 
         workflow_context.set_context(session_id, workspace_id, feature_id)
+        workflow_context.set_agent_context(session_id, loop, db_factory)
 
         # Input scope guard — enforce shared.md's "stay on-topic" rule before
         # the agent runs. Confidently off-topic messages get the canned decline
