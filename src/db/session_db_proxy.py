@@ -33,12 +33,17 @@ def make_gateway_session_db(
     gateway_session_id: str,
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
+    is_cancelled: Optional[Callable[[], bool]] = None,
 ):
     """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres.
 
     author_id: if set, attached to user-role messages mirrored to Postgres.
     skip_user_persist: if True, skip mirroring user-role messages (used when the
         send service has already persisted the human message with author_id).
+    is_cancelled: optional predicate; once it returns True the turn has been
+        cancelled, so mirror writes are suppressed. The agent loop may not unwind
+        instantly after interrupt(), and we must not persist messages produced
+        after the user pressed Stop.
     """
     from hermes_state import SessionDB
     from src.db.store import (
@@ -93,6 +98,12 @@ def make_gateway_session_db(
             )
 
             if session_id != gateway_session_id:
+                return result
+
+            # Turn cancelled — do not persist anything the agent produces after
+            # the user pressed Stop. The partial reply (if any) is saved once by
+            # the cancel handler with finish_reason='stopped'.
+            if is_cancelled is not None and is_cancelled():
                 return result
 
             # Skip mirroring user messages when the send service pre-persisted them.

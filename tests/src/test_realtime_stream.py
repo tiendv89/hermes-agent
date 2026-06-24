@@ -31,7 +31,13 @@ if str(REPO_ROOT) not in sys.path:
 
 
 def _inject_stubs():
-    for mod_name in ("run_agent", "hermes_state", "plugins", "plugins.context", "plugins.skills"):
+    for mod_name in (
+        "run_agent",
+        "hermes_state",
+        "plugins",
+        "plugins.context",
+        "plugins.skills",
+    ):
         if mod_name not in sys.modules:
             sys.modules[mod_name] = types.ModuleType(mod_name)
 
@@ -39,11 +45,14 @@ def _inject_stubs():
         sys.modules["run_agent"].AIAgent = MagicMock()
 
     if not hasattr(sys.modules["hermes_state"], "SessionDB"):
+
         class _FakeSessionDB:
             def append_message(self, *a, **kw):
                 return 0
+
             def update_token_counts(self, *a, **kw):
                 pass
+
         sys.modules["hermes_state"].SessionDB = _FakeSessionDB
 
     ctx = sys.modules.get("plugins.context") or types.ModuleType("plugins.context")
@@ -82,7 +91,9 @@ def _make_stream_app(identity_user_id="user_a"):
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id=identity_user_id, org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id=identity_user_id, org_id="org_1"
+    )
     return app
 
 
@@ -111,7 +122,9 @@ def _make_messages_app(identity_user_id="user_a"):
     app = FastAPI()
     app.include_router(messages_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id=identity_user_id, org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id=identity_user_id, org_id="org_1"
+    )
     app.state.db_session = _db_factory
     return app
 
@@ -195,7 +208,10 @@ async def test_bus_slow_subscriber_drops_gracefully():
 
     bus = SessionBus()
 
-    async with bus.subscribe("sess_slow") as _q_slow, bus.subscribe("sess_slow") as q_fast:
+    async with (
+        bus.subscribe("sess_slow") as _q_slow,
+        bus.subscribe("sess_slow") as q_fast,
+    ):
         # Fill the slow subscriber's queue to capacity.
         for i in range(_MAX_QUEUE):
             bus.publish("sess_slow", {"event": "fill", "data": {"i": i}})
@@ -263,7 +279,9 @@ async def test_bus_translator_tool_progress_published():
 
     event_names = [e["event"] for e in events]
     assert "hermes.tool.progress" in event_names
-    statuses = [e["data"]["status"] for e in events if e["event"] == "hermes.tool.progress"]
+    statuses = [
+        e["data"]["status"] for e in events if e["event"] == "hermes.tool.progress"
+    ]
     assert "running" in statuses
     assert "completed" in statuses
 
@@ -367,7 +385,9 @@ async def test_stream_non_member_returns_403():
     app.include_router(stream_router, prefix="/api/v1")
     # Identity is "outsider", session owner is "owner"
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="outsider", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="outsider", org_id="org_1"
+    )
 
     session = MagicMock()
     session.user_id = "owner"
@@ -376,7 +396,9 @@ async def test_stream_non_member_returns_403():
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.get("/api/v1/threads/sess_1/stream")
 
     assert resp.status_code == 403
@@ -402,10 +424,14 @@ async def test_stream_thread_not_found_returns_404():
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="user_a", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="user_a", org_id="org_1"
+    )
 
     with patch("src.api.routers.stream.get_session", AsyncMock(return_value=None)):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.get("/api/v1/threads/no_such/stream")
 
     assert resp.status_code == 404
@@ -436,7 +462,9 @@ async def test_stream_owner_can_connect_and_receives_events():
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="owner_a", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="owner_a", org_id="org_1"
+    )
 
     session = MagicMock()
     session.user_id = "owner_a"
@@ -496,7 +524,9 @@ async def test_stream_replays_since_messages():
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="user_a", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="user_a", org_id="org_1"
+    )
 
     session = MagicMock()
     session.user_id = "user_a"
@@ -513,6 +543,7 @@ async def test_stream_replays_since_messages():
     ]
 
     from src.realtime.bus import get_bus
+
     bus = get_bus()
 
     # Terminate the stream after replay by publishing channel.deleted.
@@ -526,7 +557,9 @@ async def test_stream_replays_since_messages():
     with (
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
-        patch("src.api.routers.stream.get_messages_since", AsyncMock(return_value=missed)) as mock_since,
+        patch(
+            "src.api.routers.stream.get_messages_since", AsyncMock(return_value=missed)
+        ) as mock_since,
     ):
         asyncio.create_task(_terminate())
         async with AsyncClient(
@@ -577,7 +610,9 @@ async def test_typing_published_not_persisted():
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="user_a", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="user_a", org_id="org_1"
+    )
 
     session = MagicMock()
     session.user_id = "user_a"
@@ -586,9 +621,11 @@ async def test_typing_published_not_persisted():
     published: list = []
 
     original_publish = fake_bus.publish
+
     def _capture(session_id, event):
         published.append((session_id, event))
         original_publish(session_id, event)
+
     fake_bus.publish = _capture
 
     with (
@@ -596,7 +633,9 @@ async def test_typing_published_not_persisted():
         patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
         patch("src.api.routers.stream.get_bus", return_value=fake_bus),
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post("/api/v1/threads/sess_typing/typing")
 
     assert resp.status_code == 204
@@ -628,7 +667,9 @@ async def test_typing_non_member_returns_403():
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="outsider", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="outsider", org_id="org_1"
+    )
 
     session = MagicMock()
     session.user_id = "owner"
@@ -637,7 +678,9 @@ async def test_typing_non_member_returns_403():
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post("/api/v1/threads/sess_typing/typing")
 
     assert resp.status_code == 403
@@ -663,10 +706,14 @@ async def test_typing_thread_not_found_returns_404():
     app = FastAPI()
     app.include_router(stream_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="user_a", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="user_a", org_id="org_1"
+    )
 
     with patch("src.api.routers.stream.get_session", AsyncMock(return_value=None)):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post("/api/v1/threads/nope/typing")
 
     assert resp.status_code == 404
@@ -705,7 +752,9 @@ async def test_send_message_publishes_to_bus():
     app = FastAPI()
     app.include_router(messages_router, prefix="/api/v1")
     app.dependency_overrides[get_db] = _override_db
-    app.dependency_overrides[require_identity] = lambda: Identity(user_id="user_a", org_id="org_1")
+    app.dependency_overrides[require_identity] = lambda: Identity(
+        user_id="user_a", org_id="org_1"
+    )
     app.state.db_session = _db_factory
 
     session = MagicMock()
@@ -734,7 +783,9 @@ async def test_send_message_publishes_to_bus():
         patch("src.api.routers.messages.touch_session", AsyncMock()),
         patch("src.api.routers.messages.get_bus", return_value=fake_bus),
     ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
             resp = await client.post(
                 "/api/v1/threads/sess_pub/messages",
                 json={"content": "hello channel"},
@@ -768,7 +819,7 @@ async def test_schedule_agent_turn_publishes_agent_working():
 
     session_id = "sess_working_test2"
     with _active_runs_lock:
-        _active_runs.discard(session_id)
+        _active_runs.pop(session_id, None)
 
     fake_bus = SessionBus()
     published: list = []
@@ -783,10 +834,13 @@ async def test_schedule_agent_turn_publishes_agent_working():
     loop = asyncio.get_event_loop()
     db_factory_mock = AsyncMock()
 
+    async def _noop_turn(**kwargs):
+        pass
+
     with (
+        patch("src.api.agent_dispatch._run_agent_turn_async", new=_noop_turn),
         patch("src.api.agent_dispatch.BusPublishingSSETranslator", MagicMock()),
         patch("src.api.agent_dispatch.get_bus", return_value=fake_bus),
-        patch.object(loop, "run_in_executor", MagicMock()),
     ):
         await schedule_agent_turn(
             session_id=session_id,
@@ -809,4 +863,4 @@ async def test_schedule_agent_turn_publishes_agent_working():
 
     # Cleanup.
     with _active_runs_lock:
-        _active_runs.discard(session_id)
+        _active_runs.pop(session_id, None)

@@ -1,4 +1,4 @@
-"""Workspace-level team thread routes (T9).
+"""Workspace-level team thread routes (T9) + cancel endpoint (m3-stop-agent-chat T1).
 
 Routes (all under ``/api/v1``, require_identity):
 
@@ -6,6 +6,7 @@ Routes (all under ``/api/v1``, require_identity):
     GET  /threads?workspace_id=<ws>         — list caller's workspace threads
     GET  /sessions?workspace_id=<ws>        — (existing, extended) now returns
                                               feature threads + workspace threads
+    POST /threads/{session_id}/cancel       — cancel an in-progress agent turn
 
 A workspace thread is a ``kind='thread'``, ``feature_id=''`` session with explicit
 membership (unlike a public channel). The full T2/T3 conversation stack
@@ -23,6 +24,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.agent_dispatch import (
+    _active_runs,
+    _active_runs_lock,
+)
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.db import (
@@ -118,3 +123,65 @@ async def list_threads_endpoint(
         limit=limit,
     )
     return JSONResponse({"threads": threads})
+
+
+# ---------------------------------------------------------------------------
+# POST /threads/{session_id}/cancel
+# ---------------------------------------------------------------------------
+
+
+@router.post("/threads/{session_id}/cancel", status_code=202)
+async def cancel_agent_turn(
+    session_id: str,
+    identity: Identity = Depends(require_identity),
+) -> JSONResponse:
+    """Cancel an in-progress agent turn for the given thread/session.
+
+    Returns 202 immediately — cancellation is asynchronous.
+    Returns 404 if no agent turn is currently running for this session.
+    Returns 403 if the caller is not the member who triggered the turn.
+
+    Cancellation has three parts that must all fire — task.cancel() alone leaves
+    the blocking worker thread running (run_in_executor threads aren't cancellable),
+    which is why a cancelled turn used to finish and persist its reply anyway:
+      1. cancel_event — tells the worker thread to suppress DB mirror writes and
+         skip the backfill, so nothing produced after Stop is persisted.
+      2. agent.interrupt() — aborts the in-flight LLM call at the socket level and
+         stops the agent's tool loop so generation actually halts.
+      3. task.cancel() — the async Task receives CancelledError at its next await,
+         flushes any accumulated partial tokens to the DB with
+         finish_reason='stopped', and publishes turn.stopped to all subscribers.
+    """
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    with _active_runs_lock:
+        active_run = _active_runs.get(session_id)
+
+    if active_run is None or active_run.task is None:
+        raise HTTPException(status_code=404, detail="no_active_turn")
+
+    if active_run.triggered_by != user_id:
+        raise HTTPException(status_code=403, detail="not_triggering_member")
+
+    # 1. Flag the worker thread before anything else so it stops persisting.
+    active_run.cancel_event.set()
+
+    # 2. Interrupt the live agent so the in-flight LLM call/tool loop unwinds.
+    #    May be None if cancel races setup before the agent is built — the
+    #    cancel_event still makes the worker bail at its next checkpoint.
+    if active_run.agent is not None:
+        try:
+            active_run.agent.interrupt()
+        except Exception:
+            logger.exception(
+                "threads: agent.interrupt() failed for session %s", session_id
+            )
+
+    # 3. Cancel the async task — drives the turn.stopped event and partial flush.
+    active_run.task.cancel()
+    logger.info(
+        "threads: cancel requested for session %s by user %s", session_id, user_id
+    )
+    return JSONResponse({"status": "cancelling"}, status_code=202)

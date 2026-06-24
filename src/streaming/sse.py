@@ -89,6 +89,7 @@ def artifact_for_tool(name: str, args: Any = None, output: Any = None) -> Option
         return "tasks"
     return None
 
+
 # How long stream() waits with no agent activity before sending an SSE comment
 # to keep the connection alive (slow tools shouldn't trip idle proxy timeouts).
 # Comment frames (": ...") are ignored by SSE clients.
@@ -115,6 +116,8 @@ class HermesSSETranslator:
         self._created = int(time.time())
         self._usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
         self._terminated = False
+        self._stopped = False
+        self._full_parts: list = []
 
     # -- frame construction -------------------------------------------------
 
@@ -142,10 +145,25 @@ class HermesSSETranslator:
 
     # -- AIAgent callbacks (called on the worker thread) --------------------
 
+    def mark_stopped(self) -> str:
+        """Signal that the turn was cancelled. Returns accumulated text and suppresses done().
+
+        Called from the cancel handler (async context) before the thread's done() fires.
+        Thread-safe: sets a flag that done() checks before emitting the terminal frame.
+        """
+        self._stopped = True
+        return "".join(self._full_parts)
+
+    @property
+    def full_text(self) -> str:
+        """Accumulated assistant text from streamed deltas."""
+        return "".join(self._full_parts)
+
     def on_delta(self, delta: Any = None, **_: Any) -> None:
         # The agent fires a None delta to flush its display before a tool runs;
         # that's not text and not end-of-stream, so skip falsy deltas.
         if delta:
+            self._full_parts.append(str(delta))
             self._emit(self._chunk({"content": delta}))
 
     def on_tool_start(
@@ -204,8 +222,12 @@ class HermesSSETranslator:
     # -- termination --------------------------------------------------------
 
     def _terminate(self, finish_reason: str, error: Optional[str] = None) -> None:
-        """Emit the final chunk + ``[DONE]`` + end sentinel, at most once."""
-        if self._terminated:
+        """Emit the final chunk + ``[DONE]`` + end sentinel, at most once.
+
+        Suppressed after mark_stopped() so a still-running thread does not
+        emit a stale agent.done / [DONE] frame after cancellation.
+        """
+        if self._terminated or self._stopped:
             return
         self._terminated = True
 
