@@ -20,13 +20,19 @@ on subsequent calls. ``repo`` accepts a bare indexed name (e.g.
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
 import os
-from typing import Any, Dict
+import time
+from typing import Any, Dict, List, Optional
 
 from ..mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
+
+_REPO_CACHE_TTL = float(os.environ.get("GITNEXUS_REPO_CACHE_TTL", "600"))
+_repo_cache: Dict[str, Any] = {"names": None, "ts": 0.0}
 
 # Operations exposed by the wrapper, mapped to live GitNexus MCP tools.
 _TOOLS = ("query", "context", "impact", "detect_changes", "list_repos")
@@ -145,3 +151,84 @@ async def handle(
     except Exception as exc:
         logger.warning("query_gitnexus failed: %s", exc)
         return {"ok": False, "error": str(exc)}
+
+
+def _loads_leading_json(text: str) -> Any:
+    """Decode the leading JSON value in *text*, ignoring any trailing prose.
+
+    GitNexus's list_repos returns a pretty-printed JSON array followed by a
+    human-readable footer (e.g. "READ gitnexus://repo/{name}/context ..."), so a
+    plain json.loads fails with "Extra data". raw_decode parses just the first
+    value.
+    """
+    s = text.lstrip()
+    start = next((i for i, ch in enumerate(s) if ch in "[{"), -1)
+    if start < 0:
+        return None
+    try:
+        obj, _idx = json.JSONDecoder().raw_decode(s[start:])
+        return obj
+    except Exception:
+        return None
+
+
+def _parse_repo_names(results: Any) -> List[str]:
+    """Extract repo names from a list_repos MCP result (list of content dicts)."""
+    names: List[str] = []
+    for item in results or []:
+        text = item.get("text") if isinstance(item, dict) else None
+        if not text:
+            continue
+        data = _loads_leading_json(text)
+        if isinstance(data, list):
+            for r in data:
+                if isinstance(r, dict) and r.get("name"):
+                    names.append(str(r["name"]))
+    return names
+
+
+def _run_coro_sync(coro: Any) -> Any:
+    """Run an async coroutine from sync code, whether or not a loop is running."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # A loop is already running in this thread — run the coroutine in a separate
+    # thread with its own loop so we don't deadlock the existing one.
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
+        return ex.submit(lambda: asyncio.run(coro)).result()
+
+
+def list_indexed_repos(use_cache: bool = True, timeout: Optional[float] = None) -> Optional[List[str]]:
+    """Best-effort, synchronous list of GitNexus-indexed repo names.
+
+    Returns the repo names (e.g. ['voyager-interface', ...]), or ``None`` when
+    GitNexus is unconfigured/unreachable so callers can fall back gracefully.
+    Result is cached process-wide for ``_REPO_CACHE_TTL`` seconds.
+    """
+    url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
+    if not url:
+        return None
+    now = time.time()
+    if use_cache and _repo_cache["names"] is not None and (now - _repo_cache["ts"]) < _REPO_CACHE_TTL:
+        return _repo_cache["names"]
+
+    async def _go() -> Any:
+        if timeout:
+            return await asyncio.wait_for(call_mcp_tool(url, "list_repos", {}), timeout)
+        return await call_mcp_tool(url, "list_repos", {})
+
+    try:
+        names = _parse_repo_names(_run_coro_sync(_go()))
+    except Exception as exc:
+        logger.debug("list_indexed_repos failed: %s", exc)
+        return None
+    if not names:
+        # Treat an empty/unparseable result as "unavailable" — don't cache it,
+        # so a transient miss doesn't blind callers for the whole TTL window.
+        return None
+    _repo_cache["names"] = names
+    _repo_cache["ts"] = now
+    return names

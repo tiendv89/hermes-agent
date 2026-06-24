@@ -413,15 +413,31 @@ class TestCheckAvailableGating:
 
 
 class TestRegisterT3:
-    def test_registers_10_tools(self):
+    # The full registered toolset (see plugins/__init__.py _TOOLS).
+    EXPECTED_TOOLS = {
+        "get_workspace_context",
+        "get_feature_state",
+        "write_product_spec",
+        "read_document",
+        "edit_document",
+        "write_technical_design",
+        "get_tasks",
+        "query_gitnexus",
+        "query_rag",
+        "load_skill",
+        "request_approval",
+        "approve_feature",
+        "write_tasks",
+        "suggest_next_actions",
+    }
+
+    def test_registers_all_tools(self):
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        # 6 context/artifact tools + edit_document (T1) + 2 MCP tools
-        # + load_skill (T6) + request_approval (T3) = 10
-        assert ctx.register_tool.call_count == 10
+        assert ctx.register_tool.call_count == len(self.EXPECTED_TOOLS)
 
-    def test_all_10_tool_names_registered(self):
+    def test_all_tool_names_registered(self):
         plugins_mod = _load_plugins_register()
         ctx = MagicMock()
         plugins_mod.register(ctx)
@@ -429,19 +445,7 @@ class TestRegisterT3:
             call.kwargs.get("name") or call.args[0]
             for call in ctx.register_tool.call_args_list
         }
-        expected = {
-            "get_workspace_context",
-            "get_feature_state",
-            "write_product_spec",
-            "edit_document",
-            "write_technical_design",
-            "get_tasks",
-            "query_gitnexus",
-            "query_rag",
-            "load_skill",
-            "request_approval",
-        }
-        assert names == expected
+        assert names == self.EXPECTED_TOOLS
 
     def test_gitnexus_registered_with_is_async_true(self):
         plugins_mod = _load_plugins_register()
@@ -926,3 +930,78 @@ class TestWriteArtifactCoercesContent:
         assert result["ok"] is True
         assert isinstance(captured["content"], str)
         assert "My Spec" in captured["content"]
+
+
+# ---------------------------------------------------------------------------
+# GitNexus repo-name parsing + write_tasks repo validation guardrail
+# ---------------------------------------------------------------------------
+
+
+class TestGitnexusRepoNames:
+    def test_parse_repo_names_ignores_trailing_prose(self):
+        from plugins.tools.gitnexus import _parse_repo_names
+
+        # list_repos returns a JSON array followed by a human-readable footer.
+        text = (
+            '[\n  {"name": "voyager-interface", "path": "/x"},\n'
+            '  {"name": "voyager-backend"}\n]\n\n'
+            "READ gitnexus://repo/{name}/context for any repo above."
+        )
+        assert _parse_repo_names([{"type": "text", "text": text}]) == [
+            "voyager-interface",
+            "voyager-backend",
+        ]
+
+
+class TestWriteTasksRepoValidation:
+    def test_rejects_repo_not_indexed_in_gitnexus(self, monkeypatch):
+        from plugins.tools import gitnexus
+
+        monkeypatch.setattr(
+            gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface", "voyager-backend"]
+        )
+        from plugins.tools.tasks_write import handle
+
+        result = handle(
+            tasks=[{"id": "T1", "repo": "made-up-repo", "title": "x"}],
+            tasks_md="# tasks",
+            workspace_id="ws-1",
+            feature_id="FARO-1",
+        )
+        assert result["ok"] is False
+        assert "not indexed in GitNexus" in result["error"]
+
+    def test_allows_repo_present_in_gitnexus(self, monkeypatch):
+        from plugins.tools import gitnexus
+
+        monkeypatch.setattr(gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface"])
+        # No token: the call fails AFTER the repo guard — proving a known repo
+        # passes repo validation (error is not the repo-validation error).
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from plugins.tools.tasks_write import handle
+
+        result = handle(
+            tasks=[{"id": "T1", "repo": "voyager-interface", "title": "x"}],
+            tasks_md="# tasks",
+            workspace_id="ws-1",
+            feature_id="FARO-1",
+        )
+        assert result["ok"] is False
+        assert "not indexed in GitNexus" not in (result.get("error") or "")
+
+    def test_skips_validation_when_gitnexus_unavailable(self, monkeypatch):
+        from plugins.tools import gitnexus
+
+        monkeypatch.setattr(gitnexus, "list_indexed_repos", lambda *a, **k: None)
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        from plugins.tools.tasks_write import handle
+
+        # Unknown repo, but GitNexus unavailable -> no repo validation error.
+        result = handle(
+            tasks=[{"id": "T1", "repo": "whatever", "title": "x"}],
+            tasks_md="# tasks",
+            workspace_id="ws-1",
+            feature_id="FARO-1",
+        )
+        assert result["ok"] is False
+        assert "not indexed in GitNexus" not in (result.get("error") or "")

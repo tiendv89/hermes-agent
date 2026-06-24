@@ -76,6 +76,13 @@ the request text alone — ground it in the actual repositories.
 
 Required steps before the write tool is called:
 
+0. **Read the product spec from git (FIRST, before writing a technical design).**
+   Call `read_document(document="product_spec")`. It reads the management repo's
+   feature branch directly, so it returns the spec even when it is unmerged and
+   not yet indexed by RAG. Ground the design in the spec's actual scope — do NOT
+   infer scope from RAG, the request text, or sibling features. If it returns
+   `exists: false`, stop and tell the human the spec is missing instead of
+   guessing. (When revising an existing design, also `read_document(document="technical_design")`.)
 1. **RAG** — call `query_rag` for the feature's domain and any entities it
    names (e.g. the data tables, services, or flows it touches). Pull in the
    relevant indexed code and docs.
@@ -114,7 +121,7 @@ This applies in interactive sessions and agent runtime alike.
 - Task lifecycle status exists only at the task file level
 - One task changes one repository only
 - If a logical change requires edits in two repos (e.g. move a file to repo A and update a reference in repo B), split it into two tasks — one per repo — with the second depending on the first
-- `repo` must match `workspace.yaml -> repos[].id`
+- `repo` must be one of the repo names returned by GitNexus `query_gitnexus(tool="list_repos")` — NOT a name from `workspace.yaml` (the injected `repos:` line is the management repo only). Determine each task's repo by querying GitNexus for the symbols/files it touches and using the repo that actually contains them; never guess the repo from the feature title.
 - Every task must define:
   - `status`
   - `depends_on`

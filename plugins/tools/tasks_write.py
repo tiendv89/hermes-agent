@@ -36,6 +36,12 @@ SCHEMA: Dict[str, Any] = {
         "For ts/git features: commits tasks.md narrative + one tasks/T{n}.yaml per task "
         "to the feature branch. "
         "For go/postgres features: commits tasks.md only and inserts tasks into the DB. "
+        "REQUIRED FIRST: call read_document(document='technical_design') (and 'product_spec') to "
+        "load the approved design from the feature branch and derive the task list from its actual "
+        "content — never infer tasks from RAG or the request text. "
+        "Each task's 'repo' MUST be a real repo name from query_gitnexus(tool='list_repos'); "
+        "determine it by querying GitNexus for the symbols/files the task touches and using the "
+        "repo that contains them — do NOT guess the repo from the feature title or use workspace.yaml. "
         "Call this after technical_design is approved and you have designed the full task list."
     ),
     "parameters": {
@@ -341,6 +347,29 @@ def handle(
         tid = t.get("id", "")
         if not _TASK_ID_RE.match(tid):
             return {"ok": False, "error": f"Invalid task id {tid!r}. Must match T<number>, e.g. T1, T2."}
+
+    # Validate each task's repo against GitNexus's indexed repo set — the
+    # authoritative repo universe. This is the guardrail behind the "determine
+    # repo from GitNexus, not guesswork" rule: reject tasks pointed at a repo
+    # that isn't actually indexed. Skipped gracefully when GitNexus is
+    # unavailable (list_indexed_repos returns None) so authoring still works.
+    from .gitnexus import list_indexed_repos
+
+    indexed_repos = list_indexed_repos()
+    if indexed_repos:
+        indexed_set = set(indexed_repos)
+        unknown = sorted({(t.get("repo") or "").strip() for t in tasks if (t.get("repo") or "").strip()} - indexed_set)
+        if unknown:
+            return {
+                "ok": False,
+                "error": (
+                    f"Task repo(s) not indexed in GitNexus: {unknown}. "
+                    f"Valid repos: {sorted(indexed_set)}. "
+                    "Set each task's repo to the GitNexus repo that actually contains the code it "
+                    "touches — call query_gitnexus(tool='list_repos') and query the relevant symbols "
+                    "to confirm. Do not guess the repo from the feature title."
+                ),
+            }
 
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:

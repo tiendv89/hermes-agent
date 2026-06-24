@@ -171,12 +171,27 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
         from .tools.workspace import handle as get_workspace
         from .tools.feature import handle as get_feature
 
-        ws = get_workspace(workspace_id=workspace_id)
-        if ws.get("ok"):
-            repos = ws.get("workspace", {}).get("repos", [])
-            repo_ids = [r.get("id", "") if isinstance(r, dict) else str(r) for r in repos]
-            if repos:
-                parts.append("repos: " + ", ".join(r for r in repo_ids if r))
+        indexed_repos = None
+        try:
+            from .tools.gitnexus import list_indexed_repos
+
+            indexed_repos = list_indexed_repos(timeout=10)
+        except Exception as _exc:  # pragma: no cover - defensive
+            logger.debug("inject_context: list_indexed_repos failed: %s", _exc)
+
+        if indexed_repos:
+            repo_ids = indexed_repos
+            parts.append(
+                "indexed repos (query/target these via query_gitnexus, passing repo=<name>): "
+                + ", ".join(indexed_repos)
+            )
+        else:
+            ws = get_workspace(workspace_id=workspace_id)
+            if ws.get("ok"):
+                repos = ws.get("workspace", {}).get("repos", [])
+                repo_ids = [r.get("id", "") if isinstance(r, dict) else str(r) for r in repos]
+                if repos:
+                    parts.append("repos: " + ", ".join(r for r in repo_ids if r))
 
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
