@@ -21,7 +21,7 @@ from typing import Any, Callable, Dict, Optional
 import re as _re
 
 from src.realtime.bus import get_bus
-from src.services.bff_client import QuotaCheckResult, check_quota, emit_turn_cost
+from src.services.cost_client import QuotaCheckResult, check_quota, emit_turn_cost
 from src.streaming import BusPublishingSSETranslator, HermesSSETranslator
 
 logger = logging.getLogger(__name__)
@@ -222,6 +222,7 @@ async def _run_agent_turn_async(
         _stopped_agent = _stopped_run.agent if _stopped_run is not None else None
         _stopped_model = kwargs.get("model", "unknown")
         _stopped_user_id = kwargs.get("user_id", triggered_by)
+        _stopped_org_id = kwargs.get("org_id")
         try:
             await emit_turn_cost(
                 session_id,
@@ -232,6 +233,9 @@ async def _run_agent_turn_async(
                 cache_read_tokens=getattr(_stopped_agent, "session_cache_read_tokens", 0),
                 cache_write_tokens=getattr(_stopped_agent, "session_cache_write_tokens", 0),
                 stopped=True,
+                turn_id=run_id,
+                org_id=_stopped_org_id,
+                source_label=kwargs.get("feature_id") or kwargs.get("workspace_id") or session_id,
             )
         except Exception:
             logger.exception(
@@ -282,6 +286,7 @@ def _run_agent_turn(
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
     translator: HermesSSETranslator,
+    org_id: Optional[str] = None,
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
     cancel_event: Optional[threading.Event] = None,
@@ -356,7 +361,7 @@ def _run_agent_turn(
         # Fails open — if the BFF is unreachable the turn proceeds normally.
         try:
             quota: QuotaCheckResult = asyncio.run_coroutine_threadsafe(
-                check_quota(session_id, user_id),
+                check_quota(session_id, user_id, org_id=org_id),
                 loop,
             ).result(timeout=5)
         except Exception:
@@ -510,6 +515,9 @@ def _run_agent_turn(
                     cache_read_tokens=getattr(agent, "session_cache_read_tokens", 0),
                     cache_write_tokens=getattr(agent, "session_cache_write_tokens", 0),
                     stopped=False,
+                    turn_id=run_id,
+                    org_id=org_id,
+                    source_label=feature_id or workspace_id or session_id,
                 ),
                 loop,
             ).result(timeout=15)
@@ -597,6 +605,7 @@ async def _schedule_follow_up(
                 workspace_id=pending["workspace_id"],
                 feature_id=pending["feature_id"],
                 user_id=pending["user_id"],
+                org_id=pending.get("org_id"),
                 model=resolved["model"],
                 provider=resolved["provider"],
                 api_key=resolved["api_key"],
@@ -637,6 +646,7 @@ async def schedule_agent_turn(
     base_url: Optional[str],
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
+    org_id: Optional[str] = None,
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
 ) -> bool:
@@ -658,6 +668,7 @@ async def schedule_agent_turn(
                     "workspace_id": workspace_id,
                     "feature_id": feature_id,
                     "user_id": user_id,
+                    "org_id": org_id,
                     "model": model,
                     "db_factory": db_factory,
                 }
@@ -689,6 +700,7 @@ async def schedule_agent_turn(
             workspace_id=workspace_id,
             feature_id=feature_id,
             user_id=user_id,
+            org_id=org_id,
             model=model,
             provider=provider,
             api_key=api_key,

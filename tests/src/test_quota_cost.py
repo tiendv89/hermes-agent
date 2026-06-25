@@ -6,7 +6,7 @@ Test plan (from tasks.md):
   - Successful turn emits a cost event with stopped=False after completion
   - Stopped turn emits cost event with stopped=True and partial token counts (>0, <=full turn)
   - Quota check fail-open (BFF unreachable) allows turn to proceed
-  - BFF client check_quota and emit_turn_cost: skipped when WORKFLOW_BFF_URL unset
+  - BFF client check_quota and emit_turn_cost: skipped when USER_SERVICE_URL unset
 
 Implementation note:
   _run_agent_turn() is designed to run on a worker thread while the event loop is active
@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
+import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict
@@ -86,9 +87,9 @@ async def _db_factory():
 
 @pytest.mark.asyncio
 async def test_check_quota_skipped_when_url_unset(monkeypatch):
-    """check_quota fails open (allowed=True) when WORKFLOW_BFF_URL is unset."""
-    monkeypatch.delenv("WORKFLOW_BFF_URL", raising=False)
-    from src.services.bff_client import check_quota
+    """check_quota fails open (allowed=True) when USER_SERVICE_URL is unset."""
+    monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+    from src.services.cost_client import check_quota
 
     result = await check_quota("session-1", "user-1")
     assert result.allowed is True
@@ -96,9 +97,9 @@ async def test_check_quota_skipped_when_url_unset(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_emit_turn_cost_skipped_when_url_unset(monkeypatch):
-    """emit_turn_cost is a no-op when WORKFLOW_BFF_URL is unset."""
-    monkeypatch.delenv("WORKFLOW_BFF_URL", raising=False)
-    from src.services.bff_client import emit_turn_cost
+    """emit_turn_cost is a no-op when USER_SERVICE_URL is unset."""
+    monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+    from src.services.cost_client import emit_turn_cost
 
     # Should not raise even with zero tokens.
     await emit_turn_cost(
@@ -113,8 +114,8 @@ async def test_emit_turn_cost_skipped_when_url_unset(monkeypatch):
 @pytest.mark.asyncio
 async def test_check_quota_returns_blocked_on_200(monkeypatch):
     """check_quota returns the BFF's allowed/reason/resets_at on a 200 response."""
-    monkeypatch.setenv("WORKFLOW_BFF_URL", "http://bff:8080")
-    from src.services.bff_client import check_quota
+    monkeypatch.setenv("USER_SERVICE_URL", "http://bff:8080")
+    from src.services.cost_client import check_quota
 
     fake_resp = MagicMock()
     fake_resp.status = 200
@@ -136,7 +137,7 @@ async def test_check_quota_returns_blocked_on_200(monkeypatch):
     fake_session.__aexit__ = AsyncMock(return_value=False)
     fake_session.get = MagicMock(return_value=fake_resp)
 
-    with patch("src.services.bff_client.aiohttp.ClientSession", return_value=fake_session):
+    with patch("src.services.cost_client.aiohttp.ClientSession", return_value=fake_session):
         result = await check_quota("session-1", "user-1")
 
     assert result.allowed is False
@@ -148,10 +149,10 @@ async def test_check_quota_returns_blocked_on_200(monkeypatch):
 @pytest.mark.asyncio
 async def test_check_quota_fails_open_on_network_error(monkeypatch):
     """check_quota returns allowed=True when the BFF call raises an exception."""
-    monkeypatch.setenv("WORKFLOW_BFF_URL", "http://bff:8080")
-    from src.services.bff_client import check_quota
+    monkeypatch.setenv("USER_SERVICE_URL", "http://bff:8080")
+    from src.services.cost_client import check_quota
 
-    with patch("src.services.bff_client.aiohttp.ClientSession", side_effect=OSError("refused")):
+    with patch("src.services.cost_client.aiohttp.ClientSession", side_effect=OSError("refused")):
         result = await check_quota("session-1", "user-1")
 
     assert result.allowed is True
@@ -160,8 +161,8 @@ async def test_check_quota_fails_open_on_network_error(monkeypatch):
 @pytest.mark.asyncio
 async def test_emit_turn_cost_posts_payload(monkeypatch):
     """emit_turn_cost POSTs the expected payload to the BFF."""
-    monkeypatch.setenv("WORKFLOW_BFF_URL", "http://bff:8080")
-    from src.services.bff_client import emit_turn_cost
+    monkeypatch.setenv("USER_SERVICE_URL", "http://bff:8080")
+    from src.services.cost_client import emit_turn_cost
 
     posted: Dict[str, Any] = {}
 
@@ -181,7 +182,7 @@ async def test_emit_turn_cost_posts_payload(monkeypatch):
 
     fake_session.post = _fake_post
 
-    with patch("src.services.bff_client.aiohttp.ClientSession", return_value=fake_session):
+    with patch("src.services.cost_client.aiohttp.ClientSession", return_value=fake_session):
         await emit_turn_cost(
             "session-42",
             "user-7",
@@ -194,20 +195,23 @@ async def test_emit_turn_cost_posts_payload(monkeypatch):
         )
 
     assert posted["user_id"] == "user-7"
-    assert posted["model"] == "claude-sonnet-4-6"
+    assert posted["model_id"] == "claude-sonnet-4-6"
     assert posted["input_tokens"] == 1000
     assert posted["output_tokens"] == 200
     assert posted["cache_read_tokens"] == 50
     assert posted["cache_write_tokens"] == 10
     assert posted["stopped"] is False
-    assert "session-42" in posted["_url"]
+    # user-service takes session_id in the body (as a UUID), not the path.
+    assert posted["_url"].endswith("/internal/turn-costs")
+    assert uuid.UUID(posted["session_id"])  # derived UUID from the opaque sess id
+    assert posted["source_type"] == "agent_chat"
 
 
 @pytest.mark.asyncio
 async def test_emit_turn_cost_sets_stopped_true_for_partial(monkeypatch):
     """emit_turn_cost sets stopped=True when the stopped flag is passed."""
-    monkeypatch.setenv("WORKFLOW_BFF_URL", "http://bff:8080")
-    from src.services.bff_client import emit_turn_cost
+    monkeypatch.setenv("USER_SERVICE_URL", "http://bff:8080")
+    from src.services.cost_client import emit_turn_cost
 
     posted: Dict[str, Any] = {}
 
@@ -226,7 +230,7 @@ async def test_emit_turn_cost_sets_stopped_true_for_partial(monkeypatch):
 
     fake_session.post = _fake_post
 
-    with patch("src.services.bff_client.aiohttp.ClientSession", return_value=fake_session):
+    with patch("src.services.cost_client.aiohttp.ClientSession", return_value=fake_session):
         await emit_turn_cost(
             "session-42",
             "user-7",
@@ -252,7 +256,7 @@ async def test_quota_blocked_daily_posts_system_message_no_agent_constructed():
     """Daily quota exceeded: system message posted, zero tokens spent (no AIAgent)."""
     _inject_stubs()
 
-    from src.services.bff_client import QuotaCheckResult
+    from src.services.cost_client import QuotaCheckResult
 
     quota = QuotaCheckResult(
         allowed=False,
@@ -331,7 +335,7 @@ async def test_quota_blocked_weekly_posts_system_message():
     """Weekly quota exceeded: system message contains 'weekly'."""
     _inject_stubs()
 
-    from src.services.bff_client import QuotaCheckResult
+    from src.services.cost_client import QuotaCheckResult
 
     quota = QuotaCheckResult(
         allowed=False,
@@ -474,7 +478,7 @@ async def test_successful_turn_emits_cost_event():
     emitted: list = []
 
     async def _allow_check_quota(sid, uid, **kw):
-        from src.services.bff_client import QuotaCheckResult
+        from src.services.cost_client import QuotaCheckResult
 
         return QuotaCheckResult.fail_open()
 

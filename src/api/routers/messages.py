@@ -213,6 +213,7 @@ async def send_message(
         workspace_id=workspace_id,
         feature_id=feature_id,
         user_id=user_id,
+        org_id=identity.org_id or None,
         model=resolved["model"],
         provider=resolved["provider"],
         api_key=resolved["api_key"],

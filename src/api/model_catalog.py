@@ -30,8 +30,6 @@ CLAUDE_MODELS: list[ModelInfo] = [
 
 # DeepSeek models, run through DeepSeek's OpenAI-compatible API.
 DEEPSEEK_MODELS: list[ModelInfo] = [
-    {"id": "deepseek-chat", "label": "DeepSeek V3", "provider": "deepseek"},
-    {"id": "deepseek-reasoner", "label": "DeepSeek R1", "provider": "deepseek"},
     {"id": "deepseek-v4-flash", "label": "DeepSeek V4 Flash", "provider": "deepseek"},
     {"id": "deepseek-v4-pro", "label": "DeepSeek V4 Pro", "provider": "deepseek"},
 ]

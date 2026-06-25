@@ -41,7 +41,7 @@ def _mock_db():
 @pytest.mark.asyncio
 async def test_add_member_new():
     """add_member inserts a SessionMember row when none exists."""
-    from src.db.store_v4 import add_member
+    from src.db.store import add_member
 
     db = _mock_db()
     db.get = AsyncMock(return_value=None)
@@ -59,7 +59,7 @@ async def test_add_member_new():
 @pytest.mark.asyncio
 async def test_add_member_idempotent():
     """add_member is a no-op when the member already exists."""
-    from src.db.store_v4 import add_member
+    from src.db.store import add_member
     from src.db.models import SessionMember
 
     existing = MagicMock(spec=SessionMember)
@@ -75,7 +75,7 @@ async def test_add_member_idempotent():
 @pytest.mark.asyncio
 async def test_remove_member():
     """remove_member executes a delete and commits."""
-    from src.db.store_v4 import remove_member
+    from src.db.store import remove_member
 
     db = _mock_db()
     await remove_member(db, "sess_1", "user_a")
@@ -87,7 +87,7 @@ async def test_remove_member():
 @pytest.mark.asyncio
 async def test_list_members_returns_ordered_list():
     """list_members returns members ordered by added_at."""
-    from src.db.store_v4 import list_members
+    from src.db.store import list_members
 
     now = time.time()
     m1 = MagicMock(user_id="u1", role_label="PO", added_by="owner", added_at=now - 100)
@@ -113,7 +113,7 @@ async def test_list_members_returns_ordered_list():
 @pytest.mark.asyncio
 async def test_list_member_sessions_scope():
     """list_member_sessions returns own ∪ member-of sessions, not channels."""
-    from src.db.store_v4 import list_member_sessions
+    from src.db.store import list_member_sessions
 
     now = time.time()
     row_owned = MagicMock(
@@ -152,7 +152,7 @@ async def test_list_member_sessions_scope():
 @pytest.mark.asyncio
 async def test_is_member_true():
     """is_member returns True when the membership row exists."""
-    from src.db.store_v4 import is_member
+    from src.db.store import is_member
     from src.db.models import SessionMember
 
     db = _mock_db()
@@ -164,7 +164,7 @@ async def test_is_member_true():
 @pytest.mark.asyncio
 async def test_is_member_false():
     """is_member returns False when the membership row is absent."""
-    from src.db.store_v4 import is_member
+    from src.db.store import is_member
 
     db = _mock_db()
     db.get = AsyncMock(return_value=None)
@@ -180,7 +180,7 @@ async def test_is_member_false():
 @pytest.mark.asyncio
 async def test_persist_mentions_inserts_rows():
     """persist_mentions inserts one MessageMention row per mention."""
-    from src.db.store_v4 import persist_mentions
+    from src.db.store import persist_mentions
 
     db = _mock_db()
     mentions = [
@@ -197,7 +197,7 @@ async def test_persist_mentions_inserts_rows():
 @pytest.mark.asyncio
 async def test_persist_mentions_empty_list():
     """persist_mentions with an empty list does not commit."""
-    from src.db.store_v4 import persist_mentions
+    from src.db.store import persist_mentions
 
     db = _mock_db()
     await persist_mentions(db, message_id=42, session_id="sess_1", mentions=[])
@@ -209,7 +209,7 @@ async def test_persist_mentions_empty_list():
 @pytest.mark.asyncio
 async def test_resolve_mentions_returns_list():
     """resolve_mentions returns all mention rows for a message."""
-    from src.db.store_v4 import resolve_mentions
+    from src.db.store import resolve_mentions
 
     m = MagicMock(
         id=1, message_id=42, session_id="sess_1",
@@ -234,7 +234,7 @@ async def test_resolve_mentions_returns_list():
 @pytest.mark.asyncio
 async def test_get_unread_mention_count():
     """get_unread_mention_count returns the scalar count."""
-    from src.db.store_v4 import get_unread_mention_count
+    from src.db.store import get_unread_mention_count
 
     result_mock = MagicMock()
     result_mock.scalar_one.return_value = 3
@@ -249,7 +249,7 @@ async def test_get_unread_mention_count():
 @pytest.mark.asyncio
 async def test_get_unread_mention_count_zero_when_none():
     """get_unread_mention_count returns 0 when scalar is None."""
-    from src.db.store_v4 import get_unread_mention_count
+    from src.db.store import get_unread_mention_count
 
     result_mock = MagicMock()
     result_mock.scalar_one.return_value = None
@@ -264,7 +264,7 @@ async def test_get_unread_mention_count_zero_when_none():
 @pytest.mark.asyncio
 async def test_mark_mentions_read():
     """mark_mentions_read executes an update and commits."""
-    from src.db.store_v4 import mark_mentions_read
+    from src.db.store import mark_mentions_read
 
     db = _mock_db()
     await mark_mentions_read(db, "sess_1", "user_a")
@@ -281,7 +281,7 @@ async def test_mark_mentions_read():
 @pytest.mark.asyncio
 async def test_create_channel_returns_session_id():
     """create_channel creates a kind='channel' session and returns its id."""
-    from src.db.store_v4 import create_channel
+    from src.db.store import create_channel
     from src.db.models import Session, SessionMember
 
     # Capture the Session object added to track its attributes
@@ -324,7 +324,7 @@ async def test_create_channel_returns_session_id():
 @pytest.mark.asyncio
 async def test_create_channel_is_feature_scoped():
     """create_channel stores the feature_id so channels are feature-scoped."""
-    from src.db.store_v4 import create_channel
+    from src.db.store import create_channel
     from src.db.models import Session
 
     added_objects = []
@@ -355,7 +355,7 @@ async def test_create_channel_is_feature_scoped():
 async def test_create_channel_duplicate_name_raises():
     """create_channel propagates IntegrityError on duplicate channel name."""
     from sqlalchemy.exc import IntegrityError
-    from src.db.store_v4 import create_channel
+    from src.db.store import create_channel
 
     db = _mock_db()
     db.flush = AsyncMock(side_effect=IntegrityError("unique", {}, None))
@@ -367,7 +367,7 @@ async def test_create_channel_duplicate_name_raises():
 @pytest.mark.asyncio
 async def test_create_channel_without_description():
     """create_channel works without an optional description."""
-    from src.db.store_v4 import create_channel
+    from src.db.store import create_channel
     from src.db.models import Session
 
     added_sessions = []
@@ -389,7 +389,7 @@ async def test_create_channel_without_description():
 @pytest.mark.asyncio
 async def test_list_channels_returns_non_archived():
     """list_channels returns non-archived channels ordered by started_at DESC."""
-    from src.db.store_v4 import list_channels
+    from src.db.store import list_channels
 
     now = time.time()
     r1 = MagicMock(
@@ -417,7 +417,7 @@ async def test_list_channels_returns_non_archived():
 @pytest.mark.asyncio
 async def test_get_channel_found():
     """get_channel returns the session for a valid channel id."""
-    from src.db.store_v4 import get_channel
+    from src.db.store import get_channel
     from src.db.models import Session
 
     fake_session = MagicMock(spec=Session)
@@ -434,7 +434,7 @@ async def test_get_channel_found():
 @pytest.mark.asyncio
 async def test_get_channel_not_found():
     """get_channel returns None for an unknown or non-channel session id."""
-    from src.db.store_v4 import get_channel
+    from src.db.store import get_channel
 
     result_mock = MagicMock()
     result_mock.scalar_one_or_none.return_value = None
@@ -449,7 +449,7 @@ async def test_get_channel_not_found():
 @pytest.mark.asyncio
 async def test_hard_delete_channel_existing():
     """hard_delete_channel deletes the channel session and returns True."""
-    from src.db.store_v4 import hard_delete_channel
+    from src.db.store import hard_delete_channel
     from src.db.models import Session
 
     fake_session = MagicMock(spec=Session)
@@ -469,7 +469,7 @@ async def test_hard_delete_channel_existing():
 @pytest.mark.asyncio
 async def test_hard_delete_channel_not_found():
     """hard_delete_channel returns False when the channel does not exist."""
-    from src.db.store_v4 import hard_delete_channel
+    from src.db.store import hard_delete_channel
 
     result_mock = MagicMock()
     result_mock.scalar_one_or_none.return_value = None

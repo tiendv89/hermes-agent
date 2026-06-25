@@ -12,8 +12,13 @@ from sqlalchemy import (
     Text,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase
+
+# Session ids are native UUID columns (migration 005). as_uuid=False keeps the
+# Python side as plain strings, so existing code that treats session_id as a
+# string is unaffected.
+SessionUUID = UUID(as_uuid=False)
 
 
 class Base(DeclarativeBase):
@@ -24,13 +29,13 @@ class Session(Base):
     __tablename__ = "sessions"
 
     # Core — mirrors hermes SessionDB schema
-    id = Column(String, primary_key=True)
+    id = Column(SessionUUID, primary_key=True)
     source = Column(String, nullable=False)
     user_id = Column(String)
     model = Column(String)
     model_config = Column(Text)
     system_prompt = Column(Text)
-    parent_session_id = Column(String, ForeignKey("sessions.id"))
+    parent_session_id = Column(SessionUUID, ForeignKey("sessions.id"))
     started_at = Column(Double, nullable=False)
     ended_at = Column(Double)
     end_reason = Column(String)
@@ -76,7 +81,7 @@ class Message(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     session_id = Column(
-        String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+        SessionUUID, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
     )
     role = Column(String, nullable=False)
     content = Column(Text)
@@ -114,7 +119,7 @@ class SessionMember(Base):
     __tablename__ = "session_members"
 
     session_id = Column(
-        String,
+        SessionUUID,
         ForeignKey("sessions.id", ondelete="CASCADE"),
         nullable=False,
         primary_key=True,
@@ -137,7 +142,7 @@ class MessageMention(Base):
         BigInteger, ForeignKey("messages.id", ondelete="CASCADE"), nullable=False
     )
     session_id = Column(
-        String, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
+        SessionUUID, ForeignKey("sessions.id", ondelete="CASCADE"), nullable=False
     )
     mentioned_id = Column(String, nullable=False)
     mentioned_kind = Column(String, nullable=False)  # 'user' | 'agent'
