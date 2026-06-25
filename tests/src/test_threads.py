@@ -70,7 +70,7 @@ def _make_thread_row(
 @pytest.mark.asyncio
 async def test_create_workspace_thread_creates_session_and_joins_creator():
     """create_workspace_thread creates a kind='thread', feature_id='' Session and auto-joins creator."""
-    from src.db.store_v4 import create_workspace_thread
+    from src.db.store import create_workspace_thread
 
     db = _mock_db()
     captured_adds: List[Any] = []
@@ -113,7 +113,7 @@ async def test_create_workspace_thread_creates_session_and_joins_creator():
 @pytest.mark.asyncio
 async def test_create_workspace_thread_adds_initial_members():
     """create_workspace_thread adds extra members from the members list (skips creator duplicate)."""
-    from src.db.store_v4 import create_workspace_thread
+    from src.db.store import create_workspace_thread
 
     db = _mock_db()
     captured_adds: List[Any] = []
@@ -144,7 +144,7 @@ async def test_create_workspace_thread_adds_initial_members():
 @pytest.mark.asyncio
 async def test_create_workspace_thread_optional_title():
     """create_workspace_thread stores title when provided, None when omitted."""
-    from src.db.store_v4 import create_workspace_thread
+    from src.db.store import create_workspace_thread
     from src.db.models import Session
 
     db = _mock_db()
@@ -166,7 +166,7 @@ async def test_create_workspace_thread_optional_title():
 @pytest.mark.asyncio
 async def test_list_workspace_threads_returns_own_and_member_of():
     """list_workspace_threads returns threads the user owns or is a member of."""
-    from src.db.store_v4 import list_workspace_threads
+    from src.db.store import list_workspace_threads
 
     db = _mock_db()
     row = _make_thread_row(id="sess_t1", feature_id="")
@@ -185,7 +185,7 @@ async def test_list_workspace_threads_returns_own_and_member_of():
 @pytest.mark.asyncio
 async def test_list_workspace_threads_untitled_fallback():
     """list_workspace_threads uses '(untitled)' when title is None."""
-    from src.db.store_v4 import list_workspace_threads
+    from src.db.store import list_workspace_threads
 
     db = _mock_db()
     row = _make_thread_row(id="sess_t2", title=None, feature_id="")
@@ -200,7 +200,7 @@ async def test_list_workspace_threads_untitled_fallback():
 @pytest.mark.asyncio
 async def test_list_member_sessions_includes_workspace_threads():
     """list_member_sessions returns both feature threads and workspace threads (no feature_id filter)."""
-    from src.db.store_v4 import list_member_sessions
+    from src.db.store import list_member_sessions
 
     db = _mock_db()
     # One feature thread and one workspace thread

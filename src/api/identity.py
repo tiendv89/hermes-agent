@@ -47,3 +47,10 @@ def require_identity(request: Request) -> Identity:
         user_id=request.headers.get("X-User-Id", "").strip(),
         org_id=request.headers.get("X-Org-Id", "").strip(),
     )
+
+
+def require_service_token(request: Request) -> None:
+    """FastAPI dependency for pure service-to-service calls (no user identity) —
+    validates the shared service token only. Used by internal endpoints that other
+    backend services (e.g. workflow-backend) call directly."""
+    _check_service_token(request)

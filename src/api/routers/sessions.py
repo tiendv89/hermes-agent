@@ -17,11 +17,12 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
-from src.api.identity import Identity, require_identity
+from src.api.identity import Identity, require_identity, require_service_token
 from src.db import (
     create_session,
     delete_session,
     delete_sessions_for_feature,
+    delete_sessions_for_workspace,
     get_session,
     get_session_messages,
     list_sessions,
@@ -132,3 +133,15 @@ async def delete_session_endpoint(
         raise HTTPException(status_code=403, detail="Not your session.")
     await delete_session(db, session_id)
     return JSONResponse({"ok": True, "session_id": session_id})
+
+
+@router.delete("/internal/workspaces/{workspace_id}/sessions", dependencies=[Depends(require_service_token)])
+async def delete_workspace_sessions_endpoint(
+    workspace_id: str,
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Service-to-service: hard-delete EVERY session for a workspace (all users +
+    channels). Called by workflow-backend when a workspace (or its org) is deleted.
+    Service-token auth only — no per-user scoping."""
+    deleted = await delete_sessions_for_workspace(db, workspace_id)
+    return JSONResponse({"deleted": deleted})

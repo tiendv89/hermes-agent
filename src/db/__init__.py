@@ -14,6 +14,7 @@ from src.db.store import (
     set_session_archived,
     delete_session,
     delete_sessions_for_feature,
+    delete_sessions_for_workspace,
     append_message,
     get_messages_as_conversation,
     get_messages_since,
@@ -22,7 +23,7 @@ from src.db.store import (
     get_latest_assistant_message_id,
     update_message_cta_suggestions,
 )
-from src.db.store_v4 import (
+from src.db.store import (
     add_member,
     remove_member,
     list_members,
@@ -62,6 +63,7 @@ __all__ = [
     "set_session_archived",
     "delete_session",
     "delete_sessions_for_feature",
+    "delete_sessions_for_workspace",
     "append_message",
     "get_messages_as_conversation",
     "get_messages_since",
