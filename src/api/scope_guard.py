@@ -19,9 +19,23 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Optional
 
 logger = logging.getLogger(__name__)
+
+_TRIVIAL_IN_SCOPE = re.compile(
+    r"^(hi|hey|hello|yo|sup|gm|hiya|howdy|good\s*(morning|afternoon|evening)|"
+    r"thanks|thank\s*you|ty|thx|ok|okay|k|kk|yes|yep|yeah|yup|sure|"
+    r"go\s*ahead|please\s*do|do\s*it|continue|proceed|sounds\s*good|"
+    r"got\s*it|cool|nice|great|perfect|awesome|no|nope)"
+    r"[\s!.?,…]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_trivially_in_scope(text: str) -> bool:
+    return len(text) <= 2 or bool(_TRIVIAL_IN_SCOPE.match(text))
 
 # The canned decline — mirrors the example in shared.md's scope section.
 SCOPE_DECLINE = (
@@ -55,6 +69,24 @@ def _enabled() -> bool:
     )
 
 
+def _classifier_model(provider: Optional[str], model: Optional[str]) -> Optional[str]:
+    """Pick the model used for the IN/OUT classification.
+
+    This preflight runs *serialized* in front of every reply, so it must be
+    fast: a 1-word classification doesn't need the turn's (possibly heavy,
+    thinking-enabled) model. For Anthropic we drop to Haiku — far lower TTFT.
+    Override with ``HERMES_SCOPE_GUARD_MODEL``; other providers keep their own
+    model so we never send a Claude id to a non-Anthropic endpoint.
+    """
+    override = os.environ.get("HERMES_SCOPE_GUARD_MODEL", "").strip()
+    if override:
+        return override
+    is_anthropic = (provider or "").strip().lower() == "anthropic" or "claude" in (model or "").lower()
+    if is_anthropic:
+        return "claude-haiku-4-5"
+    return model
+
+
 def is_out_of_scope(
     message: str,
     *,
@@ -71,12 +103,15 @@ def is_out_of_scope(
     text = (message or "").strip()
     if not text or not _enabled():
         return False
+
+    if _is_trivially_in_scope(text):
+        return False
     try:
         from agent.auxiliary_client import call_llm
 
         resp = call_llm(
             provider=provider,
-            model=model,
+            model=_classifier_model(provider, model),
             api_key=api_key,
             base_url=base_url,
             messages=[

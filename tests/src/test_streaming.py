@@ -259,3 +259,288 @@ class TestHermesSSETranslator:
         # and the real answer still came through afterward.
         assert any(c.startswith(": keepalive") for c in raw_chunks)
         assert any('"content": "the answer"' in c for c in raw_chunks)
+
+    # -- agent.reasoning tests (T1: m3-agent-chat-thinking) -----------------
+
+    def test_on_reasoning_emits_reasoning_delta_frame(self):
+        """on_reasoning emits a well-formed agent.reasoning / reasoning.delta frame."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_reasoning("I should think about this carefully.")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        reasoning_frames = [f for f in frames if f.get("_event") == "agent.reasoning"]
+        assert len(reasoning_frames) >= 1
+        delta_frames = [f for f in reasoning_frames if f.get("object") == "reasoning.delta"]
+        assert len(delta_frames) == 1
+        assert delta_frames[0]["content"] == "I should think about this carefully."
+
+    def test_on_reasoning_ignores_falsy_delta(self):
+        """Falsy reasoning deltas (None, empty string) produce no frames."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_reasoning(None)
+            t.on_reasoning("")
+            t.on_delta("answer")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        reasoning_frames = [f for f in frames if f.get("_event") == "agent.reasoning"]
+        assert reasoning_frames == []
+
+    def test_reasoning_accumulated_separately_from_content(self):
+        """Reasoning deltas must not appear in assistant content chunks."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_reasoning("thinking...")
+            t.on_delta("the answer")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        # Content chunks must contain only the delta text, not any reasoning text.
+        content_frames = [
+            f for f in frames
+            if f.get("object") == "chat.completion.chunk"
+            and f.get("choices", [{}])[0].get("delta", {}).get("content")
+        ]
+        assert len(content_frames) == 1
+        assert content_frames[0]["choices"][0]["delta"]["content"] == "the answer"
+        # Reasoning frames are emitted with the distinct event type.
+        reasoning_frames = [f for f in frames if f.get("_event") == "agent.reasoning"]
+        assert len(reasoning_frames) >= 1
+
+    def test_no_reasoning_turn_emits_no_reasoning_frames(self):
+        """A turn with no reasoning callback fires produces zero agent.reasoning frames."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_delta("plain answer")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        reasoning_frames = [f for f in frames if f.get("_event") == "agent.reasoning"]
+        assert reasoning_frames == []
+
+    def test_reasoning_done_frame_emitted_on_turn_end(self):
+        """When reasoning was streamed, a reasoning.done frame is emitted at turn end."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_reasoning("step one")
+            t.on_reasoning("step two")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        done_frames = [
+            f for f in frames
+            if f.get("_event") == "agent.reasoning" and f.get("object") == "reasoning.done"
+        ]
+        assert len(done_frames) == 1
+
+    def test_no_reasoning_done_frame_when_no_reasoning(self):
+        """No reasoning.done frame when no reasoning was emitted."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_delta("answer only")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        done_frames = [
+            f for f in frames
+            if f.get("_event") == "agent.reasoning" and f.get("object") == "reasoning.done"
+        ]
+        assert done_frames == []
+
+    def test_reasoning_interleaved_with_content_stays_separate(self):
+        """Multi-burst reasoning interleaved with content is accumulated separately."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_reasoning("burst one")
+            t.on_delta("answer part 1 ")
+            t.on_reasoning("burst two")
+            t.on_delta("answer part 2")
+            t.done()
+
+        frames = self._collect(streaming, do)
+        reasoning_frames = [f for f in frames if f.get("_event") == "agent.reasoning"
+                            and f.get("object") == "reasoning.delta"]
+        content_frames = [
+            f for f in frames
+            if f.get("object") == "chat.completion.chunk"
+            and f.get("choices", [{}])[0].get("delta", {}).get("content")
+        ]
+        assert len(reasoning_frames) == 2
+        assert {rf["content"] for rf in reasoning_frames} == {"burst one", "burst two"}
+        assert len(content_frames) == 2
+
+    def test_on_reasoning_does_not_call_append_message(self):
+        """on_reasoning must not invoke append_message — reasoning is ephemeral."""
+        import types
+        from unittest.mock import MagicMock
+
+        streaming = _load_streaming()
+
+        # Inject a stub for src.db.store so that if on_reasoning ever tries to
+        # persist reasoning deltas, the mock records the call and fails the assertion.
+        mock_append = MagicMock()
+        db_stub = types.ModuleType("src.db.store")
+        db_stub.append_message = mock_append  # type: ignore[attr-defined]
+        sys.modules["src.db.store"] = db_stub
+
+        def do(t):
+            t.on_reasoning("should not persist this")
+            t.done()
+
+        self._collect(streaming, do)
+        mock_append.assert_not_called()
+
+    def test_content_stream_parity_with_reasoning(self):
+        """Assistant content frames are byte-identical whether or not reasoning is emitted."""
+        streaming = _load_streaming()
+
+        def _content_frames(frames):
+            return [
+                f for f in frames
+                if f.get("object") == "chat.completion.chunk"
+            ]
+
+        def do_with_reasoning(t):
+            t.on_reasoning("some thinking")
+            t.on_delta("Hello")
+            t.on_delta(", world")
+            t.done()
+
+        def do_without_reasoning(t):
+            t.on_delta("Hello")
+            t.on_delta(", world")
+            t.done()
+
+        frames_with = self._collect(streaming, do_with_reasoning)
+        # Re-load to get a fresh module state (autouse fixture handles module cleanup
+        # between tests, but we need two runs within a single test here).
+        for k in list(sys.modules.keys()):
+            if k.startswith("src"):
+                del sys.modules[k]
+        streaming2 = _load_streaming()
+        frames_without = self._collect(streaming2, do_without_reasoning)
+
+        content_with = _content_frames(frames_with)
+        content_without = _content_frames(frames_without)
+
+        # Strip the finish frame (it carries usage which is the same anyway)
+        # and compare content deltas.
+        def _deltas(fs):
+            return [f["choices"][0]["delta"].get("content") for f in fs
+                    if f["choices"][0]["delta"].get("content")]
+
+        assert _deltas(content_with) == _deltas(content_without)
+
+
+def _load_bus_translator():
+    """Import src.streaming.bus_translator with minimal stubs for the bus dependency."""
+    import types
+
+    # Stub the bus module so BusPublishingSSETranslator can be imported
+    # without a running event loop or Postgres.
+    bus_stub = types.ModuleType("src.realtime.bus")
+    realtime_stub = types.ModuleType("src.realtime")
+    realtime_stub.bus = bus_stub  # type: ignore[attr-defined]
+    sys.modules.setdefault("src.realtime", realtime_stub)
+    sys.modules["src.realtime.bus"] = bus_stub
+
+    class _FakeBus:
+        def __init__(self):
+            self.events = []
+
+        def publish(self, session_id, event):
+            self.events.append((session_id, event))
+
+    fake_bus = _FakeBus()
+    bus_stub.get_bus = lambda: fake_bus  # type: ignore[attr-defined]
+
+    # Load the SSE base first (already done by _load_streaming in the fixture).
+    _load_streaming()
+
+    bus_dir = REPO_ROOT / "src" / "streaming"
+    spec = importlib.util.spec_from_file_location(
+        "src.streaming.bus_translator",
+        bus_dir / "bus_translator.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    mod.__package__ = "src.streaming"
+    sys.modules["src.streaming.bus_translator"] = mod
+    spec.loader.exec_module(mod)
+    return mod, fake_bus
+
+
+class TestBusPublishingSSETranslatorReasoning:
+    """Tests for BusPublishingSSETranslator.on_reasoning bus fan-out."""
+
+    def test_on_reasoning_publishes_to_bus(self):
+        """on_reasoning fan-out publishes agent.reasoning to the bus."""
+        mod, fake_bus = _load_bus_translator()
+
+        async def _run():
+            t = mod.BusPublishingSSETranslator(session_id="sess-1")
+            t.on_reasoning("thinking out loud")
+            t.done()
+            async for _ in t.stream():
+                pass
+
+        asyncio.run(_run())
+
+        bus_reasoning = [
+            e for (_, e) in fake_bus.events
+            if e.get("event") == "agent.reasoning"
+        ]
+        assert len(bus_reasoning) == 1
+        assert bus_reasoning[0]["data"] == {"content": "thinking out loud"}
+
+    def test_on_reasoning_also_emits_sse_frame(self):
+        """on_reasoning emits both the SSE frame AND the bus publish."""
+        mod, fake_bus = _load_bus_translator()
+        sse_frames = []
+
+        async def _run():
+            t = mod.BusPublishingSSETranslator(session_id="sess-2")
+            t.on_reasoning("step A")
+            t.done()
+            async for chunk in t.stream():
+                if chunk.strip().startswith("data: [DONE]"):
+                    break
+                if "agent.reasoning" in chunk:
+                    sse_frames.append(chunk)
+
+        asyncio.run(_run())
+
+        # SSE frame emitted by the base class method.
+        assert len(sse_frames) >= 1
+        # Bus publish emitted by the override.
+        bus_events = [e for (_, e) in fake_bus.events if e.get("event") == "agent.reasoning"]
+        assert len(bus_events) == 1
+
+    def test_on_reasoning_falsy_delta_no_bus_publish(self):
+        """Falsy reasoning delta is not published to the bus."""
+        mod, fake_bus = _load_bus_translator()
+
+        async def _run():
+            t = mod.BusPublishingSSETranslator(session_id="sess-3")
+            t.on_reasoning(None)
+            t.on_reasoning("")
+            t.done()
+            async for _ in t.stream():
+                pass
+
+        asyncio.run(_run())
+
+        bus_reasoning = [
+            e for (_, e) in fake_bus.events
+            if e.get("event") == "agent.reasoning"
+        ]
+        assert bus_reasoning == []
