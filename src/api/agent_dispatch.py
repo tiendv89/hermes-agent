@@ -27,6 +27,25 @@ logger = logging.getLogger(__name__)
 
 _WORD_RE = _re.compile(r"\S+\s*|\s+")
 
+# Greetings / affirmations / very short messages never need extended thinking.
+# Skipping reasoning on these is the single biggest win for time-to-reply on a
+# "hi": thinking adds ~3-5s, and it's pure waste when the model only has to say
+# hello. Substantive questions don't match this and still get the full trace.
+_TRIVIAL_MSG_RE = _re.compile(
+    r"^(hi|hey|hello|yo|sup|gm|hiya|howdy|good\s*(morning|afternoon|evening)|"
+    r"thanks|thank\s*you|ty|thx|ok|okay|k|kk|yes|yep|yeah|yup|sure|"
+    r"go\s*ahead|please\s*do|do\s*it|continue|proceed|sounds\s*good|"
+    r"got\s*it|cool|nice|great|perfect|awesome|no|nope)"
+    r"[\s!.?,…]*$",
+    _re.IGNORECASE,
+)
+
+
+def _is_trivial_message(text: str) -> bool:
+    """True for greetings/affirmations/very short messages — skip thinking on these."""
+    t = (text or "").strip()
+    return len(t) <= 2 or bool(_TRIVIAL_MSG_RE.match(t))
+
 
 def _make_delta_callback(cb: Callable) -> Callable:
     """Wrap a stream-delta callback to split large chunks into word-sized pieces.
@@ -265,7 +284,13 @@ def _run_agent_turn(
         # without invoking the agent at all. Fails open (see scope_guard).
         from src.api.scope_guard import SCOPE_DECLINE, is_out_of_scope
 
-        if is_out_of_scope(
+        # Only gate scope on the opening message of a session. `history` already
+        # includes the just-persisted user message, so len<=1 means first turn.
+        # Off-topic risk is highest at entry; once a workspace conversation is
+        # established the classifier almost always returns IN, so running it on
+        # every follow-up just adds a serialized ~1s LLM round-trip to TTFT.
+        is_first_turn = len(history or []) <= 1
+        if is_first_turn and is_out_of_scope(
             message, provider=provider, model=model, api_key=api_key, base_url=base_url
         ):
             logger.info(
@@ -323,6 +348,14 @@ def _run_agent_turn(
 
         shared_rules = get_shared_rules() or None
 
+        _reasoning_effort = os.environ.get("HERMES_REASONING_EFFORT", "medium").strip().lower()
+        _reasoning_off = _reasoning_effort in ("", "off", "none", "disabled")
+        reasoning_config = (
+            None
+            if (_reasoning_off or _is_trivial_message(message))
+            else {"enabled": True, "effort": _reasoning_effort}
+        )
+
         from run_agent import AIAgent
 
         agent = AIAgent(
@@ -343,6 +376,7 @@ def _run_agent_turn(
             tool_start_callback=translator.on_tool_start,
             tool_complete_callback=translator.on_tool_complete,
             reasoning_callback=_make_delta_callback(translator.on_reasoning),
+            reasoning_config=reasoning_config,
         )
 
         # Publish the live agent so the cancel endpoint can interrupt the
