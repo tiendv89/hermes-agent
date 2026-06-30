@@ -504,7 +504,7 @@ Rules:
 
 ## Per-task required skills
 
-Technical skills are declared per task, not per agent or per role. Each task's `## T<n>` section in `tasks.md` includes a `### Required skills` subsection listing the skill slugs the task needs. Skill slugs must match directory names under `workflow/claude/technical_skills/`.
+Technical skills are declared per task, not per agent or per role. Each task's `## T<n>` section in `tasks.md` includes a `### Required skills` subsection listing the skill slugs the task needs. Skill slugs must match directory names under `workflow/claude/technical_skills/`. **When authoring tasks, only use slugs from the `## Available skills` block injected in context — do not invent slugs.**
 
 At run-task time, the agent reads the declared skills and loads their `SKILL.md` content into its system prompt. This is the only capability-matching mechanism — there is no agent-side role or skills list.
 
