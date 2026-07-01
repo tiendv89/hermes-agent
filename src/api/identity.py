@@ -19,6 +19,8 @@ import os
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
+from src.services import platform_role_client
+
 
 class Identity(BaseModel):
     """Caller identity resolved from BFF-injected request headers."""
@@ -54,3 +56,26 @@ def require_service_token(request: Request) -> None:
     validates the shared service token only. Used by internal endpoints that other
     backend services (e.g. workflow-backend) call directly."""
     _check_service_token(request)
+
+
+async def require_platform_admin(request: Request) -> Identity:
+    """FastAPI dependency: enforce service token, read identity, then verify platform_admin role.
+
+    Calls ``require_identity`` first (validates GATEWAY_SERVICE_TOKEN and reads
+    X-User-Id / X-Org-Id), then checks that the user holds the ``platform_admin``
+    role via user-service's /internal/users/:userId/platform-roles/check endpoint.
+
+    **Fail-closed**: any network error, timeout, or unset USER_SERVICE_URL raises
+    403 — this is a deliberate deviation from cost_client.py's fail-open convention.
+    For availability concerns (quota, cost) failing open is acceptable; for
+    authorization it is not.
+    """
+    identity = require_identity(request)
+    if not identity.user_id:
+        raise HTTPException(status_code=401, detail="Missing user identity.")
+
+    has_role = await platform_role_client.has_role(identity.user_id, "platform_admin")
+    if not has_role:
+        raise HTTPException(status_code=403, detail="Platform admin role required.")
+
+    return identity

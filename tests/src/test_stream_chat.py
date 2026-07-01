@@ -131,6 +131,7 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
     session_mock = MagicMock()
     session_mock.title = "existing title"  # non-null → auto-title skipped
 
+    _resolved = {"model": "claude-sonnet-4-6", "provider": "anthropic", "api_key": None, "base_url": None}
     with (
         patch(
             "src.api.routers.chat.get_session",
@@ -143,6 +144,8 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
         patch("src.api.routers.chat.set_session_title", AsyncMock()),
         patch("src.api.routers.chat.touch_session", AsyncMock()),
         patch("src.api.routers.chat.update_session_model", AsyncMock()),
+        patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
+        patch("src.api.routers.chat.default_model", AsyncMock(return_value="claude-sonnet-4-6")),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=stream_chat_app),

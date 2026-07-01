@@ -579,8 +579,7 @@ async def _schedule_follow_up(
         async with pending["db_factory"]() as db:
             history = await get_messages_as_conversation(db, session_id)
             await touch_session(db, session_id)
-
-        resolved = resolve_model(pending["model"])
+            resolved = await resolve_model(db, pending["model"])
 
         with _active_runs_lock:
             if session_id in _active_runs:

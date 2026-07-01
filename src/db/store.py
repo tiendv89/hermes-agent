@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, Session, SessionMember
+from .models import Message, MessageMention, ModelCatalog, Session, SessionMember
 
 logger = logging.getLogger(__name__)
 
@@ -1035,3 +1035,129 @@ async def list_workspace_threads(
         }
         for row in result.all()
     ]
+
+
+# ---------------------------------------------------------------------------
+# Model catalog CRUD
+# ---------------------------------------------------------------------------
+
+
+async def list_catalog_models(db: AsyncSession) -> List[Dict[str, Any]]:
+    """Return all model_catalog rows ordered by display_name."""
+    result = await db.execute(
+        select(ModelCatalog).order_by(ModelCatalog.display_name)
+    )
+    return [_catalog_row(m) for m in result.scalars().all()]
+
+
+async def list_active_catalog_models(db: AsyncSession) -> List[Dict[str, Any]]:
+    """Return only active model_catalog rows ordered by display_name."""
+    result = await db.execute(
+        select(ModelCatalog)
+        .where(ModelCatalog.is_active == True)  # noqa: E712
+        .order_by(ModelCatalog.display_name)
+    )
+    return [_catalog_row(m) for m in result.scalars().all()]
+
+
+async def get_catalog_model(
+    db: AsyncSession, model_id: str
+) -> Optional[ModelCatalog]:
+    """Return a single ModelCatalog row or None."""
+    result = await db.execute(
+        select(ModelCatalog).where(ModelCatalog.model_id == model_id)
+    )
+    return result.scalar_one_or_none()
+
+
+async def get_default_catalog_model(db: AsyncSession) -> Optional[ModelCatalog]:
+    """Return the row with is_default=True (at most one, enforced by the unique index)."""
+    result = await db.execute(
+        select(ModelCatalog).where(
+            ModelCatalog.is_default == True,  # noqa: E712
+            ModelCatalog.is_active == True,  # noqa: E712
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def create_catalog_model(
+    db: AsyncSession,
+    model_id: str,
+    display_name: str,
+    provider: str,
+    is_active: bool = True,
+    is_default: bool = False,
+) -> ModelCatalog:
+    """Insert a new model_catalog row. Raises IntegrityError on duplicate model_id."""
+    row = ModelCatalog(
+        model_id=model_id,
+        display_name=display_name,
+        provider=provider,
+        is_active=is_active,
+        is_default=is_default,
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+async def update_catalog_model(
+    db: AsyncSession,
+    model_id: str,
+    *,
+    display_name: Optional[str] = None,
+    is_active: Optional[bool] = None,
+    is_default: Optional[bool] = None,
+) -> Optional[ModelCatalog]:
+    """Patch a model_catalog row.
+
+    Setting is_default=True clears any previous default in the same transaction
+    (the unique partial index on is_default WHERE is_default also enforces this
+    at the DB level, but we handle it explicitly for a clean user error).
+
+    Raises ValueError if caller tries to deactivate the current default model
+    (the admin must reassign the default first).
+    """
+    row = await get_catalog_model(db, model_id)
+    if row is None:
+        return None
+
+    # Guard: cannot deactivate the current default.
+    if is_active is False and row.is_default:
+        raise ValueError(
+            "Cannot deactivate the current default model. "
+            "Reassign the default to another model first."
+        )
+
+    # If setting this model as the new default, clear any existing default first.
+    if is_default is True:
+        await db.execute(
+            update(ModelCatalog)
+            .where(ModelCatalog.is_default == True)  # noqa: E712
+            .values(is_default=False)
+        )
+
+    if display_name is not None:
+        row.display_name = display_name
+    if is_active is not None:
+        row.is_active = is_active
+    if is_default is not None:
+        row.is_default = is_default
+
+    await db.commit()
+    await db.refresh(row)
+    return row
+
+
+def _catalog_row(m: ModelCatalog) -> Dict[str, Any]:
+    return {
+        "model_id": m.model_id,
+        "display_name": m.display_name,
+        "provider": m.provider,
+        "is_active": m.is_active,
+        "is_default": m.is_default,
+        "created_at": m.created_at.isoformat() if m.created_at else None,
+        "updated_at": m.updated_at.isoformat() if m.updated_at else None,
+    }
