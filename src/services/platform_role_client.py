@@ -83,8 +83,11 @@ async def has_role(user_id: str, role: str) -> bool:
                         resp.status,
                     )
                     return False  # fail-closed
-                body = await resp.json()
-                return bool(body.get("has_role", False))
+                raw = await resp.json()
+                # user-service wraps responses as {"success", "data"}; unwrap
+                # before reading has_role, tolerating a raw (unenveloped) body.
+                body = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
+                return bool(body.get("has_role", False)) if isinstance(body, dict) else False
     except Exception:
         logger.exception(
             "platform_role_client: role check failed for user %s (fail-closed)", user_id
