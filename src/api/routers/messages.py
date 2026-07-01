@@ -193,9 +193,9 @@ async def send_message(
 
     # --- Trigger agent (with coalescing) ---
     chosen_model = (
-        (body.model or "").strip() or getattr(session, "model", None) or default_model()
+        (body.model or "").strip() or getattr(session, "model", None) or await default_model(db)
     )
-    resolved = resolve_model(chosen_model)
+    resolved = await resolve_model(db, chosen_model)
     if resolved["model"] != getattr(session, "model", None):
         await update_session_model(db, session_id, resolved["model"])
 

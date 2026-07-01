@@ -169,6 +169,7 @@ async def test_auto_title_set_on_null_title_session(gateway_app):
 
     set_title_mock = AsyncMock()
 
+    _resolved = {"model": "claude-sonnet-4-6", "provider": "anthropic", "api_key": None, "base_url": None}
     with (
         patch(
             "src.api.routers.chat.get_session",
@@ -181,6 +182,8 @@ async def test_auto_title_set_on_null_title_session(gateway_app):
         patch("src.api.routers.chat.set_session_title", set_title_mock),
         patch("src.api.routers.chat.touch_session", AsyncMock()),
         patch("src.api.routers.chat.update_session_model", AsyncMock()),
+        patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
+        patch("src.api.routers.chat.default_model", AsyncMock(return_value="claude-sonnet-4-6")),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=gateway_app),
@@ -217,6 +220,7 @@ async def test_auto_title_not_set_when_title_exists(gateway_app):
 
     set_title_mock = AsyncMock()
 
+    _resolved = {"model": "claude-sonnet-4-6", "provider": "anthropic", "api_key": None, "base_url": None}
     with (
         patch(
             "src.api.routers.chat.get_session",
@@ -229,6 +233,8 @@ async def test_auto_title_not_set_when_title_exists(gateway_app):
         patch("src.api.routers.chat.set_session_title", set_title_mock),
         patch("src.api.routers.chat.touch_session", AsyncMock()),
         patch("src.api.routers.chat.update_session_model", AsyncMock()),
+        patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
+        patch("src.api.routers.chat.default_model", AsyncMock(return_value="claude-sonnet-4-6")),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=gateway_app),
