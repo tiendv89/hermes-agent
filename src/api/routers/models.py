@@ -5,18 +5,27 @@ GET /models — selectable chat models for the FE picker
 
 from __future__ import annotations
 
-from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from typing import Annotated
 
-from src.api.model_catalog import SUPPORTED_MODELS, default_model
+from fastapi import APIRouter, Depends
+from fastapi.responses import JSONResponse
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.api.deps import get_db
+from src.api.model_catalog import default_model, get_active_models
 
 router = APIRouter()
 
 
 @router.get("/models")
-async def list_models_endpoint() -> JSONResponse:
-    """Return the supported chat models (Claude + DeepSeek) and the server default.
+async def list_models_endpoint(
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> JSONResponse:
+    """Return the supported chat models and the server default.
 
-    Static catalog — no identity required; the picker fetches it once on load.
+    Response shape is unchanged — {models: [{id, label, provider}], default}.
+    The catalog is now read from the model_catalog table instead of a hardcoded list.
     """
-    return JSONResponse({"models": SUPPORTED_MODELS, "default": default_model()})
+    models = await get_active_models(db)
+    default = await default_model(db)
+    return JSONResponse({"models": models, "default": default})

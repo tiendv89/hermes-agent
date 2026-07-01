@@ -8,6 +8,9 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     GET  /sessions                               — sessions
     GET  /sessions/{session_id}/messages         — sessions
     GET  /models                                 — models
+    GET  /admin/models                           — admin model catalog (list)
+    POST /admin/models                           — admin model catalog (create)
+    PATCH /admin/models/{id}                     — admin model catalog (update)
     POST /chat                                   — chat (streaming SSE, legacy)
     POST /threads/{id}/messages                  — send service (v4 team-chat)
     GET  /threads/{id}/stream                    — SSE fan-out subscription (v4)
@@ -29,6 +32,7 @@ from __future__ import annotations
 from fastapi import APIRouter
 
 from src.api.routers import (
+    admin_models,
     channels,
     chat,
     documents,
@@ -45,6 +49,7 @@ from src.api.routers import (
 router = APIRouter()
 router.include_router(sessions.router)
 router.include_router(models.router)
+router.include_router(admin_models.router)
 router.include_router(chat.router)
 router.include_router(messages.router)
 router.include_router(stream.router)

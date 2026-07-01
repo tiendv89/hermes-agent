@@ -96,9 +96,9 @@ async def chat(
         chosen = (
             (body.model or "").strip()
             or getattr(session, "model", None)
-            or default_model()
+            or await default_model(db)
         )
-        resolved = resolve_model(chosen)
+        resolved = await resolve_model(db, chosen)
         if resolved["model"] != getattr(session, "model", None):
             await update_session_model(db, session_id, resolved["model"])
 
