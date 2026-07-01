@@ -4,6 +4,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     Column,
+    DateTime,
     Double,
     ForeignKey,
     Index,
@@ -14,6 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.sql import func as sql_func
 
 # Session ids are native UUID columns (migration 005). as_uuid=False keeps the
 # Python side as plain strings, so existing code that treats session_id as a
@@ -151,4 +153,25 @@ class MessageMention(Base):
     __table_args__ = (
         Index("idx_message_mentions_session", "session_id"),
         Index("idx_message_mentions_user", "session_id", "mentioned_id", "read_at"),
+    )
+
+
+class ModelCatalog(Base):
+    """Admin-editable model identity. One row per model."""
+
+    __tablename__ = "model_catalog"
+
+    model_id = Column(String, primary_key=True)
+    display_name = Column(String, nullable=False)
+    provider = Column(String, nullable=False)
+    is_active = Column(Boolean, nullable=False, default=True)
+    is_default = Column(Boolean, nullable=False, default=False)
+    created_at = Column(
+        DateTime(timezone=True), nullable=False, server_default=sql_func.now()
+    )
+    updated_at = Column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=sql_func.now(),
+        onupdate=sql_func.now(),
     )
