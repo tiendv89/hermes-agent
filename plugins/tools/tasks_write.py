@@ -6,7 +6,7 @@ For ts/git features:
 
 For go/postgres features:
   - Commits tasks.md (narrative only) to the init branch.
-  - Inserts task rows directly into workspace_tasks (DB is the source of truth).
+  - Tasks are created in the DB at tasks-stage approval (not during breakdown).
 
 Task YAML schema matches agent-workflow's canonical format:
   id, title, repo, status, depends_on, blocked_reason, branch,
@@ -35,7 +35,9 @@ SCHEMA: Dict[str, Any] = {
         "Generate the task breakdown for a feature and commit it. "
         "For ts/git features: commits tasks.md narrative + one tasks/T{n}.yaml per task "
         "to the feature branch. "
-        "For go/postgres features: commits tasks.md only and inserts tasks into the DB. "
+        "For go/postgres features: commits tasks.md only. Tasks are created in the DB at "
+        "tasks-stage approval (via approve_feature or the backup /create-tasks command) — "
+        "not during breakdown. "
         "REQUIRED FIRST: call read_document(document='technical_design') (and 'product_spec') to "
         "load the approved design from the feature branch and derive the task list from its actual "
         "content — never infer tasks from RAG or the request text. "
@@ -235,91 +237,6 @@ def _commit_files(
     return commit["sha"]
 
 
-def _insert_tasks_to_db(
-    workspace_id: str,
-    feature_id: str,
-    tasks: List[Dict[str, Any]],
-) -> None:
-    """Upsert task rows into workspace_tasks for go/postgres features.
-
-    task_id is a UUID PK; we match on (feature_id, task_name) to detect
-    existing rows and update rather than insert duplicates.
-    """
-    import json as _json
-    import uuid as _uuid
-    from ..db import _conn
-
-    with _conn() as conn:
-        # Look up the feature's DB PKs
-        row = conn.execute(
-            """
-            SELECT f.id AS feature_pk, f.feature_name, w.id AS workspace_pk
-            FROM workspace_features f
-            JOIN workspaces w ON w.id = f.workspace_id
-            WHERE (w.slug = %s OR w.id::text = %s)
-              AND (f.feature_name = %s OR f.feature_id::text = %s)
-            LIMIT 1
-            """,
-            (workspace_id, workspace_id, feature_id, feature_id),
-        ).fetchone()
-
-        if row is None:
-            raise ValueError(f"Feature {feature_id!r} not found in workspace {workspace_id!r}")
-
-        feature_pk = row["feature_pk"]
-        feature_name = row["feature_name"]
-        workspace_pk = row["workspace_pk"]
-
-        for task in tasks:
-            task_name = task["id"]  # e.g. "T1"
-            actor_type = task.get("actor_type") or "agent"
-            depends_on = _json.dumps(task.get("depends_on") or [])
-            execution = _json.dumps({
-                "actor_type": actor_type,
-                "last_updated_by": None,
-                "last_updated_at": None,
-            })
-            pr_val = _json.dumps({"url": "", "status": "not_created"})
-            repo = task.get("repo") or None
-
-            # Check if this task_name already exists for this feature.
-            existing = conn.execute(
-                "SELECT id FROM workspace_tasks WHERE feature_id = %s AND task_name = %s LIMIT 1",
-                (feature_pk, task_name),
-            ).fetchone()
-
-            if existing:
-                conn.execute(
-                    """
-                    UPDATE workspace_tasks
-                       SET title      = %s,
-                           depends_on = %s::jsonb,
-                           repo       = %s,
-                           execution  = %s::jsonb,
-                           owner      = 'go',
-                           updated_at = NOW()
-                     WHERE id = %s
-                    """,
-                    (task.get("title", ""), depends_on, repo, execution, existing["id"]),
-                )
-            else:
-                new_task_id = str(_uuid.uuid4())
-                conn.execute(
-                    """
-                    INSERT INTO workspace_tasks
-                        (workspace_id, feature_id, feature_name, task_id, task_name,
-                         title, status, depends_on, repo, execution, pr, owner)
-                    VALUES (%s, %s, %s, %s::uuid, %s, %s, 'todo',
-                            %s::jsonb, %s, %s::jsonb, %s::jsonb, 'go')
-                    """,
-                    (
-                        workspace_pk, feature_pk, feature_name, new_task_id,
-                        task_name, task.get("title", ""),
-                        depends_on, repo, execution, pr_val,
-                    ),
-                )
-
-
 def handle(
     tasks: List[Dict[str, Any]],
     tasks_md: str,
@@ -424,17 +341,6 @@ def handle(
         logger.exception("write_tasks: commit failed for feature %s", fid)
         return {"ok": False, "error": f"Git commit failed: {exc}"}
 
-    # go/postgres: insert tasks into DB
-    if owner == "go":
-        try:
-            _insert_tasks_to_db(wid, fid, tasks)
-        except Exception as exc:
-            logger.exception("write_tasks: DB insert failed for feature %s", fid)
-            return {
-                "ok": False,
-                "error": f"tasks.md committed (sha={commit_sha}) but DB insert failed: {exc}",
-            }
-
     return {
         "ok": True,
         "owner": owner,
@@ -442,10 +348,14 @@ def handle(
         "commit_sha": commit_sha,
         "tasks_committed": len(tasks),
         "files_written": list(files.keys()),
-        "db_tasks_inserted": len(tasks) if owner == "go" else 0,
         "message": (
             f"Task breakdown written: {len(tasks)} tasks committed to {branch}. "
-            + ("Task YAML files written in tasks/. " if owner != "go" else "Task state stored in DB. ")
+            + (
+                "Task YAML files written in tasks/. "
+                if owner != "go"
+                else "Tasks will be created in the DB at tasks-stage approval "
+                     "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
+            )
             + "Call approve_feature(stage='tasks') when ready to activate tasks."
         ),
     }
