@@ -131,6 +131,7 @@ async def chat(
             workspace_id=body.workspace_id,
             feature_id=body.feature_id,
             user_id=caller_id,
+            org_id=identity.org_id,
             model=resolved["model"],
             provider=resolved["provider"],
             api_key=resolved["api_key"],

@@ -28,20 +28,33 @@ from typing import Any, Callable, Optional
 logger = logging.getLogger(__name__)
 
 _lock = threading.Lock()
-_by_session: dict[str, tuple[str, str]] = {}
+_by_session: dict[str, tuple[str, str, str, str]] = {}
 _local = threading.local()
 _context_gathered: set[str] = set()
 
 
-def set_context(session_id: str, workspace_id: str, feature_id: str) -> None:
-    """Record the workspace/feature IDs for a session (and the current thread)."""
+def set_context(
+    session_id: str,
+    workspace_id: str,
+    feature_id: str,
+    user_id: str = "",
+    org_id: str = "",
+) -> None:
+    """Record the workspace/feature IDs and caller identity for a session (and the current thread).
+
+    Backward-compatible: absent user_id/org_id default to empty strings.
+    """
     with _lock:
-        _by_session[session_id] = (workspace_id, feature_id)
+        _by_session[session_id] = (workspace_id, feature_id, user_id, org_id)
     _local.workspace_id = workspace_id
     _local.feature_id = feature_id
+    _local.user_id = user_id
+    _local.org_id = org_id
     logger.info(
         "workflow context set: session=%s workspace_id=%r feature_id=%r",
-        session_id, workspace_id, feature_id,
+        session_id,
+        workspace_id,
+        feature_id,
     )
 
 
@@ -85,7 +98,7 @@ def get_context_for_session(session_id: str) -> tuple[str, str]:
         with _lock:
             found = _by_session.get(session_id)
         if found is not None:
-            return found
+            return found[0], found[1]
     return get_workspace_id(), get_feature_id()
 
 
@@ -116,3 +129,11 @@ def get_workspace_id() -> str:
 
 def get_feature_id() -> str:
     return getattr(_local, "feature_id", "")
+
+
+def get_user_id() -> str:
+    return getattr(_local, "user_id", "")
+
+
+def get_org_id() -> str:
+    return getattr(_local, "org_id", "")
