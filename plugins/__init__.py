@@ -24,6 +24,7 @@ from .tools import (
     tasks_write as tasks_write_tool,
     suggest_next_actions as suggest_next_actions_tool,
     create_tasks as create_tasks_tool,
+    parse_tasks as parse_tasks_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -172,6 +173,12 @@ _TOOLS = (
         "name": "create_tasks",
         "schema": create_tasks_tool.SCHEMA,
         "handler": create_tasks_tool.handle,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "parse_tasks",
+        "schema": parse_tasks_tool.SCHEMA,
+        "handler": parse_tasks_tool.handle,
         "check_fn": check_workflow_available,
     },
     {

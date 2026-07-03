@@ -77,10 +77,10 @@ _TASKS_MD = """\
 
 ## Index
 
-| ID | Wave | Title | Repo | Depends on |
-|----|------|-------|------|------------|
-| T1 | 1 | First task | hermes-agent | — |
-| T2 | 2 | Second task | hermes-agent | T1 |
+| ID | Title | Repo | Depends On | Actor |
+|----|-------|------|------------|-------|
+| T1 | First task | hermes-agent | — | agent |
+| T2 | Second task | hermes-agent | T1 | agent |
 
 ## T1 — First task
 """
@@ -383,11 +383,15 @@ class TestHandleSuccessPath:
         call_args = create_mock.call_args
         assert _FEATURE_ID in (call_args.args + tuple(call_args.kwargs.values()))
 
-    def test_success_passes_tasks_md_content(self, monkeypatch):
+    def test_success_passes_parsed_tasks(self, monkeypatch):
         _, create_mock = _run_create_tasks_handle(monkeypatch)
         call_args = create_mock.call_args
         all_args = call_args.args + tuple(call_args.kwargs.values())
-        assert any(_TASKS_MD in str(a) for a in all_args)
+        # The parsed task list (not the raw tasks.md) is passed to create.
+        task_lists = [a for a in all_args if isinstance(a, list)]
+        assert task_lists, "expected a parsed task list argument"
+        names = [t["name"] for t in task_lists[0]]
+        assert names == ["T1", "T2"]
 
     def test_result_included_in_response(self, monkeypatch):
         backend_result = {"tasks": [{"id": "T1"}]}

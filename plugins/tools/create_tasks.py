@@ -39,8 +39,9 @@ def _relay_create_tasks_reason_code(reason_code: str) -> str:
         )
     if reason_code == "empty_tasks":
         return (
-            "No tasks found in the tasks.md Index table. "
-            "Verify that tasks.md has a valid Index table with at least one task row."
+            "No tasks found in the tasks.md Index table. Verify that tasks.md has a "
+            "valid Index table with columns | ID | Title | Repo | Depends On | Actor | "
+            "and at least one T<n> row."
         )
     return "An unexpected error occurred when creating tasks in workflow-backend."
 
@@ -77,16 +78,77 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
+def load_feature_tasks_md(
+    workspace_id: str,
+    feature_id: str,
+    github_token: str,
+) -> Dict[str, Any]:
+    """Read the current feature's tasks.md from the management repo feature branch.
+
+    Shared by the backup /create-tasks tool and the parse_tasks tool so both
+    resolve the branch and read the document the same way.
+
+    Returns ``{"ok": True, "tasks_md": <content>}`` or
+    ``{"ok": False, "error": <message>}``.
+    """
+    from ..db import get_feature_detail, get_workspace_context
+    from ..document_repo import read_document
+    from .approve import _resolve_status_branch_and_path
+    from .artifacts import _resolve_management_repo
+
+    try:
+        workspace_context = get_workspace_context(workspace_id)
+        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
+    except Exception as exc:
+        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
+
+    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
+
+    feature_name: Optional[str] = None
+    init_pr_url: Optional[str] = None
+    try:
+        detail = get_feature_detail(workspace_id, feature_id)
+        feature_name = detail.get("feature_name")
+        init_pr_url = detail.get("init_pr_url")
+    except Exception as exc:
+        logger.debug("load_feature_tasks_md: could not fetch feature_detail: %s", exc)
+
+    branch, _status_path = _resolve_status_branch_and_path(
+        gh_owner, gh_repo, feature_id, feature_name, init_pr_url, base_branch, github_token
+    )
+
+    doc_dir = feature_name or feature_id
+    try:
+        tasks_md_result = read_document(
+            gh_owner, gh_repo, branch, f"docs/features/{doc_dir}/tasks.md", github_token
+        )
+        content = tasks_md_result.get("content", "")
+    except Exception as exc:
+        return {
+            "ok": False,
+            "error": f"Could not read tasks.md from branch {branch!r}: {exc}",
+        }
+
+    if not content:
+        return {
+            "ok": False,
+            "error": (
+                f"tasks.md not found on branch {branch!r} at "
+                f"docs/features/{doc_dir}/tasks.md. "
+                "Ensure the feature has a valid tasks.md."
+            ),
+        }
+    return {"ok": True, "tasks_md": content}
+
+
 def handle(
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
     from ..context import get_feature_id, get_workspace_id
-    from ..db import get_feature_detail, get_workspace_context
-    from ..document_repo import read_document
-    from .approve import _resolve_status_branch_and_path, _run_async_create_tasks
-    from .artifacts import _resolve_management_repo
+    from .approve import _run_async_create_tasks
+    from .parse_tasks import parse_tasks_index
     from src.services.workflow_backend_client import WorkflowBackendError
 
     wid = workspace_id or get_workspace_id()
@@ -105,51 +167,23 @@ def handle(
     if not github_token:
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
 
-    try:
-        workspace_context = get_workspace_context(wid)
-        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
+    loaded = load_feature_tasks_md(wid, fid, github_token)
+    if not loaded.get("ok"):
+        return {"ok": False, "error": loaded.get("error", "Could not read tasks.md.")}
 
-    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-
-    feature_name: Optional[str] = None
-    init_pr_url: Optional[str] = None
-    try:
-        detail = get_feature_detail(wid, fid)
-        feature_name = detail.get("feature_name")
-        init_pr_url = detail.get("init_pr_url")
-    except Exception as exc:
-        logger.debug("create_tasks: could not fetch feature_detail: %s", exc)
-
-    branch, _status_path = _resolve_status_branch_and_path(
-        gh_owner, gh_repo, fid, feature_name, init_pr_url, base_branch, github_token
-    )
-
-    doc_dir = feature_name or fid
-    try:
-        tasks_md_result = read_document(
-            gh_owner, gh_repo, branch, f"docs/features/{doc_dir}/tasks.md", github_token
-        )
-        tasks_md_content = tasks_md_result.get("content", "")
-    except Exception as exc:
-        return {
-            "ok": False,
-            "error": f"Could not read tasks.md from branch {branch!r}: {exc}",
-        }
-
-    if not tasks_md_content:
+    tasks = parse_tasks_index(loaded["tasks_md"])
+    if not tasks:
         return {
             "ok": False,
             "error": (
-                f"tasks.md not found on branch {branch!r} at "
-                f"docs/features/{doc_dir}/tasks.md. "
-                "Ensure the feature has a valid tasks.md."
+                "No tasks parsed from tasks.md. It must contain an Index table with "
+                "columns | ID | Title | Repo | Depends On | Actor | and at least one "
+                "T<n> row."
             ),
         }
 
     try:
-        result = _run_async_create_tasks(wid, fid, tasks_md_content)
+        result = _run_async_create_tasks(wid, fid, tasks)
     except WorkflowBackendError as exc:
         if exc.reason_code == "tasks_already_exist":
             logger.info(

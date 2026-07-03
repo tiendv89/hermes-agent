@@ -76,10 +76,10 @@ _TASKS_MD = """\
 
 ## Index
 
-| ID | Wave | Title | Repo | Depends on |
-|----|------|-------|------|------------|
-| T1 | 1 | First task | hermes-agent | — |
-| T2 | 2 | Second task | hermes-agent | T1 |
+| ID | Title | Repo | Depends On | Actor |
+|----|-------|------|------------|-------|
+| T1 | First task | hermes-agent | — | agent |
+| T2 | Second task | hermes-agent | T1 | agent |
 
 ## T1 — First task
 """
@@ -367,6 +367,7 @@ def _run_go_tasks_approve_handle(
     activated_tasks=None,
     update_feature_stage_raises=None,
     owner="go",
+    read_document_side_effect=None,
 ):
     """Run handle(stage='tasks', action='approve') with all external calls mocked.
 
@@ -403,7 +404,8 @@ def _run_go_tasks_approve_handle(
     mod.get_feature_detail = MagicMock(return_value=_make_feature_detail(owner))
     mod.update_feature_stage = update_mock
     mod.read_document = MagicMock(
-        side_effect=_make_read_document(status_content, tasks_content)
+        side_effect=read_document_side_effect
+        or _make_read_document(status_content, tasks_content)
     )
     mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
     mod._read_status_yaml_on_branch = MagicMock(return_value=base_status)
@@ -464,9 +466,12 @@ class TestGoTasksApprovePipelineHappyPath:
 
     def test_happy_path_creates_tasks_step_d(self, monkeypatch):
         _, mocks = _run_go_tasks_approve_handle(monkeypatch)
-        mocks["create_tasks"].assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, _TASKS_MD
-        )
+        mocks["create_tasks"].assert_called_once()
+        call = mocks["create_tasks"].call_args
+        assert call.args[0] == _WORKSPACE_ID
+        assert call.args[1] == _FEATURE_ID
+        # Step d passes the parsed task list (not the raw tasks.md).
+        assert [t["name"] for t in call.args[2]] == ["T1", "T2"]
 
     def test_happy_path_activates_tasks(self, monkeypatch):
         result, mocks = _run_go_tasks_approve_handle(monkeypatch)
@@ -782,6 +787,35 @@ class TestGoTasksApproveStepDMissingTasksMd:
         assert result["ok"] is False
         assert result["failed_step"] == "d"
         assert "tasks.md" in result["error"]
+
+    def test_reads_tasks_md_from_base_after_branch_auto_deleted(self, monkeypatch):
+        """Step b merges the docs PR and GitHub auto-deletes the feature branch.
+
+        Step d must read tasks.md from base_branch, not the now-deleted branch.
+        """
+        import yaml
+
+        base_status = yaml.safe_load(_STATUS_YAML_TASKS_APPROVED)
+
+        def _read_doc(gh_owner, gh_repo, branch, path, github_token):
+            if path.endswith("tasks.md"):
+                if branch == _BASE_BRANCH:
+                    return {"content": _TASKS_MD, "sha": _TASKS_MD_SHA}
+                # Feature branch was auto-deleted after the step-b merge.
+                raise RuntimeError("404 Not Found: branch was deleted")
+            if path.endswith("status.yaml"):
+                return {"content": _STATUS_YAML_TASKS_DRAFT, "sha": _STATUS_SHA}
+            return {"content": "", "sha": None}
+
+        result, mocks = _run_go_tasks_approve_handle(
+            monkeypatch,
+            base_status=base_status,
+            read_document_side_effect=_read_doc,
+        )
+        assert result["ok"] is True, result.get("error")
+        # Tasks were created from the base-branch tasks.md despite the branch being gone.
+        mocks["create_tasks"].assert_called_once()
+        assert [t["name"] for t in mocks["create_tasks"].call_args.args[2]] == ["T1", "T2"]
 
 
 # ---------------------------------------------------------------------------

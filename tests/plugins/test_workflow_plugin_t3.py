@@ -435,6 +435,7 @@ class TestRegisterT3:
         "approve_feature",
         "write_tasks",
         "create_tasks",
+        "parse_tasks",
         "suggest_next_actions",
     }
 

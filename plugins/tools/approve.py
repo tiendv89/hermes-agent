@@ -188,31 +188,46 @@ def _relay_go_reason_code(reason_code: str) -> str:
         )
     if reason_code == "empty_tasks":
         return (
-            "No tasks found in the tasks.md Index table. "
-            "Verify that tasks.md has a valid Index table with at least one task row."
+            "No tasks found in the tasks.md Index table. Verify that tasks.md has a "
+            "valid Index table with columns | ID | Title | Repo | Depends On | Actor | "
+            "and at least one T<n> row."
         )
     return "An unexpected error occurred when creating tasks in workflow-backend."
 
 
-def _run_async_create_tasks(workspace_id: str, feature_id: str, tasks_md: str) -> dict:
+def _run_async_create_tasks(workspace_id: str, feature_id: str, tasks: list) -> dict:
     """Bridge the async create_feature_tasks coroutine into a sync call.
 
-    Uses the running agent event loop when available (production path via
-    get_agent_loop); falls back to asyncio.run() for tests and non-agent callers.
+    ``tasks`` is an already-parsed task list (see ``parse_tasks_index``); this
+    bridge no longer parses tasks.md. Uses the running agent event loop when
+    available (production path via get_agent_loop); falls back to asyncio.run()
+    for tests and non-agent callers.
     """
     import asyncio
 
-    from plugins.context import get_agent_loop
+    from plugins.context import get_agent_loop, get_org_id, get_user_id
     from src.services.workflow_backend_client import create_feature_tasks
+
+    # Capture caller identity on THIS (worker) thread. When the coroutine is
+    # scheduled on the agent loop (a different thread), thread-local identity is
+    # not visible there — so resolve it here and pass it through explicitly.
+    user_id = get_user_id()
+    org_id = get_org_id()
 
     loop = get_agent_loop()
     if loop is not None and loop.is_running():
         future = asyncio.run_coroutine_threadsafe(
-            create_feature_tasks(workspace_id, feature_id, tasks_md),
+            create_feature_tasks(
+                workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id
+            ),
             loop,
         )
         return future.result(timeout=30)
-    return asyncio.run(create_feature_tasks(workspace_id, feature_id, tasks_md))
+    return asyncio.run(
+        create_feature_tasks(
+            workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id
+        )
+    )
 
 
 _VALID_STAGES = frozenset({"product_spec", "technical_design", "tasks", "handoff"})
@@ -837,17 +852,46 @@ def handle(
             }
 
         # Step d: create tasks via workflow-backend API.
-        tasks_md_result = read_document(
-            gh_owner, gh_repo, branch, f"docs/features/{doc_dir}/tasks.md", github_token
-        )
-        tasks_md_content = tasks_md_result.get("content", "")
+        # Read tasks.md from base_branch: step b just merged the docs branch into
+        # base, and GitHub's auto-delete-on-merge rule may have removed the feature
+        # branch — so reading from `branch` would 404. base_branch is the
+        # authoritative post-merge location. Fall back to `branch` only if base has
+        # no content and the branch still exists (e.g. auto-delete disabled and a
+        # content-keyed skip left the merge for a later cycle).
+        tasks_md_path = f"docs/features/{doc_dir}/tasks.md"
+        tasks_md_content = ""
+        for read_branch in (base_branch, branch):
+            try:
+                tasks_md_result = read_document(
+                    gh_owner, gh_repo, read_branch, tasks_md_path, github_token
+                )
+            except Exception:
+                continue
+            tasks_md_content = tasks_md_result.get("content", "")
+            if tasks_md_content:
+                break
         if not tasks_md_content:
             return {
                 "ok": False,
                 "error": (
-                    f"Step d (create tasks): tasks.md not found on branch {branch!r} "
-                    f"at docs/features/{doc_dir}/tasks.md. "
+                    f"Step d (create tasks): tasks.md not found at {tasks_md_path} "
+                    f"on {base_branch!r} (nor on {branch!r}). "
                     "Re-run approve to retry."
+                ),
+                "failed_step": "d",
+            }
+
+        from .parse_tasks import parse_tasks_index
+
+        tasks = parse_tasks_index(tasks_md_content)
+        if not tasks:
+            return {
+                "ok": False,
+                "error": (
+                    "Step d (create tasks): no tasks parsed from tasks.md. It must "
+                    "contain an Index table with columns "
+                    "| ID | Title | Repo | Depends On | Actor | and at least one "
+                    "T<n> row. Fix tasks.md and re-run approve to retry."
                 ),
                 "failed_step": "d",
             }
@@ -855,7 +899,7 @@ def handle(
         from src.services.workflow_backend_client import WorkflowBackendError as _WBE
 
         try:
-            _run_async_create_tasks(wid, fid, tasks_md_content)
+            _run_async_create_tasks(wid, fid, tasks)
         except _WBE as exc:
             if exc.reason_code == "tasks_already_exist":
                 logger.info(
