@@ -190,12 +190,18 @@ class TestWorkflowQueryGitnexus:
         ) as mock_call:
             from plugins.tools.gitnexus import handle
 
-            await handle(query="NotificationBell", tool="impact", repo="voyager-interface")
+            await handle(
+                query="NotificationBell", tool="impact", repo="voyager-interface"
+            )
         # `impact` takes `target` + `direction` (default upstream), not `symbol`.
         mock_call.assert_awaited_once_with(
             "http://gitnexus:8002/sse",
             "impact",
-            {"target": "NotificationBell", "direction": "upstream", "repo": "voyager-interface"},
+            {
+                "target": "NotificationBell",
+                "direction": "upstream",
+                "repo": "voyager-interface",
+            },
         )
 
     @pytest.mark.asyncio
@@ -428,6 +434,7 @@ class TestRegisterT3:
         "request_approval",
         "approve_feature",
         "write_tasks",
+        "create_tasks",
         "suggest_next_actions",
     }
 
@@ -958,7 +965,9 @@ class TestWriteTasksRepoValidation:
         from plugins.tools import gitnexus
 
         monkeypatch.setattr(
-            gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface", "voyager-backend"]
+            gitnexus,
+            "list_indexed_repos",
+            lambda *a, **k: ["voyager-interface", "voyager-backend"],
         )
         from plugins.tools.tasks_write import handle
 
@@ -974,7 +983,9 @@ class TestWriteTasksRepoValidation:
     def test_allows_repo_present_in_gitnexus(self, monkeypatch):
         from plugins.tools import gitnexus
 
-        monkeypatch.setattr(gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface"])
+        monkeypatch.setattr(
+            gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface"]
+        )
         # No token: the call fails AFTER the repo guard — proving a known repo
         # passes repo validation (error is not the repo-validation error).
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
