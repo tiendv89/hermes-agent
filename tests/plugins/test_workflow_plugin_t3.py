@@ -157,10 +157,12 @@ class TestWorkflowQueryGitnexus:
         assert result["ok"] is True
         assert result["results"] == fake_results
         # GitNexus's `query` tool takes `query` (live contract).
+        # workspace_id="" because no session context is set in this test.
         mock_call.assert_awaited_once_with(
             "http://gitnexus:8002/sse",
             "query",
             {"query": "where is register() defined"},
+            workspace_id="",
         )
 
     @pytest.mark.asyncio
@@ -178,6 +180,7 @@ class TestWorkflowQueryGitnexus:
             "http://gitnexus:8002/sse",
             "query",
             {"query": "TopNav", "repo": "voyager-interface"},
+            workspace_id="",
         )
 
     @pytest.mark.asyncio
@@ -190,12 +193,19 @@ class TestWorkflowQueryGitnexus:
         ) as mock_call:
             from plugins.tools.gitnexus import handle
 
-            await handle(query="NotificationBell", tool="impact", repo="voyager-interface")
+            await handle(
+                query="NotificationBell", tool="impact", repo="voyager-interface"
+            )
         # `impact` takes `target` + `direction` (default upstream), not `symbol`.
         mock_call.assert_awaited_once_with(
             "http://gitnexus:8002/sse",
             "impact",
-            {"target": "NotificationBell", "direction": "upstream", "repo": "voyager-interface"},
+            {
+                "target": "NotificationBell",
+                "direction": "upstream",
+                "repo": "voyager-interface",
+            },
+            workspace_id="",
         )
 
     @pytest.mark.asyncio
@@ -210,7 +220,7 @@ class TestWorkflowQueryGitnexus:
 
             await handle(query="find X")
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "query", {"query": "find X"}
+            "http://gitnexus:8002/sse", "query", {"query": "find X"}, workspace_id=""
         )
 
     @pytest.mark.asyncio
@@ -226,7 +236,7 @@ class TestWorkflowQueryGitnexus:
             await handle(query="register", tool="context")
         # `context` takes `name` (live contract), not `symbol`.
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "context", {"name": "register"}
+            "http://gitnexus:8002/sse", "context", {"name": "register"}, workspace_id=""
         )
 
     @pytest.mark.asyncio
@@ -246,6 +256,7 @@ class TestWorkflowQueryGitnexus:
             "http://gitnexus:8002/sse",
             "detect_changes",
             {"scope": "unstaged", "repo": "voyager-interface"},
+            workspace_id="",
         )
 
     @pytest.mark.asyncio
@@ -260,7 +271,9 @@ class TestWorkflowQueryGitnexus:
 
             result = await handle(tool="list_repos")
         assert result["ok"] is True
-        mock_call.assert_awaited_once_with("http://gitnexus:8002/sse", "list_repos", {})
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002/sse", "list_repos", {}, workspace_id=""
+        )
 
     @pytest.mark.asyncio
     async def test_error_returns_ok_false(self, monkeypatch):
@@ -958,7 +971,9 @@ class TestWriteTasksRepoValidation:
         from plugins.tools import gitnexus
 
         monkeypatch.setattr(
-            gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface", "voyager-backend"]
+            gitnexus,
+            "list_indexed_repos",
+            lambda *a, **k: ["voyager-interface", "voyager-backend"],
         )
         from plugins.tools.tasks_write import handle
 
@@ -974,7 +989,9 @@ class TestWriteTasksRepoValidation:
     def test_allows_repo_present_in_gitnexus(self, monkeypatch):
         from plugins.tools import gitnexus
 
-        monkeypatch.setattr(gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface"])
+        monkeypatch.setattr(
+            gitnexus, "list_indexed_repos", lambda *a, **k: ["voyager-interface"]
+        )
         # No token: the call fails AFTER the repo guard — proving a known repo
         # passes repo validation (error is not the repo-validation error).
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
