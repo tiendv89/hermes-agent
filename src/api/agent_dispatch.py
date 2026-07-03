@@ -230,12 +230,18 @@ async def _run_agent_turn_async(
                 _stopped_model,
                 input_tokens=getattr(_stopped_agent, "session_input_tokens", 0),
                 output_tokens=getattr(_stopped_agent, "session_output_tokens", 0),
-                cache_read_tokens=getattr(_stopped_agent, "session_cache_read_tokens", 0),
-                cache_write_tokens=getattr(_stopped_agent, "session_cache_write_tokens", 0),
+                cache_read_tokens=getattr(
+                    _stopped_agent, "session_cache_read_tokens", 0
+                ),
+                cache_write_tokens=getattr(
+                    _stopped_agent, "session_cache_write_tokens", 0
+                ),
                 stopped=True,
                 turn_id=run_id,
                 org_id=_stopped_org_id,
-                source_label=kwargs.get("feature_id") or kwargs.get("workspace_id") or session_id,
+                source_label=kwargs.get("feature_id")
+                or kwargs.get("workspace_id")
+                or session_id,
             )
         except Exception:
             logger.exception(
@@ -307,7 +313,13 @@ def _run_agent_turn(
     try:
         from plugins import context as workflow_context
 
-        workflow_context.set_context(session_id, workspace_id, feature_id)
+        workflow_context.set_context(
+            session_id,
+            workspace_id,
+            feature_id,
+            user_id=user_id or "",
+            org_id=org_id or "",
+        )
         workflow_context.set_agent_context(session_id, loop, db_factory)
 
         # Input scope guard — enforce shared.md's "stay on-topic" rule before
@@ -375,23 +387,34 @@ def _run_agent_turn(
             reason = quota.reason or "quota_exceeded"
             resets_at = quota.resets_at or ""
             if reason == "daily_exceeded":
-                cap_label = f"daily credit limit ({quota.daily_cap})" if quota.daily_cap else "daily credit limit"
+                cap_label = (
+                    f"daily credit limit ({quota.daily_cap})"
+                    if quota.daily_cap
+                    else "daily credit limit"
+                )
                 block_msg = (
                     f"You've reached your {cap_label}. "
-                    f"Your quota resets at {resets_at}." if resets_at
+                    f"Your quota resets at {resets_at}."
+                    if resets_at
                     else f"You've reached your {cap_label}."
                 )
             elif reason == "weekly_exceeded":
-                cap_label = f"weekly credit limit ({quota.weekly_cap})" if quota.weekly_cap else "weekly credit limit"
+                cap_label = (
+                    f"weekly credit limit ({quota.weekly_cap})"
+                    if quota.weekly_cap
+                    else "weekly credit limit"
+                )
                 block_msg = (
                     f"You've reached your {cap_label}. "
-                    f"Your quota resets at {resets_at}." if resets_at
+                    f"Your quota resets at {resets_at}."
+                    if resets_at
                     else f"You've reached your {cap_label}."
                 )
             else:
                 block_msg = (
                     f"You've reached your credit limit. "
-                    f"Your quota resets at {resets_at}." if resets_at
+                    f"Your quota resets at {resets_at}."
+                    if resets_at
                     else "You've reached your credit limit."
                 )
             logger.info(
@@ -417,9 +440,9 @@ def _run_agent_turn(
                     )
 
             try:
-                asyncio.run_coroutine_threadsafe(
-                    _persist_quota_block(), loop
-                ).result(timeout=15)
+                asyncio.run_coroutine_threadsafe(_persist_quota_block(), loop).result(
+                    timeout=15
+                )
             except Exception:
                 logger.exception(
                     "agent_dispatch: quota block persist failed for session %s",
@@ -451,7 +474,9 @@ def _run_agent_turn(
 
         shared_rules = get_shared_rules() or None
 
-        _reasoning_effort = os.environ.get("HERMES_REASONING_EFFORT", "medium").strip().lower()
+        _reasoning_effort = (
+            os.environ.get("HERMES_REASONING_EFFORT", "medium").strip().lower()
+        )
         _reasoning_off = _reasoning_effort in ("", "off", "none", "disabled")
         reasoning_config = (
             None
