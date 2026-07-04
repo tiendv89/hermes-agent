@@ -27,6 +27,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from ..db import resolve_workspace_slug
 from ..mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
@@ -152,7 +153,7 @@ async def handle(
     from ..context import get_workspace_id, mark_context_gathered
 
     mark_context_gathered()
-    workspace_id = get_workspace_id()
+    workspace_id = resolve_workspace_slug(get_workspace_id())
     try:
         results = await call_mcp_tool(
             url,
@@ -225,13 +226,15 @@ def list_indexed_repos(
     GitNexus is unconfigured/unreachable so callers can fall back gracefully.
 
     When *workspace_id* is provided the request targets the workspace-scoped
-    endpoint (``…/ws/<workspace_id>/sse``) so only that workspace's repos are
-    returned.  Results are cached per workspace_id for ``_REPO_CACHE_TTL``
-    seconds.
+    endpoint (``…/ws/<workspace_slug>/sse``) so only that workspace's repos are
+    returned.  *workspace_id* is resolved to its canonical slug first (it may
+    be a slug or a UUID), and results are cached per resolved slug for
+    ``_REPO_CACHE_TTL`` seconds.
     """
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return None
+    workspace_id = resolve_workspace_slug(workspace_id)
     now = time.time()
     cache = _repo_cache.setdefault(workspace_id, {"names": None, "ts": 0.0})
     if (

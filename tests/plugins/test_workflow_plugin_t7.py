@@ -391,6 +391,178 @@ class TestListIndexedReposWorkspaceScoping:
 
 
 # ---------------------------------------------------------------------------
+# db.resolve_workspace_slug() — normalizes slug-or-UUID to the canonical slug
+# (shared by gitnexus.py and rag.py)
+# ---------------------------------------------------------------------------
+
+
+class TestResolveWorkspaceSlug:
+    def test_empty_workspace_id_passthrough(self, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        from plugins.db import resolve_workspace_slug
+
+        assert resolve_workspace_slug("") == ""
+
+    def test_no_workflow_db_returns_raw_value(self):
+        """Without WORKFLOW_DATABASE_URL, the raw value passes through unchanged."""
+        from plugins.db import resolve_workspace_slug
+
+        assert resolve_workspace_slug("some-uuid-or-slug") == "some-uuid-or-slug"
+
+    def test_uuid_resolved_to_slug(self, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        with (
+            patch("plugins.db.check_workflow_available", return_value=True),
+            patch(
+                "plugins.db.get_workspace_slug",
+                return_value="voyager-interface",
+            ),
+        ):
+            from plugins.db import resolve_workspace_slug
+
+            assert resolve_workspace_slug("11111111-1111-1111-1111-111111111111") == (
+                "voyager-interface"
+            )
+
+    def test_lookup_miss_falls_back_to_raw_value(self, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        with (
+            patch("plugins.db.check_workflow_available", return_value=True),
+            patch("plugins.db.get_workspace_slug", return_value=""),
+        ):
+            from plugins.db import resolve_workspace_slug
+
+            assert resolve_workspace_slug("unknown-id") == "unknown-id"
+
+    def test_db_error_falls_back_to_raw_value(self, monkeypatch):
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        with (
+            patch("plugins.db.check_workflow_available", return_value=True),
+            patch(
+                "plugins.db.get_workspace_slug",
+                side_effect=RuntimeError("db down"),
+            ),
+        ):
+            from plugins.db import resolve_workspace_slug
+
+            assert resolve_workspace_slug("some-id") == "some-id"
+
+    @pytest.mark.asyncio
+    async def test_gitnexus_handle_resolves_uuid_to_slug_before_scoping(
+        self, monkeypatch
+    ):
+        """handle() scopes the SSE connection to the resolved slug, not the raw UUID."""
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        import plugins.context as ctx
+
+        ctx.set_context("sess-uuid", "11111111-1111-1111-1111-111111111111", "")
+
+        from plugins.tools.gitnexus import handle
+
+        with (
+            patch("plugins.db.check_workflow_available", return_value=True),
+            patch(
+                "plugins.db.get_workspace_slug",
+                return_value="voyager-interface",
+            ),
+            patch(
+                "plugins.tools.gitnexus.call_mcp_tool", new_callable=AsyncMock
+            ) as mock_call,
+        ):
+            mock_call.return_value = []
+            await handle(query="Symbol", tool="query")
+
+        _, kwargs = mock_call.call_args
+        assert kwargs.get("workspace_id") == "voyager-interface"
+
+    def test_list_indexed_repos_caches_by_resolved_slug(self, monkeypatch):
+        """A UUID and its slug alias share one cache entry, keyed by the slug."""
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        import plugins.tools.gitnexus as gn_mod
+
+        gn_mod._repo_cache.clear()
+
+        with (
+            patch("plugins.db.check_workflow_available", return_value=True),
+            patch(
+                "plugins.db.get_workspace_slug",
+                return_value="aliased-workspace",
+            ),
+            patch(
+                "plugins.tools.gitnexus.call_mcp_tool", new_callable=AsyncMock
+            ) as mock_call,
+        ):
+            mock_call.return_value = [{"type": "text", "text": '[{"name":"repo-a"}]'}]
+            from plugins.tools.gitnexus import list_indexed_repos
+
+            list_indexed_repos(workspace_id="11111111-1111-1111-1111-111111111111")
+            list_indexed_repos(workspace_id="aliased-workspace")
+
+        assert mock_call.call_count == 1
+        assert set(gn_mod._repo_cache.keys()) == {"aliased-workspace"}
+
+    @pytest.mark.asyncio
+    async def test_rag_handle_resolves_uuid_to_slug(self, monkeypatch):
+        """rag.handle() also resolves a UUID workspace_id to its canonical slug
+        before forwarding it as the rag_query filter argument."""
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
+        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+
+        import plugins.context as ctx
+
+        ctx.set_context("sess-rag-uuid", "22222222-2222-2222-2222-222222222222", "")
+
+        from plugins.tools.rag import handle
+
+        with (
+            patch("plugins.db.check_workflow_available", return_value=True),
+            patch(
+                "plugins.db.get_workspace_slug",
+                return_value="rag-workspace-slug",
+            ),
+            patch(
+                "plugins.tools.rag.call_mcp_tool", new_callable=AsyncMock
+            ) as mock_call,
+        ):
+            mock_call.return_value = []
+            await handle(query="auth flow")
+
+        args, _ = mock_call.call_args
+        tool_arguments = args[2] if len(args) > 2 else {}
+        assert tool_arguments.get("workspace_id") == "rag-workspace-slug"
+
+    @pytest.mark.asyncio
+    async def test_rag_handle_no_workflow_db_passes_raw_value(self, monkeypatch):
+        """Without WORKFLOW_DATABASE_URL, rag.handle() still forwards the raw value
+        (no regression for deployments without the workflow DB configured)."""
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
+
+        import plugins.context as ctx
+
+        ctx.set_context("sess-rag-raw", "raw-workspace", "")
+
+        from plugins.tools.rag import handle
+
+        with patch(
+            "plugins.tools.rag.call_mcp_tool", new_callable=AsyncMock
+        ) as mock_call:
+            mock_call.return_value = []
+            await handle(query="auth flow")
+
+        args, _ = mock_call.call_args
+        tool_arguments = args[2] if len(args) > 2 else {}
+        assert tool_arguments.get("workspace_id") == "raw-workspace"
+
+
+# ---------------------------------------------------------------------------
 # inject_context() — passes workspace_id to list_indexed_repos
 # ---------------------------------------------------------------------------
 
