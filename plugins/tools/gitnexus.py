@@ -27,12 +27,14 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
+from ..db import resolve_workspace_slug
 from ..mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
 
 _REPO_CACHE_TTL = float(os.environ.get("GITNEXUS_REPO_CACHE_TTL", "600"))
-_repo_cache: Dict[str, Any] = {"names": None, "ts": 0.0}
+# Keyed by workspace_id (empty string = no workspace / legacy mode).
+_repo_cache: Dict[str, Dict[str, Any]] = {}
 
 # Operations exposed by the wrapper, mapped to live GitNexus MCP tools.
 _TOOLS = ("query", "context", "impact", "detect_changes", "list_repos")
@@ -99,7 +101,9 @@ def check_available(**_: Any) -> bool:
     return bool(os.environ.get("GITNEXUS_MCP_URL", "").strip())
 
 
-def _build_arguments(tool: str, query: str, repo: str, direction: str) -> Dict[str, Any]:
+def _build_arguments(
+    tool: str, query: str, repo: str, direction: str
+) -> Dict[str, Any]:
     """Map the wrapper inputs to the live GitNexus MCP per-tool argument shape.
 
     Argument names are pinned to the live ``gitnexus`` MCP contract (see module
@@ -133,7 +137,11 @@ async def handle(
     query = coerce_text(query)
     repo = coerce_text(repo)
     if tool not in _TOOLS:
-        return {"ok": False, "error": "unknown GitNexus tool %r; expected one of %s." % (tool, ", ".join(_TOOLS))}
+        return {
+            "ok": False,
+            "error": "unknown GitNexus tool %r; expected one of %s."
+            % (tool, ", ".join(_TOOLS)),
+        }
     # query/context/impact need a target; detect_changes and list_repos do not.
     if not query and tool not in ("list_repos", "detect_changes"):
         return {"ok": False, "error": "query is required for GitNexus tool %r." % tool}
@@ -142,11 +150,17 @@ async def handle(
         return {"ok": False, "error": "GITNEXUS_MCP_URL is not configured."}
     # Record the context-gathering attempt so the design-write gate is satisfied
     # (see artifacts.py) — marking on attempt, not only on hits.
-    from ..context import mark_context_gathered
+    from ..context import get_workspace_id, mark_context_gathered
 
     mark_context_gathered()
+    workspace_id = resolve_workspace_slug(get_workspace_id())
     try:
-        results = await call_mcp_tool(url, tool, _build_arguments(tool, query, repo, direction))
+        results = await call_mcp_tool(
+            url,
+            tool,
+            _build_arguments(tool, query, repo, direction),
+            workspace_id=workspace_id,
+        )
         return {"ok": True, "results": results}
     except Exception as exc:
         logger.warning("query_gitnexus failed: %s", exc)
@@ -201,24 +215,40 @@ def _run_coro_sync(coro: Any) -> Any:
         return ex.submit(lambda: asyncio.run(coro)).result()
 
 
-def list_indexed_repos(use_cache: bool = True, timeout: Optional[float] = None) -> Optional[List[str]]:
+def list_indexed_repos(
+    use_cache: bool = True,
+    timeout: Optional[float] = None,
+    workspace_id: str = "",
+) -> Optional[List[str]]:
     """Best-effort, synchronous list of GitNexus-indexed repo names.
 
     Returns the repo names (e.g. ['voyager-interface', ...]), or ``None`` when
     GitNexus is unconfigured/unreachable so callers can fall back gracefully.
-    Result is cached process-wide for ``_REPO_CACHE_TTL`` seconds.
+
+    When *workspace_id* is provided the request targets the workspace-scoped
+    endpoint (``…/ws/<workspace_slug>/sse``) so only that workspace's repos are
+    returned.  *workspace_id* is resolved to its canonical slug first (it may
+    be a slug or a UUID), and results are cached per resolved slug for
+    ``_REPO_CACHE_TTL`` seconds.
     """
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return None
+    workspace_id = resolve_workspace_slug(workspace_id)
     now = time.time()
-    if use_cache and _repo_cache["names"] is not None and (now - _repo_cache["ts"]) < _REPO_CACHE_TTL:
-        return _repo_cache["names"]
+    cache = _repo_cache.setdefault(workspace_id, {"names": None, "ts": 0.0})
+    if (
+        use_cache
+        and cache["names"] is not None
+        and (now - cache["ts"]) < _REPO_CACHE_TTL
+    ):
+        return cache["names"]
 
     async def _go() -> Any:
+        coro = call_mcp_tool(url, "list_repos", {}, workspace_id=workspace_id)
         if timeout:
-            return await asyncio.wait_for(call_mcp_tool(url, "list_repos", {}), timeout)
-        return await call_mcp_tool(url, "list_repos", {})
+            return await asyncio.wait_for(coro, timeout)
+        return await coro
 
     try:
         names = _parse_repo_names(_run_coro_sync(_go()))
@@ -229,6 +259,6 @@ def list_indexed_repos(use_cache: bool = True, timeout: Optional[float] = None) 
         # Treat an empty/unparseable result as "unavailable" — don't cache it,
         # so a transient miss doesn't blind callers for the whole TTL window.
         return None
-    _repo_cache["names"] = names
-    _repo_cache["ts"] = now
+    cache["names"] = names
+    cache["ts"] = now
     return names
