@@ -333,6 +333,7 @@ class TestWorkflowQueryRag:
             "http://rag:8003/sse",
             "rag_query",
             {"query": "prior auth decisions", "workspace_id": "ws-1", "top_k": 3},
+            workspace_id="ws-1",
         )
 
     @pytest.mark.asyncio

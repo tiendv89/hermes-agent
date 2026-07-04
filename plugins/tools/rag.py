@@ -87,7 +87,7 @@ async def handle(
 
     mark_context_gathered()
     try:
-        results = await call_mcp_tool(url, "rag_query", arguments)
+        results = await call_mcp_tool(url, "rag_query", arguments, workspace_id=wid)
         return {"ok": True, "results": results}
     except Exception as exc:
         logger.warning("query_rag failed: %s", exc)

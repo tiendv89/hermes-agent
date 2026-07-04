@@ -666,14 +666,16 @@ class TestInjectContextGitnexusScoping:
 
 
 # ---------------------------------------------------------------------------
-# RAG scoping — unchanged by this task (regression check)
+# RAG scoping — connection-scoped endpoint + explicit argument fallback
 # ---------------------------------------------------------------------------
 
 
-class TestRagScopingUnchanged:
+class TestRagScoping:
     @pytest.mark.asyncio
-    async def test_rag_handle_still_resolves_workspace_from_context(self, monkeypatch):
-        """query_rag still resolves workspace_id from session context (no regression)."""
+    async def test_rag_handle_resolves_workspace_from_context(self, monkeypatch):
+        """query_rag resolves workspace_id from session context and scopes the
+        connection (workspace_id kwarg → /ws/<slug>/sse) while still passing the
+        explicit argument as a fallback for legacy servers."""
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
 
         import plugins.context as ctx
@@ -690,10 +692,11 @@ class TestRagScopingUnchanged:
 
         assert result["ok"] is True
         args, kwargs = mock_call.call_args
-        # The workspace_id is passed as a regular arg in rag_query arguments dict,
-        # not as workspace_id kwarg — verify it's correct.
         tool_arguments = args[2] if len(args) > 2 else {}
         assert tool_arguments.get("workspace_id") == "rag-workspace"
+        # Connection-scoped: the workspace_id kwarg drives the /ws/<slug>/sse
+        # endpoint selection in call_mcp_tool.
+        assert kwargs.get("workspace_id") == "rag-workspace"
 
     @pytest.mark.asyncio
     async def test_rag_handle_explicit_workspace_id_overrides_context(
@@ -714,6 +717,7 @@ class TestRagScopingUnchanged:
             mock_call.return_value = []
             await handle(query="something", workspace_id="explicit-workspace")
 
-        args, _ = mock_call.call_args
+        args, kwargs = mock_call.call_args
         tool_arguments = args[2] if len(args) > 2 else {}
         assert tool_arguments.get("workspace_id") == "explicit-workspace"
+        assert kwargs.get("workspace_id") == "explicit-workspace"
