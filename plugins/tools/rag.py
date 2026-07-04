@@ -71,7 +71,10 @@ async def handle(
         return {"ok": False, "error": "query is required."}
     wid = coerce_text(workspace_id) or get_workspace_id()
     if not wid:
-        return {"ok": False, "error": "workspace_id is required but was not provided and no workspace context is set."}
+        return {
+            "ok": False,
+            "error": "workspace_id is required but was not provided and no workspace context is set.",
+        }
     wid = resolve_workspace_slug(wid)
     url = os.environ.get("RAG_MCP_URL", "").strip()
     if not url:

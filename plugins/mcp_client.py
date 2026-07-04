@@ -68,9 +68,7 @@ def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
     """Resolve the SSE endpoint URL from a configured base URL.
 
     When *workspace_id* is provided the endpoint is scoped to that workspace:
-    ``…/ws/<workspace_id>/sse``.  Without a workspace_id the legacy ``/sse``
-    path is used, preserving backward compatibility for single-workspace
-    deployments.
+    ``…/ws/<workspace_id>/sse``.
 
     Operators typically configure the bare host
     (e.g. ``https://rag.tempestdev.xyz``).  An existing path in the URL is
@@ -80,8 +78,6 @@ def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
     parsed = urlparse(base_url.strip())
     if workspace_id:
         parsed = parsed._replace(path=f"/ws/{workspace_id}/sse")
-    elif parsed.path in ("", "/"):
-        parsed = parsed._replace(path="/sse")
     return urlunparse(parsed)
 
 
@@ -93,12 +89,14 @@ async def call_mcp_tool(
 ) -> list[dict]:
     """Connect to an MCP SSE server, run a single tool call, return content as plain dicts.
 
-    base_url is the service's base or SSE endpoint, e.g. https://rag.tempestdev.xyz
-    (the ``/sse`` path is appended automatically) or http://gitnexus:8002/sse.
+    base_url is the service's base URL, e.g. https://rag.tempestdev.xyz or
+    http://gitnexus:8002.
 
     When *workspace_id* is supplied the connection targets the workspace-scoped
     endpoint ``…/ws/<workspace_id>/sse`` so all tools on that connection are
     automatically scoped to that workspace — no per-tool argument needed.
+    Callers must pass workspace_id: the servers only expose workspace-scoped
+    endpoints, and without it the base URL is used verbatim.
     """
     endpoint = _sse_endpoint(base_url, workspace_id)
 
