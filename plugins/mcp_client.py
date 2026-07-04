@@ -68,9 +68,7 @@ def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
     """Resolve the SSE endpoint URL from a configured base URL.
 
     When *workspace_id* is provided the endpoint is scoped to that workspace:
-    ``…/ws/<workspace_id>/sse``.  Without a workspace_id the legacy ``/sse``
-    path is used, preserving backward compatibility for single-workspace
-    deployments.
+    ``…/ws/<workspace_id>/sse``.
 
     Operators typically configure the bare host
     (e.g. ``https://rag.tempestdev.xyz``).  An existing path in the URL is
@@ -80,8 +78,6 @@ def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
     parsed = urlparse(base_url.strip())
     if workspace_id:
         parsed = parsed._replace(path=f"/ws/{workspace_id}/sse")
-    elif parsed.path in ("", "/"):
-        parsed = parsed._replace(path="/sse")
     return urlunparse(parsed)
 
 
