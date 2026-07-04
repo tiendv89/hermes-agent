@@ -89,12 +89,14 @@ async def call_mcp_tool(
 ) -> list[dict]:
     """Connect to an MCP SSE server, run a single tool call, return content as plain dicts.
 
-    base_url is the service's base or SSE endpoint, e.g. https://rag.tempestdev.xyz
-    (the ``/sse`` path is appended automatically) or http://gitnexus:8002/sse.
+    base_url is the service's base URL, e.g. https://rag.tempestdev.xyz or
+    http://gitnexus:8002.
 
     When *workspace_id* is supplied the connection targets the workspace-scoped
     endpoint ``…/ws/<workspace_id>/sse`` so all tools on that connection are
     automatically scoped to that workspace — no per-tool argument needed.
+    Callers must pass workspace_id: the servers only expose workspace-scoped
+    endpoints, and without it the base URL is used verbatim.
     """
     endpoint = _sse_endpoint(base_url, workspace_id)
 

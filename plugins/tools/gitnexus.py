@@ -33,7 +33,7 @@ from ..mcp_client import call_mcp_tool, coerce_text
 logger = logging.getLogger(__name__)
 
 _REPO_CACHE_TTL = float(os.environ.get("GITNEXUS_REPO_CACHE_TTL", "600"))
-# Keyed by workspace_id (empty string = no workspace / legacy mode).
+# Keyed by resolved workspace slug.
 _repo_cache: Dict[str, Dict[str, Any]] = {}
 
 # Operations exposed by the wrapper, mapped to live GitNexus MCP tools.
@@ -230,16 +230,23 @@ def list_indexed_repos(
     Returns the repo names (e.g. ['voyager-interface', ...]), or ``None`` when
     GitNexus is unconfigured/unreachable so callers can fall back gracefully.
 
-    When *workspace_id* is provided the request targets the workspace-scoped
-    endpoint (``…/ws/<workspace_slug>/sse``) so only that workspace's repos are
+    The request targets the workspace-scoped endpoint
+    (``…/ws/<workspace_slug>/sse``) so only that workspace's repos are
     returned.  *workspace_id* is resolved to its canonical slug first (it may
     be a slug or a UUID), and results are cached per resolved slug for
-    ``_REPO_CACHE_TTL`` seconds.
+    ``_REPO_CACHE_TTL`` seconds.  GitNexus only serves workspace-scoped
+    endpoints, so a missing workspace_id returns ``None`` immediately.
     """
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return None
     workspace_id = resolve_workspace_slug(workspace_id)
+    if not workspace_id:
+        logger.debug(
+            "list_indexed_repos: no workspace_id in context — GitNexus requires "
+            "a workspace-scoped endpoint, skipping"
+        )
+        return None
     now = time.time()
     cache = _repo_cache.setdefault(workspace_id, {"names": None, "ts": 0.0})
     if (
