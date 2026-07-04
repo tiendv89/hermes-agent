@@ -52,10 +52,10 @@ def _clear_env(monkeypatch):
 
 
 class TestSseEndpoint:
-    def test_bare_host_no_workspace_defaults_to_slash_sse(self):
+    def test_bare_host_no_workspace_leaves_path_unchanged(self):
         from plugins.mcp_client import _sse_endpoint
 
-        assert _sse_endpoint("https://rag.example.com") == "https://rag.example.com/sse"
+        assert _sse_endpoint("https://rag.example.com") == "https://rag.example.com"
 
     def test_bare_host_with_workspace_scopes_to_ws_path(self):
         from plugins.mcp_client import _sse_endpoint
@@ -63,10 +63,10 @@ class TestSseEndpoint:
         result = _sse_endpoint("https://rag.example.com", workspace_id="my-ws")
         assert result == "https://rag.example.com/ws/my-ws/sse"
 
-    def test_root_path_no_workspace_defaults_to_slash_sse(self):
+    def test_root_path_no_workspace_leaves_path_unchanged(self):
         from plugins.mcp_client import _sse_endpoint
 
-        assert _sse_endpoint("http://gitnexus:8002/") == "http://gitnexus:8002/sse"
+        assert _sse_endpoint("http://gitnexus:8002/") == "http://gitnexus:8002/"
 
     def test_root_path_with_workspace_uses_ws_path(self):
         from plugins.mcp_client import _sse_endpoint
@@ -91,12 +91,12 @@ class TestSseEndpoint:
         result = _sse_endpoint("http://gitnexus:8002/sse", workspace_id="faro")
         assert result == "http://gitnexus:8002/ws/faro/sse"
 
-    def test_empty_workspace_id_falls_back_to_legacy(self):
+    def test_empty_workspace_id_leaves_path_unchanged(self):
         from plugins.mcp_client import _sse_endpoint
 
         assert (
             _sse_endpoint("https://rag.example.com", workspace_id="")
-            == "https://rag.example.com/sse"
+            == "https://rag.example.com"
         )
 
     def test_different_workspaces_produce_different_urls(self):
@@ -202,10 +202,9 @@ class TestGitnexusHandleWorkspaceScoping:
         assert kwargs.get("workspace_id") == "workspace-a"
 
     @pytest.mark.asyncio
-    async def test_handle_no_workspace_context_uses_empty_workspace_id(
-        self, monkeypatch
-    ):
-        """Without context, workspace_id is empty — falls back to legacy /sse endpoint."""
+    async def test_handle_no_workspace_context_returns_error(self, monkeypatch):
+        """Without context, workspace_id is empty — returns a clear error instead of
+        silently falling through to the legacy /sse route."""
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
 
         import plugins.context as ctx
@@ -217,11 +216,11 @@ class TestGitnexusHandleWorkspaceScoping:
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool", new_callable=AsyncMock
         ) as mock_call:
-            mock_call.return_value = []
-            await handle(query="Symbol", tool="query")
+            result = await handle(query="Symbol", tool="query")
 
-        _, kwargs = mock_call.call_args
-        assert kwargs.get("workspace_id") == ""
+        assert result["ok"] is False
+        assert "workspace_id is required" in result["error"]
+        mock_call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_workspace_a_call_does_not_use_workspace_b_endpoint(
