@@ -155,7 +155,10 @@ async def handle(
     mark_context_gathered()
     workspace_id = resolve_workspace_slug(get_workspace_id())
     if not workspace_id:
-        return {"ok": False, "error": "workspace_id is required but was not provided and no workspace context is set."}
+        return {
+            "ok": False,
+            "error": "workspace_id is required but was not provided and no workspace context is set.",
+        }
     try:
         results = await call_mcp_tool(
             url,

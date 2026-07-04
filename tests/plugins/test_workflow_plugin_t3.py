@@ -147,6 +147,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         fake_results = [{"type": "text", "text": "symbol found"}]
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-1", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -170,6 +171,7 @@ class TestWorkflowQueryGitnexus:
     async def test_repo_is_forwarded(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-2", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -190,6 +192,7 @@ class TestWorkflowQueryGitnexus:
     async def test_impact_passes_target_and_direction(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-3", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -217,6 +220,7 @@ class TestWorkflowQueryGitnexus:
     async def test_default_tool_is_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-4", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -227,13 +231,17 @@ class TestWorkflowQueryGitnexus:
 
             await handle(query="find X")
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "query", {"query": "find X"}, workspace_id="test-workspace"
+            "http://gitnexus:8002/sse",
+            "query",
+            {"query": "find X"},
+            workspace_id="test-workspace",
         )
 
     @pytest.mark.asyncio
     async def test_non_default_tool_forwarded(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-5", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -245,13 +253,17 @@ class TestWorkflowQueryGitnexus:
             await handle(query="register", tool="context")
         # `context` takes `name` (live contract), not `symbol`.
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002/sse", "context", {"name": "register"}, workspace_id="test-workspace"
+            "http://gitnexus:8002/sse",
+            "context",
+            {"name": "register"},
+            workspace_id="test-workspace",
         )
 
     @pytest.mark.asyncio
     async def test_detect_changes_uses_diff_scope_no_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-6", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -274,6 +286,7 @@ class TestWorkflowQueryGitnexus:
     async def test_list_repos_needs_no_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-7", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -292,6 +305,7 @@ class TestWorkflowQueryGitnexus:
     async def test_error_returns_ok_false(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-t3-8", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
@@ -835,6 +849,7 @@ class TestMcpArgCoercionAndErrors:
     async def test_gitnexus_coerces_dict_query(self, monkeypatch):
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002/sse")
         import plugins.context as ctx
+
         ctx.set_context("sess-coerce", "test-workspace", "")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",

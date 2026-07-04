@@ -202,9 +202,7 @@ class TestGitnexusHandleWorkspaceScoping:
         assert kwargs.get("workspace_id") == "workspace-a"
 
     @pytest.mark.asyncio
-    async def test_handle_no_workspace_context_returns_error(
-        self, monkeypatch
-    ):
+    async def test_handle_no_workspace_context_returns_error(self, monkeypatch):
         """Without context, workspace_id is empty — returns a clear error instead of
         silently falling through to the legacy /sse route."""
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
