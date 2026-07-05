@@ -72,6 +72,16 @@ def _get(url: str, params: Optional[Dict[str, Any]] = None, accept: str = "appli
     return resp
 
 
+def _post(url: str, payload: Dict[str, Any]) -> requests.Response:
+    """POST *payload* as JSON; returns the raw response (caller checks status)."""
+    return requests.post(
+        url,
+        headers={**_headers(), "Content-Type": "application/json"},
+        json=payload,
+        timeout=_DEFAULT_TIMEOUT,
+    )
+
+
 # ---------------------------------------------------------------------------
 # PR-level read functions
 # ---------------------------------------------------------------------------
@@ -374,3 +384,40 @@ def list_open_prs(
         }
         for p in data
     ]
+
+
+# ---------------------------------------------------------------------------
+# PR write functions (T2 — review posting)
+# ---------------------------------------------------------------------------
+
+
+def post_issue_comment(owner: str, repo: str, issue_number: int, body: str) -> Dict[str, Any]:
+    """Post *body* as an issue comment on PR *issue_number*.
+
+    Returns the parsed JSON response.  Raises ``requests.HTTPError`` on failure
+    so callers can inspect ``response.status_code``.
+    """
+    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/issues/{issue_number}/comments"
+    resp = _post(url, {"body": body})
+    resp.raise_for_status()
+    return resp.json()
+
+
+def post_pr_review(
+    owner: str,
+    repo: str,
+    pull_number: int,
+    event: str,
+    body: str,
+    comments: Optional[List[Dict[str, Any]]] = None,
+) -> requests.Response:
+    """Attempt to post a formal review event on PR *pull_number*.
+
+    Returns the raw ``requests.Response`` so callers can check the status code
+    (201 success vs 422 self-review restriction) without raising.
+    """
+    payload: Dict[str, Any] = {"event": event, "body": body}
+    if comments:
+        payload["comments"] = comments
+    url = f"{_GITHUB_API_URL}/repos/{owner}/{repo}/pulls/{pull_number}/reviews"
+    return _post(url, payload)

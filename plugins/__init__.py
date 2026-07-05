@@ -9,7 +9,7 @@ from typing import Any
 
 from .db import check_workflow_available
 from .hooks import inject_context
-from .tools import workspace, feature, artifacts, edit as edit_tool, read as read_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool, approval, approve as approve_tool, tasks_write as tasks_write_tool, suggest_next_actions as suggest_next_actions_tool, github_pr_context as github_pr_context_tool
+from .tools import workspace, feature, artifacts, edit as edit_tool, read as read_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool, approval, approve as approve_tool, tasks_write as tasks_write_tool, suggest_next_actions as suggest_next_actions_tool, github_pr_context as github_pr_context_tool, github_pr_review as github_pr_review_tool
 
 logger = logging.getLogger(__name__)
 
@@ -161,6 +161,12 @@ _TOOLS = (
         "schema": github_pr_context_tool.SCHEMA,
         "handler": github_pr_context_tool.handle,
         "check_fn": github_pr_context_tool.check_available,
+    },
+    {
+        "name": "github_pr_review",
+        "schema": github_pr_review_tool.SCHEMA,
+        "handler": github_pr_review_tool.handle,
+        "check_fn": github_pr_review_tool.check_available,
     },
 )
 
