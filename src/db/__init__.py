@@ -40,6 +40,8 @@ from src.db.store import (
     hard_delete_channel,
     create_workspace_thread,
     list_workspace_threads,
+    create_dm,
+    list_dms,
     AGENT_SENTINEL,
 )
 
@@ -90,4 +92,7 @@ __all__ = [
     # T9 workspace threads
     "create_workspace_thread",
     "list_workspace_threads",
+    # agent-general-chat DMs
+    "create_dm",
+    "list_dms",
 ]

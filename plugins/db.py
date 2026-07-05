@@ -67,6 +67,16 @@ def get_workspace_context(workspace_id: str) -> Dict[str, Any]:
     }
 
 
+def get_workspace_organization_id(workspace_id: str) -> str | None:
+    """Return the organization_id owning workspace_id, or None if not found."""
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT organization_id FROM workspaces WHERE slug = %s OR id::text = %s LIMIT 1",
+            (workspace_id, workspace_id),
+        ).fetchone()
+    return row["organization_id"] if row else None
+
+
 def get_workspace_slug(workspace_id: str) -> str:
     """Resolve a workspace identifier (slug or UUID) to its canonical slug.
 

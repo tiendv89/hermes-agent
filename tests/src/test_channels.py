@@ -100,19 +100,19 @@ async def test_bus_unsubscribe_removes_queue():
 
 
 @pytest.mark.asyncio
-async def test_is_workspace_admin_no_url_returns_true():
+async def test_is_org_admin_no_url_returns_true():
     """When USER_SERVICE_URL is unset, admin check is bypassed (dev mode)."""
     with patch.dict("os.environ", {}, clear=False):
         import os
         os.environ.pop("USER_SERVICE_URL", None)
-        from src.services.user_service_client import is_workspace_admin
-        result = await is_workspace_admin("ws_1", "user_a")
+        from src.services.user_service_client import is_org_admin
+        result = await is_org_admin("org_1", "user_a")
     assert result is True
 
 
 @pytest.mark.asyncio
-async def test_is_workspace_admin_admin_role():
-    """Role 'admin' → is_workspace_admin returns True."""
+async def test_is_org_admin_admin_role():
+    """Role 'admin' → is_org_admin returns True."""
 
     mock_resp = MagicMock()
     mock_resp.status = 200
@@ -131,13 +131,13 @@ async def test_is_workspace_admin_admin_role():
             # Reload to pick up env var
             import importlib
             importlib.reload(user_service_client)
-            result = await user_service_client.is_workspace_admin("ws_1", "user_a")
+            result = await user_service_client.is_org_admin("org_1", "user_a")
     assert result is True
 
 
 @pytest.mark.asyncio
-async def test_is_workspace_admin_member_role():
-    """Role 'member' → is_workspace_admin returns False."""
+async def test_is_org_admin_member_role():
+    """Role 'member' → is_org_admin returns False."""
     mock_resp = MagicMock()
     mock_resp.status = 200
     mock_resp.json = AsyncMock(return_value={"role": "member", "user_id": "user_b"})
@@ -154,12 +154,12 @@ async def test_is_workspace_admin_member_role():
             from src.services import user_service_client
             import importlib
             importlib.reload(user_service_client)
-            result = await user_service_client.is_workspace_admin("ws_1", "user_b")
+            result = await user_service_client.is_org_admin("org_1", "user_b")
     assert result is False
 
 
 @pytest.mark.asyncio
-async def test_get_workspace_role_404_returns_none():
+async def test_get_org_role_404_returns_none():
     """404 from user-service → not a member → returns None."""
     mock_resp = MagicMock()
     mock_resp.status = 404
@@ -176,7 +176,7 @@ async def test_get_workspace_role_404_returns_none():
             from src.services import user_service_client
             import importlib
             importlib.reload(user_service_client)
-            role = await user_service_client.get_workspace_role("ws_1", "user_x")
+            role = await user_service_client.get_org_role("org_1", "user_x")
     assert role is None
 
 
@@ -277,7 +277,7 @@ async def test_delete_channel_non_admin_403():
 
     with (
         patch("src.api.routers.channels.get_channel", new=AsyncMock(return_value=channel)),
-        patch("src.api.routers.channels.is_workspace_admin", new=AsyncMock(return_value=False)),
+        patch("src.api.routers.channels.is_org_admin", new=AsyncMock(return_value=False)),
     ):
         from fastapi.testclient import TestClient
         app = _make_app()
@@ -298,7 +298,7 @@ async def test_delete_channel_admin_success_publishes_event():
 
     with (
         patch("src.api.routers.channels.get_channel", new=AsyncMock(return_value=channel)),
-        patch("src.api.routers.channels.is_workspace_admin", new=AsyncMock(return_value=True)),
+        patch("src.api.routers.channels.is_org_admin", new=AsyncMock(return_value=True)),
         patch("src.api.routers.channels.hard_delete_channel", new=AsyncMock(return_value=True)),
         patch("src.api.routers.channels.get_bus", return_value=_FakeBus()),
     ):
@@ -380,7 +380,7 @@ async def test_delete_channel_user_service_error_502():
     with (
         patch("src.api.routers.channels.get_channel", new=AsyncMock(return_value=channel)),
         patch(
-            "src.api.routers.channels.is_workspace_admin",
+            "src.api.routers.channels.is_org_admin",
             new=AsyncMock(side_effect=UserServiceError("timeout")),
         ),
     ):

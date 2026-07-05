@@ -5,8 +5,8 @@ Decouples human-message persistence from the agent turn:
   2. Parse + resolve @mentions; persist message_mentions.
   3. Gate agent dispatch per trigger rules (§4.2):
        - Explicit @agent mention → trigger.
-       - Feature thread + bare message (no @agent) → trigger (v3 feel preserved).
-       - Channel + bare message → no trigger.
+       - Thread (feature-scoped or ad-hoc) + bare message (no @agent) → trigger (v3 feel preserved).
+       - Channel or DM + bare message → no trigger.
   4. If triggered: schedule an agent turn with coalescing (via agent_dispatch).
   5. Return 202 immediately (fire-and-forget pattern).
 """
@@ -41,6 +41,7 @@ from src.db import (
 from src.db.store import append_message
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
+from src.services.workflow_db_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
 
@@ -58,15 +59,15 @@ def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
 
     Rules (§4.2, resolved):
       - Explicit @agent mention → always trigger.
-      - Bare message in a feature thread (feature_id != '') → trigger (v3 feel).
+      - Bare message in any thread (kind='thread', feature-scoped or ad-hoc) → trigger (v3 feel).
       - Bare message in a channel (kind='channel') → never trigger.
+      - Bare message in a DM (kind='dm') → never trigger (same as channel rule; a
+        1:1 private exchange must not have every message intercepted by the agent).
     """
     if has_explicit_agent_mention:
         return True
-    # Bare message: only trigger in feature threads.
-    feature_id = getattr(session, "feature_id", "") or ""
     kind = getattr(session, "kind", "thread") or "thread"
-    return kind == "thread" and bool(feature_id)
+    return kind == "thread"
 
 
 @router.get("/threads/{session_id}/messages")
@@ -130,14 +131,15 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     ws_id = getattr(session, "workspace_id", "") or ""
+    org_id = await get_workspace_organization_id(ws_id)
 
     # --- Mention parse + resolve ---
     handles = parse_mention_handles(body.content)
     has_agent_mention = "agent" in handles
 
-    # Resolve @handles against the whole workspace directory (user-service), so
-    # any workspace member can be mentioned — not only current channel members.
-    resolved_mentions = resolve_mentions(handles, await mention_candidates(ws_id))
+    # Resolve @handles against the whole org directory (user-service), so any
+    # org member can be mentioned — not only current channel members.
+    resolved_mentions = resolve_mentions(handles, await mention_candidates(org_id))
 
     # --- Persist the human message (with author_id) ---
     message_id = await append_message(

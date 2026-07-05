@@ -217,6 +217,15 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                 if repos:
                     parts.append("repos: " + ", ".join(r for r in repo_ids if r))
 
+        if not feature_id:
+            # Non-feature session (Channel, Team Chat thread, DM).
+            # workflow_lookup_feature is available for read-only feature lookups by ID/slug.
+            parts.append(
+                "session_kind: general (no feature scope) — "
+                "use workflow_lookup_feature(feature_ref=<id-or-slug>) to look up "
+                "a feature's title, stage, and synopsis without entering its scope."
+            )
+
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
             if feat.get("ok"):

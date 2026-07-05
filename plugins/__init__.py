@@ -27,6 +27,7 @@ from .tools import (
     parse_tasks as parse_tasks_tool,
     github_pr_context as github_pr_context_tool,
     github_pr_review as github_pr_review_tool,
+    lookup_feature as lookup_feature_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -199,6 +200,12 @@ _TOOLS = (
         "schema": github_pr_review_tool.SCHEMA,
         "handler": github_pr_review_tool.handle,
         "check_fn": github_pr_review_tool.check_available,
+    },
+    {
+        "name": "workflow_lookup_feature",
+        "schema": lookup_feature_tool.SCHEMA,
+        "handler": lookup_feature_tool.handle,
+        "check_fn": lookup_feature_tool.check_available,
     },
 )
 

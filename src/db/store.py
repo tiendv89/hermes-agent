@@ -276,7 +276,9 @@ async def delete_sessions_for_workspace(db: AsyncSession, workspace_id: str) -> 
     """
     if not workspace_id:
         return 0
-    rows = await db.execute(select(Session.id).where(Session.workspace_id == workspace_id))
+    rows = await db.execute(
+        select(Session.id).where(Session.workspace_id == workspace_id)
+    )
     ids = [r[0] for r in rows.all()]
     return await _delete_sessions_by_ids(db, ids)
 
@@ -800,6 +802,7 @@ async def get_unread_mentions_by_session(
 # Channel store
 # ---------------------------------------------------------------------------
 
+
 async def create_channel(
     db: AsyncSession,
     workspace_id: str,
@@ -1038,15 +1041,145 @@ async def list_workspace_threads(
 
 
 # ---------------------------------------------------------------------------
+# Direct Message (DM) store (agent-general-chat G2)
+# ---------------------------------------------------------------------------
+
+
+async def create_dm(
+    db: AsyncSession,
+    workspace_id: str,
+    member_a: str,
+    member_b: str,
+) -> str:
+    """Resolve-or-create a DM session for the unordered pair (member_a, member_b).
+
+    Idempotent: if a DM session already exists for this pair within the
+    workspace, the existing session id is returned without creating a new row.
+    DM sessions have kind='dm' and feature_id=''.
+    """
+    # Look up an existing DM session where both members are present.
+    # We query sessions the caller is a member of, then check the other member.
+    existing = await db.execute(
+        select(Session.id)
+        .where(
+            Session.workspace_id == workspace_id,
+            Session.kind == "dm",
+            Session.archived == False,  # noqa: E712
+            Session.id.in_(
+                select(SessionMember.session_id).where(
+                    SessionMember.user_id == member_a
+                )
+            ),
+            Session.id.in_(
+                select(SessionMember.session_id).where(
+                    SessionMember.user_id == member_b
+                )
+            ),
+        )
+        .limit(1)
+    )
+    row = existing.scalar_one_or_none()
+    if row is not None:
+        return row
+
+    now = time.time()
+    session = Session(
+        id=_new_session_id(),
+        source="hermes-agent",
+        user_id=member_a,
+        workspace_id=workspace_id,
+        feature_id="",
+        kind="dm",
+        started_at=now,
+        last_active_at=now,
+        extra={},
+    )
+    db.add(session)
+    await db.flush()
+
+    for uid in (member_a, member_b):
+        db.add(
+            SessionMember(
+                session_id=session.id,
+                user_id=uid,
+                added_by=member_a,
+                added_at=now,
+            )
+        )
+    await db.commit()
+    return session.id
+
+
+async def list_dms(
+    db: AsyncSession,
+    workspace_id: str,
+    user_id: str,
+    limit: int = 50,
+) -> List[Dict[str, Any]]:
+    """Return non-archived DM sessions the user is a member of, newest-first.
+
+    Each entry includes ``other_member_id`` (the DM peer's user id, resolved
+    from session_members) — display name/avatar are enriched by the caller
+    via user-service (see ``src/api/routers/dms.py``).
+    """
+    result = await db.execute(
+        select(
+            Session.id,
+            Session.title,
+            Session.feature_id,
+            Session.started_at,
+            Session.last_active_at,
+            Session.model,
+            Session.kind,
+        )
+        .where(
+            Session.workspace_id == workspace_id,
+            Session.archived == False,  # noqa: E712
+            Session.kind == "dm",
+            Session.id.in_(
+                select(SessionMember.session_id).where(SessionMember.user_id == user_id)
+            ),
+        )
+        .order_by(Session.last_active_at.desc())
+        .limit(limit)
+    )
+    rows = result.all()
+    session_ids = [row.id for row in rows]
+
+    other_member_by_session: Dict[str, str] = {}
+    if session_ids:
+        member_result = await db.execute(
+            select(SessionMember.session_id, SessionMember.user_id).where(
+                SessionMember.session_id.in_(session_ids),
+                SessionMember.user_id != user_id,
+            )
+        )
+        for session_id, other_user_id in member_result.all():
+            other_member_by_session[session_id] = other_user_id
+
+    return [
+        {
+            "id": row.id,
+            "title": row.title,
+            "feature_id": row.feature_id,
+            "started_at": row.started_at,
+            "last_active_at": row.last_active_at,
+            "model": row.model,
+            "kind": row.kind,
+            "other_member_id": other_member_by_session.get(row.id, ""),
+        }
+        for row in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Model catalog CRUD
 # ---------------------------------------------------------------------------
 
 
 async def list_catalog_models(db: AsyncSession) -> List[Dict[str, Any]]:
     """Return all model_catalog rows ordered by display_name."""
-    result = await db.execute(
-        select(ModelCatalog).order_by(ModelCatalog.display_name)
-    )
+    result = await db.execute(select(ModelCatalog).order_by(ModelCatalog.display_name))
     return [_catalog_row(m) for m in result.scalars().all()]
 
 
@@ -1060,9 +1193,7 @@ async def list_active_catalog_models(db: AsyncSession) -> List[Dict[str, Any]]:
     return [_catalog_row(m) for m in result.scalars().all()]
 
 
-async def get_catalog_model(
-    db: AsyncSession, model_id: str
-) -> Optional[ModelCatalog]:
+async def get_catalog_model(db: AsyncSession, model_id: str) -> Optional[ModelCatalog]:
     """Return a single ModelCatalog row or None."""
     result = await db.execute(
         select(ModelCatalog).where(ModelCatalog.model_id == model_id)
