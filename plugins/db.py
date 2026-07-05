@@ -6,12 +6,15 @@ Requires WORKFLOW_DATABASE_URL pointing at the workflow-backend Postgres instanc
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 from typing import Any, Dict
 
 import psycopg
 from psycopg.rows import dict_row
+
+logger = logging.getLogger(__name__)
 
 _ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
@@ -62,6 +65,43 @@ def get_workspace_context(workspace_id: str) -> Dict[str, Any]:
         "management_repo": row["management_repo_id"],
         "repos": repos,
     }
+
+
+def get_workspace_slug(workspace_id: str) -> str:
+    """Resolve a workspace identifier (slug or UUID) to its canonical slug.
+
+    Callers that accept "slug or ID" (per the rest of this module) but must
+    hand the value to a system that only understands the slug — e.g.
+    GitNexus's connection-scoped endpoint — use this to normalize first.
+    Returns "" when the workspace isn't found, so callers can fall back to
+    the raw identifier instead of failing outright.
+    """
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT w.slug FROM workspaces w WHERE w.slug = %s OR w.id::text = %s LIMIT 1",
+            (workspace_id, workspace_id),
+        ).fetchone()
+    return row["slug"] if row else ""
+
+
+def resolve_workspace_slug(workspace_id: str) -> str:
+    """Best-effort normalize *workspace_id* (slug or UUID) to its canonical slug.
+
+    Downstream systems like GitNexus and RAG key their per-workspace data by
+    slug, not by this app's internal UUID — passing the UUID through would
+    silently scope to a workspace they don't recognize. Falls back to the raw
+    value when the workflow DB is unavailable or the lookup misses/errors, so
+    callers degrade to passthrough instead of failing outright.
+    """
+    if not workspace_id or not check_workflow_available():
+        return workspace_id
+    try:
+        return get_workspace_slug(workspace_id) or workspace_id
+    except Exception:
+        logger.debug(
+            "resolve_workspace_slug: lookup failed for %r", workspace_id, exc_info=True
+        )
+        return workspace_id
 
 
 def get_feature_detail(workspace_id: str, feature_id: str) -> Dict[str, Any]:

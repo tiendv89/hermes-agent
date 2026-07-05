@@ -6,6 +6,7 @@ import logging
 import os
 from typing import Any, Dict
 
+from ..db import resolve_workspace_slug
 from ..mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
@@ -70,7 +71,11 @@ async def handle(
         return {"ok": False, "error": "query is required."}
     wid = coerce_text(workspace_id) or get_workspace_id()
     if not wid:
-        return {"ok": False, "error": "workspace_id is required but was not provided and no workspace context is set."}
+        return {
+            "ok": False,
+            "error": "workspace_id is required but was not provided and no workspace context is set.",
+        }
+    wid = resolve_workspace_slug(wid)
     url = os.environ.get("RAG_MCP_URL", "").strip()
     if not url:
         return {"ok": False, "error": "RAG_MCP_URL is not configured."}
@@ -85,7 +90,7 @@ async def handle(
 
     mark_context_gathered()
     try:
-        results = await call_mcp_tool(url, "rag_query", arguments)
+        results = await call_mcp_tool(url, "rag_query", arguments, workspace_id=wid)
         return {"ok": True, "results": results}
     except Exception as exc:
         logger.warning("query_rag failed: %s", exc)

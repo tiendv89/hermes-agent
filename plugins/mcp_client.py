@@ -43,7 +43,9 @@ def _unwrap_exception(exc: BaseException) -> BaseException:
     ConnectionError, timeout, etc.) is nested inside.
     """
     seen: set[int] = set()
-    while isinstance(exc, BaseExceptionGroup) and exc.exceptions and id(exc) not in seen:
+    while (
+        isinstance(exc, BaseExceptionGroup) and exc.exceptions and id(exc) not in seen
+    ):
         seen.add(id(exc))
         exc = exc.exceptions[0]
     return exc
@@ -62,28 +64,41 @@ def _content_to_dict(c: Any) -> dict:
     return {"type": "unknown", "value": str(c)}
 
 
-def _sse_endpoint(base_url: str) -> str:
+def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
     """Resolve the SSE endpoint URL from a configured base URL.
 
-    The RAG and GitNexus MCP servers serve their SSE stream at ``/sse`` (see
-    rag-service / git-nexus ``server.py``). Operators typically configure the
-    bare host (e.g. ``https://rag.tempestdev.xyz``), so default the path to
-    ``/sse`` when none is given. A URL that already carries a path is left
-    untouched so explicit overrides keep working.
+    When *workspace_id* is provided the endpoint is scoped to that workspace:
+    ``…/ws/<workspace_id>/sse``.
+
+    Operators typically configure the bare host
+    (e.g. ``https://rag.tempestdev.xyz``).  An existing path in the URL is
+    replaced when workspace_id is given so that explicit per-workspace overrides
+    in the env var do not silently bypass scoping.
     """
     parsed = urlparse(base_url.strip())
-    if parsed.path in ("", "/"):
-        parsed = parsed._replace(path="/sse")
+    if workspace_id:
+        parsed = parsed._replace(path=f"/ws/{workspace_id}/sse")
     return urlunparse(parsed)
 
 
-async def call_mcp_tool(base_url: str, tool: str, arguments: dict) -> list[dict]:
+async def call_mcp_tool(
+    base_url: str,
+    tool: str,
+    arguments: dict,
+    workspace_id: str = "",
+) -> list[dict]:
     """Connect to an MCP SSE server, run a single tool call, return content as plain dicts.
 
-    base_url is the service's base or SSE endpoint, e.g. https://rag.tempestdev.xyz
-    (the ``/sse`` path is appended automatically) or http://gitnexus:8002/sse.
+    base_url is the service's base URL, e.g. https://rag.tempestdev.xyz or
+    http://gitnexus:8002.
+
+    When *workspace_id* is supplied the connection targets the workspace-scoped
+    endpoint ``…/ws/<workspace_id>/sse`` so all tools on that connection are
+    automatically scoped to that workspace — no per-tool argument needed.
+    Callers must pass workspace_id: the servers only expose workspace-scoped
+    endpoints, and without it the base URL is used verbatim.
     """
-    endpoint = _sse_endpoint(base_url)
+    endpoint = _sse_endpoint(base_url, workspace_id)
 
     async def _run() -> list[dict]:
         async with sse_client(endpoint) as (read, write):
@@ -106,4 +121,6 @@ async def call_mcp_tool(base_url: str, tool: str, arguments: dict) -> list[dict]
     except MCPCallError:
         raise
     except Exception as exc:
-        raise MCPCallError(f"MCP {tool!r} call to {endpoint} failed: {type(exc).__name__}: {exc}") from exc
+        raise MCPCallError(
+            f"MCP {tool!r} call to {endpoint} failed: {type(exc).__name__}: {exc}"
+        ) from exc

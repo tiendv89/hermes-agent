@@ -270,9 +270,13 @@ def handle(
     # repo from GitNexus, not guesswork" rule: reject tasks pointed at a repo
     # that isn't actually indexed. Skipped gracefully when GitNexus is
     # unavailable (list_indexed_repos returns None) so authoring still works.
+    from ..context import get_workspace_id
     from .gitnexus import list_indexed_repos
 
-    indexed_repos = list_indexed_repos()
+    # GitNexus only serves workspace-scoped endpoints (/ws/<slug>/sse), so the
+    # session workspace must be passed — without it the lookup is skipped and
+    # validation degrades gracefully.
+    indexed_repos = list_indexed_repos(workspace_id=get_workspace_id())
     if indexed_repos:
         indexed_set = set(indexed_repos)
         unknown = sorted({(t.get("repo") or "").strip() for t in tasks if (t.get("repo") or "").strip()} - indexed_set)

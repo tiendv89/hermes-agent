@@ -15,23 +15,37 @@ logger = logging.getLogger(__name__)
 # Repo-ID fragments → knowledge skill names (heuristic stack matching for G10).
 # Matches on substrings of the repo id (case-insensitive).
 _STACK_SKILL_MAP: list[tuple[str, list[str]]] = [
-    ("ui",          ["typescript-best-practices", "nextjs-best-practices", "heroui-react", "frontend-engineer"]),
-    ("frontend",    ["typescript-best-practices", "nextjs-best-practices", "frontend-engineer"]),
-    ("web",         ["typescript-best-practices", "nextjs-best-practices", "frontend-engineer"]),
-    ("next",        ["nextjs-best-practices", "typescript-best-practices"]),
-    ("react",       ["heroui-react", "typescript-best-practices", "frontend-engineer"]),
-    ("mobile",      ["react-native-mobile-engineer", "typescript-best-practices"]),
-    ("backend",     ["backend-engineer"]),
-    ("api",         ["backend-engineer"]),
-    ("service",     ["backend-engineer"]),
-    ("hermes",      ["python-best-practices", "backend-engineer"]),
-    ("workflow",    ["go-best-practices", "backend-engineer"]),
-    ("go",          ["go-best-practices"]),
-    ("python",      ["python-best-practices"]),
-    ("data",        ["python-data", "data-engineer"]),
-    ("postgres",    ["postgres-best-practices"]),
-    ("nestjs",      ["nestjs-best-practices", "typescript-best-practices"]),
-    ("directus",    ["directus-vue-engineer", "typescript-best-practices"]),
+    (
+        "ui",
+        [
+            "typescript-best-practices",
+            "nextjs-best-practices",
+            "heroui-react",
+            "frontend-engineer",
+        ],
+    ),
+    (
+        "frontend",
+        ["typescript-best-practices", "nextjs-best-practices", "frontend-engineer"],
+    ),
+    (
+        "web",
+        ["typescript-best-practices", "nextjs-best-practices", "frontend-engineer"],
+    ),
+    ("next", ["nextjs-best-practices", "typescript-best-practices"]),
+    ("react", ["heroui-react", "typescript-best-practices", "frontend-engineer"]),
+    ("mobile", ["react-native-mobile-engineer", "typescript-best-practices"]),
+    ("backend", ["backend-engineer"]),
+    ("api", ["backend-engineer"]),
+    ("service", ["backend-engineer"]),
+    ("hermes", ["python-best-practices", "backend-engineer"]),
+    ("workflow", ["go-best-practices", "backend-engineer"]),
+    ("go", ["go-best-practices"]),
+    ("python", ["python-best-practices"]),
+    ("data", ["python-data", "data-engineer"]),
+    ("postgres", ["postgres-best-practices"]),
+    ("nestjs", ["nestjs-best-practices", "typescript-best-practices"]),
+    ("directus", ["directus-vue-engineer", "typescript-best-practices"]),
 ]
 
 
@@ -50,7 +64,9 @@ def _skills_for_repos(repo_ids: list[str]) -> list[str]:
     return result
 
 
-def _build_skills_block(feature_id: str, feature_stage: str, repo_ids: list[str]) -> str | None:
+def _build_skills_block(
+    feature_id: str, feature_stage: str, repo_ids: list[str]
+) -> str | None:
     """Build the skills injection block.
 
     For the technical-design stage, surface stack-matched technical_skills
@@ -70,11 +86,17 @@ def _build_skills_block(feature_id: str, feature_stage: str, repo_ids: list[str]
         matched_names = _skills_for_repos(repo_ids)
         matched = [(n, knowledge[n]) for n in matched_names if n in knowledge]
         if matched:
-            lines.append("\n### Stack-matched skills for this feature's repos (load these first)")
+            lines.append(
+                "\n### Stack-matched skills for this feature's repos (load these first)"
+            )
             for name, entry in matched:
                 lines.append(f"  {name}: {entry.description}")
 
-        remaining = [(n, e) for n, e in sorted(knowledge.items()) if n not in {m[0] for m in matched}]
+        remaining = [
+            (n, e)
+            for n, e in sorted(knowledge.items())
+            if n not in {m[0] for m in matched}
+        ]
         if remaining:
             lines.append("\n### Other knowledge skills")
             for name, entry in remaining:
@@ -175,7 +197,7 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
         try:
             from .tools.gitnexus import list_indexed_repos
 
-            indexed_repos = list_indexed_repos(timeout=10)
+            indexed_repos = list_indexed_repos(timeout=10, workspace_id=workspace_id)
         except Exception as _exc:  # pragma: no cover - defensive
             logger.debug("inject_context: list_indexed_repos failed: %s", _exc)
 
@@ -189,7 +211,9 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
             ws = get_workspace(workspace_id=workspace_id)
             if ws.get("ok"):
                 repos = ws.get("workspace", {}).get("repos", [])
-                repo_ids = [r.get("id", "") if isinstance(r, dict) else str(r) for r in repos]
+                repo_ids = [
+                    r.get("id", "") if isinstance(r, dict) else str(r) for r in repos
+                ]
                 if repos:
                     parts.append("repos: " + ", ".join(r for r in repo_ids if r))
 
@@ -218,9 +242,12 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                     try:
                         from .tools.workspace import handle as _get_ws
                         from .tools.artifacts import _resolve_management_repo
+
                         ws_ctx = _get_ws(workspace_id=workspace_id)
                         if ws_ctx.get("ok"):
-                            gh_owner, gh_repo = _resolve_management_repo(ws_ctx["workspace"])
+                            gh_owner, gh_repo = _resolve_management_repo(
+                                ws_ctx["workspace"]
+                            )
                             init_block = _read_init_pr_context(
                                 feature_name=f["feature_name"],
                                 init_pr_url=f["init_pr_url"],
