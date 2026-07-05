@@ -280,13 +280,15 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
     history_result = MagicMock()
     history_result.scalars.return_value.all.return_value = []
 
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
-        patch("src.api.routers.messages.list_members", AsyncMock(return_value=[])),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=42)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
             "src.api.routers.messages.get_messages_as_conversation",
@@ -340,7 +342,6 @@ async def test_send_message_channel_bare_no_agent():
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
-        patch("src.api.routers.messages.list_members", AsyncMock(return_value=[])),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=10)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
@@ -388,13 +389,15 @@ async def test_send_message_feature_thread_bare_triggers():
     session.workspace_id = "ws-1"
     session.model = None
 
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
         patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
-        patch("src.api.routers.messages.list_members", AsyncMock(return_value=[])),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=7)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
             "src.api.routers.messages.get_messages_as_conversation",
@@ -619,3 +622,133 @@ def test_channel_session_dispatch_gate_no_feature_tools():
     assert _should_trigger_agent(session, False) is False
     # But explicit @agent still triggers even in channel
     assert _should_trigger_agent(session, True) is True
+
+
+# ---------------------------------------------------------------------------
+# DM dispatch gate tests (T2 — DM follows Channel bare-message rule)
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_gate_dm_bare_no_trigger():
+    """DM + bare message → no agent turn (same as channel rule, §design §2)."""
+    from src.api.routers.messages import _should_trigger_agent
+
+    session = _make_session(kind="dm", feature_id="")
+    assert _should_trigger_agent(session, has_explicit_agent_mention=False) is False
+
+
+def test_dispatch_gate_dm_explicit_agent_triggers():
+    """DM + explicit @agent → agent turn is triggered."""
+    from src.api.routers.messages import _should_trigger_agent
+
+    session = _make_session(kind="dm", feature_id="")
+    assert _should_trigger_agent(session, has_explicit_agent_mention=True) is True
+
+
+@pytest.mark.asyncio
+async def test_send_message_dm_bare_no_agent():
+    """POST /threads/{dm_id}/messages bare message in DM → 202, agent_triggered=False."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    # DM session: kind='dm', no feature_id (mirrors channel test)
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "dm"
+    session.feature_id = ""
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=20)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock()
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_dm/messages",
+                json={"content": "Hey, what are you doing later?"},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["agent_triggered"] is False
+    mock_dispatch.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_message_dm_explicit_agent_triggers():
+    """POST /threads/{dm_id}/messages with @agent in DM → 202, agent_triggered=True."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    # DM session: kind='dm', no feature_id
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "dm"
+    session.feature_id = ""
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=21)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
+        patch("src.api.routers.messages.update_session_model", AsyncMock()),
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_dm/messages",
+                json={"content": "@agent what is the status of feature VOY-59?"},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["agent_triggered"] is True
+    assert body["message_id"] == 21
+    mock_dispatch.assert_called_once()

@@ -60,12 +60,16 @@ def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
       - Explicit @agent mention → always trigger.
       - Bare message in a feature thread (feature_id != '') → trigger (v3 feel).
       - Bare message in a channel (kind='channel') → never trigger.
+      - Bare message in a DM (kind='dm') → never trigger (same as channel rule; a
+        1:1 private exchange must not have every message intercepted by the agent).
     """
     if has_explicit_agent_mention:
         return True
-    # Bare message: only trigger in feature threads.
+    # Bare message: DMs follow the Channel rule — only feature threads auto-trigger.
     feature_id = getattr(session, "feature_id", "") or ""
     kind = getattr(session, "kind", "thread") or "thread"
+    if kind in ("channel", "dm"):
+        return False
     return kind == "thread" and bool(feature_id)
 
 
