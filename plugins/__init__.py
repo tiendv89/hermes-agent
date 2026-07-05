@@ -9,7 +9,22 @@ from typing import Any
 
 from .db import check_workflow_available
 from .hooks import inject_context
-from .tools import workspace, feature, artifacts, edit as edit_tool, read as read_tool, tasks as tasks_tool, gitnexus, rag, skills as skills_tool, approval, approve as approve_tool, tasks_write as tasks_write_tool, suggest_next_actions as suggest_next_actions_tool
+from .tools import (
+    workspace,
+    feature,
+    artifacts,
+    edit as edit_tool,
+    read as read_tool,
+    tasks as tasks_tool,
+    gitnexus,
+    rag,
+    skills as skills_tool,
+    approval,
+    approve as approve_tool,
+    tasks_write as tasks_write_tool,
+    suggest_next_actions as suggest_next_actions_tool,
+    lookup_feature as lookup_feature_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +73,7 @@ def _json_result_handler(handler: Any, is_async: bool) -> Any:
     wrapped.
     """
     if is_async:
+
         @functools.wraps(handler)
         async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
             return _as_tool_content(await handler(**_unpack_args(args, kwargs)))
@@ -69,6 +85,7 @@ def _json_result_handler(handler: Any, is_async: bool) -> Any:
         return _as_tool_content(handler(**_unpack_args(args, kwargs)))
 
     return _sync_wrapper
+
 
 _TOOLS = (
     {
@@ -155,6 +172,12 @@ _TOOLS = (
         "name": "suggest_next_actions",
         "schema": suggest_next_actions_tool.SCHEMA,
         "handler": suggest_next_actions_tool.handle,
+    },
+    {
+        "name": "workflow_lookup_feature",
+        "schema": lookup_feature_tool.SCHEMA,
+        "handler": lookup_feature_tool.handle,
+        "check_fn": lookup_feature_tool.check_available,
     },
 )
 
