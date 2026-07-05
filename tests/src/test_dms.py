@@ -234,12 +234,23 @@ async def test_create_dm_pair_unique_per_workspace():
 
 @pytest.mark.asyncio
 async def test_list_dms_returns_caller_dms():
-    """list_dms returns DM sessions the caller is a member of."""
+    """list_dms returns DM sessions the caller is a member of, with other_member_id resolved."""
     from src.db.store import list_dms
 
     db = _mock_db()
     row = _make_dm_row(id="sess_dm1")
-    db.execute = AsyncMock(return_value=_rows_result([row]))
+
+    def _member_rows_result(pairs):
+        r = MagicMock()
+        r.all.return_value = pairs
+        return r
+
+    db.execute = AsyncMock(
+        side_effect=[
+            _rows_result([row]),
+            _member_rows_result([("sess_dm1", "user_b")]),
+        ]
+    )
 
     dms = await list_dms(db, workspace_id="ws_1", user_id="user_a")
 
@@ -247,6 +258,7 @@ async def test_list_dms_returns_caller_dms():
     assert dms[0]["id"] == "sess_dm1"
     assert dms[0]["kind"] == "dm"
     assert dms[0]["feature_id"] == ""
+    assert dms[0]["other_member_id"] == "user_b"
 
 
 @pytest.mark.asyncio
@@ -296,7 +308,7 @@ async def test_post_dms_returns_201_with_session_id():
             new=AsyncMock(return_value="sess_dm_new"),
         ),
         patch(
-            "src.api.routers.dms.list_workspace_members",
+            "src.api.routers.dms.list_org_members",
             new=AsyncMock(return_value={}),
         ),
     ):
@@ -321,7 +333,7 @@ async def test_post_dms_idempotent_returns_existing_session():
             new=AsyncMock(return_value="sess_dm_existing"),
         ),
         patch(
-            "src.api.routers.dms.list_workspace_members",
+            "src.api.routers.dms.list_org_members",
             new=AsyncMock(return_value={}),
         ),
     ):
@@ -347,7 +359,7 @@ async def test_post_dms_idempotent_returns_existing_session():
 async def test_post_dms_self_dm_returns_400():
     """POST /dms with other_member_id == caller → 400."""
     with patch(
-        "src.api.routers.dms.list_workspace_members",
+        "src.api.routers.dms.list_org_members",
         new=AsyncMock(return_value={}),
     ):
         from fastapi.testclient import TestClient
@@ -386,10 +398,16 @@ async def test_post_dms_missing_other_member_id_422():
 
 @pytest.mark.asyncio
 async def test_post_dms_nonmember_returns_404():
-    """POST /dms where other_member_id not in workspace → 404."""
-    with patch(
-        "src.api.routers.dms.list_workspace_members",
-        new=AsyncMock(return_value={"user_x": {}, "user_y": {}}),
+    """POST /dms where other_member_id not in the caller's org → 404."""
+    with (
+        patch(
+            "src.api.routers.dms.get_workspace_organization_id",
+            new=AsyncMock(return_value="org_1"),
+        ),
+        patch(
+            "src.api.routers.dms.list_org_members",
+            new=AsyncMock(return_value={"user_x": {}, "user_y": {}}),
+        ),
     ):
         from fastapi.testclient import TestClient
 
@@ -397,7 +415,10 @@ async def test_post_dms_nonmember_returns_404():
         client = TestClient(app)
         resp = client.post(
             "/api/v1/dms",
-            json={"workspace_id": "ws_1", "other_member_id": "user_not_a_member"},
+            json={
+                "workspace_id": "ws_1",
+                "other_member_id": "user_not_a_member",
+            },
         )
     assert resp.status_code == 404
 
@@ -427,6 +448,39 @@ async def test_get_dms_returns_200_with_list():
         resp = client.get("/api/v1/dms?workspace_id=ws_1")
     assert resp.status_code == 200
     assert resp.json()["dms"] == dms_data
+
+
+@pytest.mark.asyncio
+async def test_get_dms_enriches_other_member_name():
+    """GET /dms attaches other_member_name/avatar resolved by other_member_id."""
+    dms_data = [
+        {
+            "id": "sess_dm1",
+            "title": None,
+            "feature_id": "",
+            "started_at": 1000.0,
+            "last_active_at": 1001.0,
+            "model": "claude-3",
+            "kind": "dm",
+            "other_member_id": "user_b",
+        }
+    ]
+    with (
+        patch("src.api.routers.dms.list_dms", new=AsyncMock(return_value=dms_data)),
+        patch(
+            "src.api.routers.dms.list_users_by_ids",
+            new=AsyncMock(return_value={"user_b": {"display_name": "Bob", "avatar_url": "https://x/b.png"}}),
+        ),
+    ):
+        from fastapi.testclient import TestClient
+
+        app = _make_dms_app()
+        client = TestClient(app)
+        resp = client.get("/api/v1/dms?workspace_id=ws_1")
+    assert resp.status_code == 200
+    dm = resp.json()["dms"][0]
+    assert dm["other_member_name"] == "Bob"
+    assert dm["other_member_avatar_url"] == "https://x/b.png"
 
 
 @pytest.mark.asyncio

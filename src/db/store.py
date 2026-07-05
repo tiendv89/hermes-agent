@@ -1116,7 +1116,12 @@ async def list_dms(
     user_id: str,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Return non-archived DM sessions the user is a member of, newest-first."""
+    """Return non-archived DM sessions the user is a member of, newest-first.
+
+    Each entry includes ``other_member_id`` (the DM peer's user id, resolved
+    from session_members) — display name/avatar are enriched by the caller
+    via user-service (see ``src/api/routers/dms.py``).
+    """
     result = await db.execute(
         select(
             Session.id,
@@ -1138,6 +1143,20 @@ async def list_dms(
         .order_by(Session.last_active_at.desc())
         .limit(limit)
     )
+    rows = result.all()
+    session_ids = [row.id for row in rows]
+
+    other_member_by_session: Dict[str, str] = {}
+    if session_ids:
+        member_result = await db.execute(
+            select(SessionMember.session_id, SessionMember.user_id).where(
+                SessionMember.session_id.in_(session_ids),
+                SessionMember.user_id != user_id,
+            )
+        )
+        for session_id, other_user_id in member_result.all():
+            other_member_by_session[session_id] = other_user_id
+
     return [
         {
             "id": row.id,
@@ -1147,8 +1166,9 @@ async def list_dms(
             "last_active_at": row.last_active_at,
             "model": row.model,
             "kind": row.kind,
+            "other_member_id": other_member_by_session.get(row.id, ""),
         }
-        for row in result.all()
+        for row in rows
     ]
 
 

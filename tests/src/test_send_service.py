@@ -206,12 +206,12 @@ def test_dispatch_gate_feature_thread_bare_triggers():
     assert _should_trigger_agent(session, has_explicit_agent_mention=False) is True
 
 
-def test_dispatch_gate_thread_no_feature_bare_no_trigger():
-    """Plain thread with no feature_id + bare message ⇒ no trigger (not a feature thread)."""
+def test_dispatch_gate_thread_no_feature_bare_triggers():
+    """Ad-hoc workspace thread (no feature_id) + bare message ⇒ agent turn (no @agent required)."""
     from src.api.routers.messages import _should_trigger_agent
 
     session = _make_session(kind="thread", feature_id="")
-    assert _should_trigger_agent(session, has_explicit_agent_mention=False) is False
+    assert _should_trigger_agent(session, has_explicit_agent_mention=False) is True
 
 
 # ---------------------------------------------------------------------------

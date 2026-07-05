@@ -1,7 +1,11 @@
-"""HTTP client for user-service workspace-role lookups.
+"""HTTP client for user-service org-role/org-member lookups.
 
-hermes-agent calls user-service server-to-server to confirm the caller is a
-workspace admin before allowing channel deletion (§3.6 / T4 / T5).
+hermes-agent calls user-service server-to-server to confirm the caller is an
+org admin before allowing channel deletion, and to resolve DM eligibility and
+@mention candidates against the org roster (§3.6 / T4 / T5, reworked when
+user-service's workspace_memberships table was removed — per-workspace roles
+never diverged from org roles in practice, so all membership/permission
+checks are now org-scoped).
 
 Configuration (env vars, all optional if running without the full stack):
   USER_SERVICE_URL    Base URL of user-service, e.g. http://user-service:8080.
@@ -9,10 +13,13 @@ Configuration (env vars, all optional if running without the full stack):
                       local dev / direct testing without the BFF stack).
   USER_SERVICE_TOKEN  Optional Bearer token for service-to-service auth.
 
-Endpoint contract (from T5 implementation):
-  GET {USER_SERVICE_URL}/api/v1/workspaces/{workspace_id}/members/{user_id}
-  → 200  {"user_id": "...", "workspace_id": "...", "role": "admin"|"member"|...}
+Endpoint contracts:
+  GET {USER_SERVICE_URL}/internal/org-role?org_id=<uuid>&user_id=<uuid>
+  → 200  {"organization_id": "...", "user_id": "...", "role": "admin"|"member"|...}
   → 404  not a member
+
+  GET {USER_SERVICE_URL}/internal/orgs/{org_id}/members
+  → 200  {"members": [{"user_id", "display_name", "email", "avatar_url", "role"}, ...]}
 """
 
 from __future__ import annotations
@@ -28,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_ADMIN_ROLES = frozenset({"admin", "owner"})
 
-# Short TTL cache of workspace member directories so message-author resolution
+# Short TTL cache of org member directories so message-author resolution
 # doesn't hit user-service on every transcript fetch / live message.
 _MEMBERS_TTL_SECONDS = 30.0
 _members_cache: Dict[str, tuple[float, Dict[str, Dict[str, Any]]]] = {}
@@ -38,17 +45,18 @@ class UserServiceError(Exception):
     """Raised when user-service returns an unexpected response."""
 
 
-async def list_workspace_members(workspace_id: str) -> Dict[str, Dict[str, Any]]:
-    """Return ``{user_id: {display_name, email, avatar_url, role}}`` for a workspace.
+async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
+    """Return ``{user_id: {display_name, email, avatar_url, role}}`` for an org.
 
-    Calls user-service's internal member directory (service-token auth). Results
-    are cached briefly. Returns ``{}`` when USER_SERVICE_URL is unset (dev mode)
-    or on any error — callers degrade gracefully to id-only attribution.
+    Calls user-service's internal org-member directory (service-token auth).
+    Results are cached briefly. Returns ``{}`` when USER_SERVICE_URL is unset
+    (dev mode), org_id is empty, or on any error — callers degrade gracefully
+    to id-only attribution.
     """
-    if not workspace_id:
+    if not org_id:
         return {}
 
-    cached = _members_cache.get(workspace_id)
+    cached = _members_cache.get(org_id)
     if cached and (time.monotonic() - cached[0]) < _MEMBERS_TTL_SECONDS:
         return cached[1]
 
@@ -58,7 +66,7 @@ async def list_workspace_members(workspace_id: str) -> Dict[str, Dict[str, Any]]
 
     token = os.environ.get("USER_SERVICE_TOKEN", "")
     headers = {"Authorization": f"Bearer {token}"} if token else {}
-    url = f"{base_url}/internal/workspaces/{workspace_id}/members"
+    url = f"{base_url}/internal/orgs/{org_id}/members"
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -66,11 +74,11 @@ async def list_workspace_members(workspace_id: str) -> Dict[str, Dict[str, Any]]
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service members lookup %s -> %s", url, resp.status)
+                    logger.warning("user-service org members lookup %s -> %s", url, resp.status)
                     return {}
                 body = await resp.json()
     except Exception:
-        logger.exception("user-service members lookup failed for %s", workspace_id)
+        logger.exception("user-service org members lookup failed for %s", org_id)
         return {}
 
     # RespondOK wraps as {"success": true, "data": {"members": [...]}}.
@@ -81,7 +89,7 @@ async def list_workspace_members(workspace_id: str) -> Dict[str, Dict[str, Any]]
         uid = m.get("user_id")
         if uid:
             out[uid] = m
-    _members_cache[workspace_id] = (time.monotonic(), out)
+    _members_cache[org_id] = (time.monotonic(), out)
     return out
 
 
@@ -92,9 +100,8 @@ _users_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
 async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
     """Return ``{user_id: {display_name, email, avatar_url}}`` for the given ids.
 
-    Resolves any user regardless of workspace membership (unlike
-    list_workspace_members). Cached per-id; returns ``{}`` when USER_SERVICE_URL
-    is unset or on error.
+    Resolves any user regardless of org membership (unlike list_org_members).
+    Cached per-id; returns ``{}`` when USER_SERVICE_URL is unset or on error.
     """
     ids = [uid for uid in dict.fromkeys(user_ids) if uid]
     if not ids:
@@ -143,11 +150,11 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
     return resolved
 
 
-async def get_workspace_role(
-    workspace_id: str,
+async def get_org_role(
+    org_id: str,
     user_id: str,
 ) -> Optional[str]:
-    """Return the caller's workspace role string, or None if not a member.
+    """Return the caller's org role string, or None if not a member.
 
     Returns None also when USER_SERVICE_URL is not set (permissive dev mode).
     Raises :class:`UserServiceError` on HTTP errors other than 404.
@@ -155,8 +162,8 @@ async def get_workspace_role(
     base_url = os.environ.get("USER_SERVICE_URL", "").rstrip("/")
     if not base_url:
         logger.debug(
-            "USER_SERVICE_URL not set — skipping workspace-role check for %s/%s",
-            workspace_id,
+            "USER_SERVICE_URL not set — skipping org-role check for %s/%s",
+            org_id,
             user_id,
         )
         return None
@@ -166,10 +173,11 @@ async def get_workspace_role(
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    url = f"{base_url}/api/v1/workspaces/{workspace_id}/members/{user_id}"
+    url = f"{base_url}/internal/org-role"
+    params = {"org_id": org_id, "user_id": user_id}
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+            url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
         ) as resp:
             if resp.status == 404:
                 return None
@@ -182,13 +190,13 @@ async def get_workspace_role(
             return data.get("role")
 
 
-async def is_workspace_admin(
-    workspace_id: str,
+async def is_org_admin(
+    org_id: str,
     user_id: str,
     *,
     admin_roles: frozenset = _DEFAULT_ADMIN_ROLES,
 ) -> bool:
-    """Return True if user_id is an admin/owner of workspace_id.
+    """Return True if user_id is an admin/owner of org_id.
 
     When USER_SERVICE_URL is unset (permissive dev mode), returns True so
     local direct-call tests are not blocked by the admin gate.
@@ -197,10 +205,10 @@ async def is_workspace_admin(
     if not base_url:
         logger.debug(
             "USER_SERVICE_URL not set — granting admin for %s/%s (dev mode)",
-            workspace_id,
+            org_id,
             user_id,
         )
         return True
 
-    role = await get_workspace_role(workspace_id, user_id)
+    role = await get_org_role(org_id, user_id)
     return role in admin_roles

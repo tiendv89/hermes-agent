@@ -2,9 +2,9 @@
 
 Channel/thread messages are persisted with only an ``author_id`` (X-User-Id).
 For multi-user channel transcripts the FE needs a display name + avatar, so we
-enrich messages here by looking up the workspace member directory in
-user-service (cached). Degrades gracefully (author name None) when user-service
-is unavailable.
+enrich messages here by looking up the caller's user profile / org member
+directory in user-service (cached). Degrades gracefully (author name None)
+when user-service is unavailable.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional
 
-from src.services.user_service_client import list_users_by_ids, list_workspace_members
+from src.services.user_service_client import list_org_members, list_users_by_ids
 
 
 def _display_name(info: Dict[str, Any]) -> Optional[str]:
@@ -69,12 +69,14 @@ def handle_for(info: Dict[str, Any]) -> str:
     return re.sub(r"[^a-z0-9._-]+", "", (info.get("display_name") or "").lower())
 
 
-async def mention_candidates(workspace_id: str) -> List[Dict[str, str]]:
-    """Return ``[{user_id, handle}]`` for all workspace members, so any of them
-    can be @mentioned (not just current channel members)."""
-    if not workspace_id:
+async def mention_candidates(organization_id: str) -> List[Dict[str, str]]:
+    """Return ``[{user_id, handle}]`` for all org members, so any of them can be
+    @mentioned (not just current channel members). Returns ``[]`` when the
+    workspace's organization_id couldn't be resolved (e.g. workflow-backend
+    unavailable)."""
+    if not organization_id:
         return []
-    members = await list_workspace_members(workspace_id)
+    members = await list_org_members(organization_id)
     out: List[Dict[str, str]] = []
     for uid, info in members.items():
         h = handle_for(info)
