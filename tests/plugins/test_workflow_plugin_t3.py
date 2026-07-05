@@ -474,6 +474,8 @@ class TestRegisterT3:
         "create_tasks",
         "parse_tasks",
         "suggest_next_actions",
+        "github_pr_context",
+        "github_pr_review",
     }
 
     def test_registers_all_tools(self):

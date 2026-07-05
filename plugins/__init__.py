@@ -25,6 +25,8 @@ from .tools import (
     suggest_next_actions as suggest_next_actions_tool,
     create_tasks as create_tasks_tool,
     parse_tasks as parse_tasks_tool,
+    github_pr_context as github_pr_context_tool,
+    github_pr_review as github_pr_review_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -185,6 +187,18 @@ _TOOLS = (
         "name": "suggest_next_actions",
         "schema": suggest_next_actions_tool.SCHEMA,
         "handler": suggest_next_actions_tool.handle,
+    },
+    {
+        "name": "github_pr_context",
+        "schema": github_pr_context_tool.SCHEMA,
+        "handler": github_pr_context_tool.handle,
+        "check_fn": github_pr_context_tool.check_available,
+    },
+    {
+        "name": "github_pr_review",
+        "schema": github_pr_review_tool.SCHEMA,
+        "handler": github_pr_review_tool.handle,
+        "check_fn": github_pr_review_tool.check_available,
     },
 )
 

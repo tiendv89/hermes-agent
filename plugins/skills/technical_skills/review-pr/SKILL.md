@@ -1,75 +1,56 @@
 ---
 name: review-pr
 description: >-
-  Autonomous PR reviewer that evaluates implementation quality against the task
-  spec and technical design, posts a GitHub APPROVE or REQUEST_CHANGES review,
-  and writes a structured result.json for the orchestrator to route.
+  Chat-native PR reviewer that fetches context via github_pr_context, evaluates
+  the diff against review_criteria.md, and posts a GitHub APPROVE or
+  REQUEST_CHANGES review via github_pr_review. No result.json, no task-state
+  writes — chat-invoked reviews stop after posting.
 ---
 
-## GitNexus code lookup
+## Code-graph lookup
 
 If `query_gitnexus` is in your tool list, use it for structural lookups
-(symbol definitions, callers, impact analysis) before falling back to grep or file
-reads — it is one tool with a `tool=` selector; call `tool="list_repos"` first, then
-pass `repo="<name>"` on `query`/`context`/`impact`. If it is unavailable or returns no results, fall back to grep/Read.
+(symbol definitions, callers, impact analysis) before falling back to grep or
+file reads. If it is unavailable or returns no results, fall back to grep/Read.
 
 ---
 
 # Review PR
 
 Evaluates a pull request against the task specification and technical design,
-posts a GitHub review (APPROVE or REQUEST_CHANGES), and writes `result.json`
-with the reviewer verdict for the orchestrator to route.
+then posts a GitHub review (APPROVE or REQUEST_CHANGES) via `github_pr_review`.
 
-## Context
-
-All required values are provided in the agent context under **## Your claimed task**:
-
-| Key | Description |
-|---|---|
-| `Workspace root` | Absolute path to the management (workspace) repo |
-| `Feature` | Feature ID (e.g. `autonomous-task-orchestrator`) |
-| `Task ID` | Task ID (e.g. `T3`) |
-| `Impl repo` | Implementation repo ID |
-| `Repo root` | Absolute path to the implementation repo |
-| `Branch` | Feature branch name (e.g. `feature/autonomous-task-orchestrator-T3`) |
-| `PR URL` | GitHub PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) |
-| `Result path` | Absolute path to write `result.json` |
-| `Max review cycles` | Maximum number of review cycles before escalating |
-| `Review cycle count` | Number of `in_review` log entries already on this task |
-
-The `GITHUB_TOKEN` environment variable is set for all GitHub API calls.
+**Chat-invoked reviews stop after posting the review. There is no result.json,
+no merge step, and no task-state write — those belong to the orchestrator's
+own `/review-pr` skill.**
 
 ---
 
-## Cycle limit check — run first
+## Context
 
-Before doing anything else, check whether the review cycle limit has been reached:
+All required values come from the user's request:
 
-1. Read `MAX_REVIEW_CYCLES` from the environment (default: `3`).
-2. Count `in_review` log entries in the task YAML at
-   `<Workspace root>/docs/features/<Feature>/tasks/<Task ID>.yaml`.
-3. If the count is already ≥ `MAX_REVIEW_CYCLES`:
-   - Write `result.json` immediately with `terminal_status: "escalate"`:
-     ```json
-     {
-       "terminal_status": "escalate",
-       "verdict": "escalate",
-       "confidence": 1.0,
-       "notes": "Review cycle limit reached. Human review required."
-     }
-     ```
-   - Stop. Do not post a GitHub review. Do not read the PR diff.
+| Key | Description |
+|---|---|
+| `PR URL` | GitHub PR URL (`https://github.com/{owner}/{repo}/pull/{number}`) |
+| `Workspace root` | Absolute path to the management (workspace) repo |
+| `Feature` | Feature ID (e.g. `autonomous-task-orchestrator`) |
+| `Task ID` | Task ID (e.g. `T3`) |
 
 ---
 
 ## Before reviewing
 
-Read the following documents in order to understand the full context:
+Load the rubric and read the spec documents:
 
-1. `<Workspace root>/docs/features/<Feature>/product-spec.md` — original requirements
-2. `<Workspace root>/docs/features/<Feature>/technical-design.md` — architecture decisions
-3. `<Workspace root>/docs/features/<Feature>/tasks.md` under `## <Task ID> — <title>` — specific scope, subtasks, and acceptance criteria
+1. Call `load_skill("review-pr")` — this loads `review_criteria.md` and this
+   skill doc into context. (You are already executing this skill if you read
+   this line; the `load_skill` call has already happened.)
+
+2. Read the task specification in order:
+   - `<Workspace root>/docs/features/<Feature>/product-spec.md`
+   - `<Workspace root>/docs/features/<Feature>/technical-design.md`
+   - The `## <Task ID>` section of `<Workspace root>/docs/features/<Feature>/tasks.md`
 
 Every finding must be grounded in these documents. Do not request changes that
 contradict the approved spec.
@@ -78,50 +59,70 @@ contradict the approved spec.
 
 ## Execution steps
 
-### Step 1 — Parse the PR URL
+### Step 1 — Fetch PR metadata
 
-Extract `owner`, `repo`, and `pull_number` from the `PR URL`:
+Call `github_pr_context` with `action="metadata"` and the PR URL.
 
 ```
-https://github.com/{owner}/{repo}/pull/{pull_number}
+github_pr_context(action="metadata", pr_url="<PR URL>")
 ```
+
+Record: title, author, base branch, head SHA.
 
 ### Step 2 — Fetch the PR diff
 
-```bash
-curl -s \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github.v3.diff" \
-  "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}"
+Call `github_pr_context` with `action="diff"`.
+
+```
+github_pr_context(action="diff", pr_url="<PR URL>")
 ```
 
 Read the full diff. Note every file changed and every line added or removed.
 
-### Step 3 — Wait for CI to resolve
+Optionally fetch the changed-file list for a structural overview:
 
-Poll CI check-runs until all checks reach a terminal state (success, failure,
-cancelled, or skipped). Maximum wait: 10 minutes; poll every 30 seconds.
-
-```bash
-curl -s \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  "https://api.github.com/repos/{owner}/{repo}/commits/{head_sha}/check-runs"
+```
+github_pr_context(action="files", pr_url="<PR URL>")
 ```
 
-If any check-run has `conclusion: failure` or `conclusion: cancelled`:
-- CI failed. Record this as a 🔴 finding with severity `blocker`.
-- You do not need to wait for remaining checks.
+### Step 3 — Wait for CI to resolve
 
-If all check-runs have `conclusion: success` (or there are no check-runs):
-- CI passed. Continue to rubric evaluation.
+Call `github_pr_context` with `action="checks"`. The tool polls CI check-runs
+for up to `CHAT_REVIEW_CI_POLL_TIMEOUT_SECONDS` (default 60 s) and returns a
+`status` field:
 
-If the 10-minute timeout expires before all checks resolve:
-- Treat as CI failure. Record as a 🔴 finding: "CI timed out — checks still pending."
+```
+github_pr_context(action="checks", pr_url="<PR URL>")
+```
 
-### Step 4 — Evaluate the PR against the rubric
+Interpret the result:
 
-Apply every criterion in
-`<Skill dir>/references/review_criteria.md` to the diff.
+- `status: "all_passed"` — CI passed. Continue to rubric evaluation.
+- `status: "failed"` — one or more check-runs failed or were cancelled. Record
+  as a 🔴 finding with severity `blocker`: "CI failed — see check-run details."
+- `status: "pending"` — CI has not resolved within the poll window. Tell the
+  user to retry once CI finishes; do not block or guess the outcome.
+- `status: "no_checks"` — no check-runs found. Treat as passing; continue.
+
+If `status` is `"pending"`, stop here and reply with a message asking the user
+to re-invoke the review once CI has finished.
+
+### Step 4 — Fetch additional context (optional)
+
+When the diff or task spec raises questions, use additional `github_pr_context`
+actions to gather more information before evaluating:
+
+```
+github_pr_context(action="comments", pr_url="<PR URL>")     # existing discussion
+github_pr_context(action="reviews",  pr_url="<PR URL>")     # prior review history
+github_pr_context(action="commits",  pr_url="<PR URL>")     # commit messages
+github_pr_context(action="file_at_ref", owner="…", repo="…", path="…", ref="…")  # full file content
+```
+
+### Step 5 — Evaluate the PR against the rubric
+
+Apply every criterion in `review_criteria.md` (loaded via `load_skill`) to the
+diff.
 
 For each finding, classify severity:
 - 🔴 **Blocker** — correctness or security issue; blocks merge
@@ -134,229 +135,72 @@ Record findings with:
 - Clear description of the problem
 - Concrete suggestion for how to fix it
 
-### Step 5 — Apply the decision table
+### Step 6 — Apply the decision table
 
-| Condition | Decision | `terminal_status` |
-|---|---|---|
-| Cycle count ≥ `MAX_REVIEW_CYCLES` | Escalate immediately | `escalate` |
-| CI failed | REQUEST_CHANGES | `change_requested` |
-| Any 🔴 finding | REQUEST_CHANGES | `change_requested` |
-| Any 🟡 finding | REQUEST_CHANGES | `change_requested` |
-| Only 🟢 findings or no findings | APPROVE | `passed` |
+| Condition | Decision |
+|---|---|
+| CI failed | REQUEST_CHANGES |
+| Any 🔴 finding | REQUEST_CHANGES |
+| Any 🟡 finding | REQUEST_CHANGES |
+| Only 🟢 findings or no findings | APPROVE |
 
-### Step 6 — Post the GitHub review (two-call pattern)
+If your confidence in the verdict is below 0.80 (ambiguous spec wording,
+genuinely unclear finding), tell the user you are uncertain and explain what
+additional context would help. Do not post a review you are not confident in.
 
-The review post is split into two independent API calls. **Both calls must be attempted in order**, even if the first one returns an unexpected error.
+### Step 7 — Post the GitHub review
 
-#### Step 6a — Post comment (always execute)
+Call `github_pr_review` with the verdict, the full narrative, and any inline
+comments:
 
-Post the full review narrative as a regular issue comment. This endpoint is **not** subject to the GitHub self-review restriction.
+**For APPROVE:**
 
-```bash
-curl -s -X POST \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/{owner}/{repo}/issues/{pull_number}/comments" \
-  -d '{
-    "body": "<full review narrative: verdict, all findings with severity markers, inline references>"
-  }'
+```
+github_pr_review(
+  pr_url="<PR URL>",
+  event="APPROVE",
+  body="<full review narrative: verdict, all findings with severity markers, inline references>",
+  comments=[
+    {"path": "<file>", "line": <n>, "body": "🟢 **Nit** — <description>"}
+  ]  // optional; omit if no nits
+)
 ```
 
-This call must always succeed. If it fails (non-422 error), treat as a fatal error: log the response and write an `escalate` result. Do not suppress errors from this step.
+**For REQUEST_CHANGES:**
 
-Capture the `html_url` from the response body — use it as `review_url` in result.json if Step 6b is skipped.
-
-#### Step 6b — Post review event (attempt after 6a; skip on 422)
-
-Attempt to post the formal review event. Include inline comments for findings here so reviewers can see them in the GitHub diff view.
-
-For **APPROVE**:
-```bash
-curl -s -w "\n%{http_code}" -X POST \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/reviews" \
-  -d '{
-    "event": "APPROVE",
-    "body": "<brief summary>",
-    "comments": [<inline 🟢 nit comments if any>]
-  }'
+```
+github_pr_review(
+  pr_url="<PR URL>",
+  event="REQUEST_CHANGES",
+  body="<full review narrative>",
+  comments=[
+    {"path": "<file>", "line": <n>, "body": "🔴 **Blocker** — <description>\n\n<suggestion>"},
+    {"path": "<file>", "line": <n>, "body": "🟡 **Warning** — <description>"}
+  ]
+)
 ```
 
-For **REQUEST_CHANGES**:
-```bash
-curl -s -w "\n%{http_code}" -X POST \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/reviews" \
-  -d '{
-    "event": "REQUEST_CHANGES",
-    "body": "<brief summary of all findings>",
-    "comments": [<inline comments for each 🔴/🟡 finding>]
-  }'
-```
+The tool returns `{ok, review_url, self_review_skipped}`:
 
-Inline comment format:
-```json
-{
-  "path": "<file path>",
-  "line": <line number in the diff>,
-  "body": "🔴 **Blocker** — <description>\n\n<concrete suggestion>"
-}
-```
+- `ok: true, self_review_skipped: false` — formal review posted. Share
+  `review_url` in your reply.
+- `ok: true, self_review_skipped: true` — GitHub's self-review restriction
+  prevented the formal review event, but the full narrative was posted as an
+  issue comment. The `review_url` is the comment URL. This is expected when
+  the bot token owns the PR.
+- `ok: false` — tool failed. Describe the error to the user and ask them to
+  retry or check `GITHUB_TOKEN` configuration.
 
-**Self-review handling**: Read the HTTP status code from the response:
-- **HTTP 201** — review posted. Capture the `url` from the response body; record it in `result.json` as `review_url`.
-- **HTTP 422** — GitHub self-review restriction. Emit `reviewer_self_review_skipped` to stdout:
-  ```
-  reviewer_self_review_skipped task_id=<task_id> feature_id=<feature_id> pr_number=<pull_number>
-  ```
-  Set `review_url` to `null` and `self_review_skipped: true` in `result.json`. Do **not** fail the executor — the comment in step 6a is the authoritative narrative. Proceed to Step 7.
-- **Any other error** — fatal. Log the response body to stderr and write an `escalate` result with the error details. Stop.
+### Step 8 — Summarize in chat
 
-### Step 7 — Merge the PR (APPROVE path only)
+Reply to the user with:
+- The verdict (APPROVE / REQUEST_CHANGES)
+- A brief summary of any 🔴/🟡 findings (or confirmation that none exist)
+- A link to the posted review (`review_url`)
+- If `self_review_skipped: true`, note that the review was posted as a comment
+  rather than a formal review event due to GitHub's self-review restriction
 
-If the decision is **REQUEST_CHANGES** or **escalate**, skip this step entirely.
-
-Step 7 is **best-effort**: success is not required for the task to eventually be
-marked `done`. The orchestrator's in_review PR poll watches the implementation
-PR on GitHub; whenever it sees `merged: true` (whether merged by this step or by
-a human later), `handleMergedPrs` writes `status: done` and runs the auto-ready
-cascade.
-
-**Check whether the task requires human merge.** Re-read the task YAML at
-`<Workspace root>/docs/features/<Feature>/tasks/<Task ID>.yaml` and check the value
-of `execution.requires_human_review`. If `true`, skip the merge call entirely — the
-APPROVE review has already been posted; the human will merge the PR. Proceed to Step 8.
-
-Otherwise, squash-merge the implementation PR via the GitHub REST API:
-
-```bash
-curl -s -w "\n%{http_code}" -X PUT \
-  -H "Authorization: Bearer $GITHUB_TOKEN" \
-  -H "Accept: application/vnd.github+json" \
-  -H "Content-Type: application/json" \
-  "https://api.github.com/repos/{owner}/{repo}/pulls/{pull_number}/merge" \
-  -d '{"merge_method": "squash"}'
-```
-
-Read the HTTP status code:
-- **HTTP 200** — merged successfully. Continue to Step 8.
-- **HTTP 405** — PR already merged, or merge not allowed (e.g. branch protection
-  requires a human approval). Continue to Step 8 — if the PR is open, the human
-  will merge and the poll will catch it.
-- **HTTP 409** — merge conflict. The branch needs to be rebased before it can merge. Write
-  `terminal_status: "change_requested"` to result.json immediately and stop:
-  ```json
-  {
-    "terminal_status": "change_requested",
-    "verdict": "change_requested",
-    "confidence": 1.0,
-    "notes": "Merge conflict (HTTP 409) — branch must be rebased onto the base branch before merging."
-  }
-  ```
-  Do not post a REQUEST_CHANGES review event for this case — the conflict is a branch
-  management issue, not a code quality issue. The fix agent will rebase and re-push.
-- **Any other error** — log the response to stdout. Continue to Step 8 — do not
-  escalate for merge failure alone.
-
-### Step 8 — Compute confidence
-
-Assign a confidence score (0.0–1.0) reflecting how certain you are in the verdict:
-
-- `1.0` — clear CI failure or obvious correctness bug with no ambiguity
-- `0.8–0.9` — strong finding with clear rubric match
-- `0.6–0.7` — judgment call (design tradeoff, ambiguous spec wording)
-- `< 0.6` — escalate: confidence too low for autonomous decision
-
-If confidence < `CONFIDENCE_THRESHOLD` (default: `0.80`), override the decision to
-`terminal_status: "escalate"` regardless of the rubric outcome.
-
-### Step 9 — Write result.json
-
-Write the result file to the path provided in the agent context (`Result path`):
-
-**On APPROVE / passed (review event posted):**
-```json
-{
-  "terminal_status": "passed",
-  "verdict": "passed",
-  "confidence": 0.92,
-  "notes": "All subtasks implemented. CI passed. No 🔴/🟡 findings.",
-  "review_url": "https://github.com/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}"
-}
-```
-
-**On APPROVE / passed (self-review restriction — review event skipped):**
-```json
-{
-  "terminal_status": "passed",
-  "verdict": "passed",
-  "confidence": 0.92,
-  "notes": "All subtasks implemented. CI passed. No 🔴/🟡 findings.",
-  "review_url": "https://github.com/{owner}/{repo}/issues/{pull_number}#issuecomment-{id}",
-  "self_review_skipped": true
-}
-```
-
-**On REQUEST_CHANGES / change_requested (review event posted):**
-```json
-{
-  "terminal_status": "change_requested",
-  "verdict": "change_requested",
-  "confidence": 0.88,
-  "notes": "🔴 Missing null check in processTask() (src/poll/reap-loop.ts:47). 🟡 N+1 git-fetch inside loop (main.ts:203).",
-  "review_url": "https://github.com/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}"
-}
-```
-
-**On REQUEST_CHANGES / change_requested (self-review restriction — review event skipped):**
-```json
-{
-  "terminal_status": "change_requested",
-  "verdict": "change_requested",
-  "confidence": 0.88,
-  "notes": "🔴 Missing null check in processTask() (src/poll/reap-loop.ts:47).",
-  "review_url": "https://github.com/{owner}/{repo}/issues/{pull_number}#issuecomment-{id}",
-  "self_review_skipped": true
-}
-```
-
-**On escalation:**
-```json
-{
-  "terminal_status": "escalate",
-  "verdict": "escalate",
-  "confidence": 0.55,
-  "notes": "Confidence below threshold. Review cycle limit or ambiguous spec — human review required."
-}
-```
-
----
-
-## result.json schema
-
-```json
-{
-  "terminal_status":     "passed" | "change_requested" | "escalate",
-  "verdict":             "passed" | "change_requested" | "escalate",
-  "confidence":          0.0 to 1.0,
-  "notes":               "<one-line summary of findings>",
-  "review_url":          "<GitHub review URL from Step 6b when posted; Step 6a comment URL when Step 6b returned 422; omit on escalate>",
-  "self_review_skipped": true | false  // true when GitHub returned 422 on the review event POST
-}
-```
-
-`result.json` **must** be written as the final step in every code path, including
-on error. If you cannot complete the review, write:
-```json
-{
-  "terminal_status": "escalate",
-  "verdict": "escalate",
-  "confidence": 0.0,
-  "notes": "<reason for failure>"
-}
-```
+**Chat-invoked reviews stop here. There is no merge step.**
 
 ---
 
@@ -364,31 +208,9 @@ on error. If you cannot complete the review, write:
 
 | Situation | Action |
 |---|---|
-| PR diff fetch fails | Write `escalate` result with reason; stop |
-| CI check-run API fails | Treat as CI timed out (🔴 finding); continue to review |
-| Step 6a comment POST fails (non-422) | Write `escalate` result with reason; stop |
-| Step 6b review POST returns 422 (self-review) | Emit `reviewer_self_review_skipped` to stdout; set `self_review_skipped: true`; continue without `review_url` |
-| Step 6b review POST fails (other error) | Fatal — write `escalate` result with error details; stop |
-| Step 7 merge returns 405 | PR already merged or branch protection — skip, continue |
-| Step 7 merge returns 409 | Merge conflict — write `change_requested` result and stop; fix agent will rebase |
-| Step 7 merge fails (other) | Log response to stdout; skip; continue — do not escalate for merge failure |
-| Task YAML unreadable | Write `escalate` result; stop |
-| Any `127` command not found | Write `escalate` result immediately; stop |
-
----
-
-## Hard stop rule — missing tools
-
-If any shell command exits with code 127, **first diagnose which command was not found**:
-
-- Read the stderr/stdout output to identify the missing command name.
-- If the **top-level tool** (e.g. `npm`, `pnpm`, `node`, `yarn`, `go`, `python`) is the one not found — the system tool is missing. Stop immediately and write:
-  ```json
-  {"terminal_status": "escalate", "verdict": "escalate", "confidence": 0.0, "notes": "missing_tool: <tool> command not found"}
-  ```
-- If the top-level tool **ran successfully** but a sub-command or binary it invoked was not found (e.g. `sh: vitest: not found` inside `npm run test`) — this is a missing project dependency, not a missing system tool. Diagnose and recover:
-  1. Check whether the project dependency directory exists (e.g. `node_modules` for JS, virtual env for Python).
-  2. If absent, install it using the appropriate command detected from the project (lock-file detection: `pnpm-lock.yaml` → `pnpm install --frozen-lockfile`, `yarn.lock` → `yarn install --frozen-lockfile`, `package-lock.json` → `npm ci`, `requirements.txt` → `pip install -r requirements.txt`, etc.).
-  3. Re-run the original command once. If it exits 127 again, stop and escalate.
-
-Do not attempt to install missing **system** tools or work around a missing top-level tool.
+| `github_pr_context` returns `ok: false` | Report the error to the user; do not proceed with an incomplete diff |
+| CI `status: "pending"` | Tell the user to retry once CI resolves; stop |
+| CI `status: "failed"` | Record as 🔴 finding and continue to rubric evaluation |
+| `github_pr_review` returns `ok: false` | Report the error; suggest checking `GITHUB_TOKEN` |
+| `github_pr_review` returns `self_review_skipped: true` | Normal path — use `review_url` (comment URL) in the summary |
+| Confidence < 0.80 | Tell the user what is unclear; do not post a low-confidence review |
