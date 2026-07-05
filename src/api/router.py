@@ -25,6 +25,8 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     POST /channels                               — channels
     DELETE /channels/{id}                        — channels
     POST /channels/{id}/join                     — channels
+    POST /dms                                    — create/resolve DM session (agent-general-chat)
+    GET  /dms                                    — list caller's DMs (agent-general-chat)
 """
 
 from __future__ import annotations
@@ -35,6 +37,7 @@ from src.api.routers import (
     admin_models,
     channels,
     chat,
+    dms,
     documents,
     members,
     messages,
@@ -59,6 +62,7 @@ router.include_router(stages.router)
 router.include_router(channels.router)
 router.include_router(threads.router)
 router.include_router(members.router)
+router.include_router(dms.router)
 
 # Re-exported for callers/tests that reach for the in-flight run registry.
 # Both the legacy /chat handler and the new send service share this state via
