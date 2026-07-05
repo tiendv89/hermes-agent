@@ -155,6 +155,7 @@ async def send_message(
             message_id=message_id,
             session_id=session_id,
             mentions=resolved_mentions,
+            author_id=user_id,
         )
 
     await touch_session(db, session_id)

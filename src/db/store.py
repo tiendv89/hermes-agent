@@ -13,6 +13,12 @@ from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from .models import Message, MessageMention, ModelCatalog, Session, SessionMember
+from src.services.notification_client import (
+    build_channel_message_payload,
+    build_dm_payload,
+    build_mention_payload,
+    schedule_notifications_bulk,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +288,83 @@ async def delete_sessions_for_workspace(db: AsyncSession, workspace_id: str) -> 
 
 
 # ---------------------------------------------------------------------------
+# Notification helpers (fire-and-forget; called from message/mention writes)
+# ---------------------------------------------------------------------------
+
+
+async def _emit_message_notifications(
+    db: AsyncSession,
+    session_id: str,
+    message_id: int,
+    author_id: str,
+) -> None:
+    """Look up the session kind and emit channel_message or dm notifications.
+
+    Called after append_message commits; errors are caught so they never
+    propagate to the caller. The actual HTTP call is scheduled as a
+    background task (fire-and-forget via schedule_notifications_bulk).
+    """
+    try:
+        session = await db.get(Session, session_id)
+        if session is None:
+            return
+        kind = getattr(session, "kind", "thread") or "thread"
+        ws_id = getattr(session, "workspace_id", "") or ""
+        if not ws_id:
+            return
+
+        if kind == "channel":
+            # Notify all channel members except the message author.
+            result = await db.execute(
+                select(SessionMember.user_id).where(
+                    SessionMember.session_id == session_id,
+                    SessionMember.user_id != author_id,
+                )
+            )
+            recipient_ids = [row[0] for row in result.all()]
+            if recipient_ids:
+                payloads = [
+                    build_channel_message_payload(
+                        workspace_id=ws_id,
+                        user_id=uid,
+                        message_id=message_id,
+                        session_id=session_id,
+                        actor_user_id=author_id,
+                    )
+                    for uid in recipient_ids
+                ]
+                schedule_notifications_bulk(payloads)
+
+        elif kind == "dm":
+            # Notify the other party in the DM session.
+            result = await db.execute(
+                select(SessionMember.user_id).where(
+                    SessionMember.session_id == session_id,
+                    SessionMember.user_id != author_id,
+                )
+            )
+            recipient_ids = [row[0] for row in result.all()]
+            if recipient_ids:
+                payloads = [
+                    build_dm_payload(
+                        workspace_id=ws_id,
+                        user_id=uid,
+                        message_id=message_id,
+                        session_id=session_id,
+                        actor_user_id=author_id,
+                    )
+                    for uid in recipient_ids
+                ]
+                schedule_notifications_bulk(payloads)
+    except Exception:
+        logger.exception(
+            "_emit_message_notifications failed for session=%s message=%s",
+            session_id,
+            message_id,
+        )
+
+
+# ---------------------------------------------------------------------------
 # Message CRUD
 # ---------------------------------------------------------------------------
 
@@ -333,8 +416,17 @@ async def append_message(
         counts["tool_call_count"] = Session.tool_call_count + 1
     await db.execute(update(Session).where(Session.id == session_id).values(**counts))
 
+    await db.flush()
+    message_id = msg.id
     await db.commit()
-    return msg.id
+
+    # Fire-and-forget notifications for human-authored messages.
+    # channel_message: broadcast to all channel members except the author.
+    # dm: notify the other party in a DM session.
+    if role == "user" and author_id:
+        await _emit_message_notifications(db, session_id, message_id, author_id)
+
+    return message_id
 
 
 async def get_messages_as_conversation(
@@ -698,11 +790,15 @@ async def persist_mentions(
     message_id: int,
     session_id: str,
     mentions: List[Dict[str, str]],
+    author_id: Optional[str] = None,
 ) -> None:
     """Persist resolved mentions for a message.
 
     Each entry in ``mentions`` must have ``mentioned_id`` and
     ``mentioned_kind`` ('user' | 'agent').
+
+    author_id is the sender's user_id, used to populate actor_user_id in
+    the mention notification payloads.
     """
     for m in mentions:
         db.add(
@@ -715,6 +811,24 @@ async def persist_mentions(
         )
     if mentions:
         await db.commit()
+
+        # Fire-and-forget mention notifications for human recipients.
+        user_mentions = [m for m in mentions if m["mentioned_kind"] == "user"]
+        if user_mentions:
+            session = await db.get(Session, session_id)
+            ws_id = (getattr(session, "workspace_id", "") or "") if session else ""
+            if ws_id:
+                payloads = [
+                    build_mention_payload(
+                        workspace_id=ws_id,
+                        user_id=m["mentioned_id"],
+                        message_id=message_id,
+                        session_id=session_id,
+                        actor_user_id=author_id,
+                    )
+                    for m in user_mentions
+                ]
+                schedule_notifications_bulk(payloads)
 
 
 async def resolve_mentions(
