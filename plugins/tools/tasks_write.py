@@ -20,15 +20,35 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
+import re
+
 import yaml
 
 from ..db import _validate_id, get_feature_detail, get_workspace_context
 from ..document_repo import branch_exists
+from ..skills import get_index
 from .artifacts import _resolve_management_repo
 
 logger = logging.getLogger(__name__)
 
-_TASK_ID_RE = __import__("re").compile(r"^T\d+$")
+_TASK_ID_RE = re.compile(r"^T\d+$")
+
+# Matches a "### Required skills" subsection body, up to the next ## or ###
+# heading (or end of string). Section content, not the tasks.md structure
+# itself, is the source of truth for per-task skills (see shared.md).
+_REQUIRED_SKILLS_SECTION_RE = re.compile(
+    r"^###[ \t]*Required skills[ \t]*$\n(.*?)(?=^#{2,3}[ \t]|\Z)",
+    re.MULTILINE | re.DOTALL,
+)
+_SKILL_BULLET_RE = re.compile(r"^[ \t]*-[ \t]*`?([a-z0-9][a-z0-9-]*)`?[ \t]*$", re.MULTILINE)
+
+
+def _extract_required_skills(tasks_md: str) -> set[str]:
+    """Collect every skill slug referenced across all '### Required skills' subsections."""
+    skills: set[str] = set()
+    for section in _REQUIRED_SKILLS_SECTION_RE.findall(tasks_md):
+        skills.update(_SKILL_BULLET_RE.findall(section))
+    return skills
 
 SCHEMA: Dict[str, Any] = {
     "description": (
@@ -374,6 +394,24 @@ def handle(
                     "to confirm. Do not guess the repo from the feature title."
                 ),
             }
+
+    # Validate every "### Required skills" slug against the live technical_skills
+    # index — the same guardrail as the repo check above, but for skills. Without
+    # this, an invented slug (e.g. "react-best-practices") only surfaces much later
+    # as a task_skipped_missing_skill failure at run-task time.
+    knowledge_skills = {name for name, e in get_index().items() if not e.is_authoring}
+    referenced_skills = _extract_required_skills(tasks_md)
+    unknown_skills = sorted(referenced_skills - knowledge_skills)
+    if unknown_skills:
+        return {
+            "ok": False,
+            "error": (
+                f"Unknown skill slug(s) in Required skills: {unknown_skills}. "
+                f"Valid slugs: {sorted(knowledge_skills)}. "
+                "Only use slugs from the '## Available skills' block injected in "
+                "context — do not invent or guess names."
+            ),
+        }
 
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
