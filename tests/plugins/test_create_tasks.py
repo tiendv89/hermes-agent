@@ -1,5 +1,4 @@
-"""Tests for T6 — backup /create-tasks tool (step-d only, guard-error relay).
-
+"""
 Covers:
   - _relay_create_tasks_reason_code: feature_not_tasks_approved, tasks_already_exist,
     missing_config, empty_tasks, unknown code

@@ -1,5 +1,4 @@
-"""Tests for T5 — tasks-stage approve orchestration (resumable a→b→c→d).
-
+"""
 Covers:
   - Helper functions: _find_open_prs, _merge_pr, _ensure_docs_on_base
   - handle() for go + tasks + approve: full happy path (a→b→c→d)

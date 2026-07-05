@@ -1,4 +1,4 @@
-"""E2E integration tests for T7 — end-to-end verification of the approve pipeline + backup path.
+"""E2E integration tests
 
 Tests simulate multi-call sequences and state transitions across multiple tool invocations,
 distinguishing them from the unit tests in test_approve_t5.py and test_create_tasks_t6.py.

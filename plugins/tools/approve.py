@@ -33,10 +33,6 @@ _TASK_FILE_RE = _re.compile(r"^docs/features/[^/]+/tasks/(T\d+)\.yaml$")
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# T5 helpers — go tasks-stage approve pipeline (a→b→c→d)
-# ---------------------------------------------------------------------------
-
 
 def _find_open_prs(
     gh_owner: str,
