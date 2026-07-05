@@ -1,0 +1,119 @@
+"""Direct Message (DM) routes — agent-general-chat G2.
+
+Routes (all under ``/api/v1``, require_identity):
+
+    POST /dms           — resolve-or-create a 1:1 DM session with another member
+    GET  /dms           — list the caller's DM sessions for a workspace
+
+A DM session is a ``kind='dm'``, ``feature_id=''`` session with exactly two
+human ``session_members`` rows. ``create_dm`` is idempotent — calling it twice
+with the same pair returns the existing session.
+"""
+
+from __future__ import annotations
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.api.deps import get_db
+from src.api.identity import Identity, require_identity
+from src.db import create_dm, list_dms
+from src.services.user_service_client import list_workspace_members
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
+
+class CreateDMRequest(BaseModel):
+    workspace_id: str
+    other_member_id: str
+
+
+# ---------------------------------------------------------------------------
+# POST /dms
+# ---------------------------------------------------------------------------
+
+
+@router.post("/dms", status_code=201)
+async def create_dm_endpoint(
+    body: CreateDMRequest,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Resolve-or-create a DM session between the caller and another member.
+
+    Returns 400 if workspace_id or other_member_id is missing, or if the
+    other member is the caller themselves. Returns 404 when USER_SERVICE_URL
+    is set and other_member_id is not a member of the workspace (skipped in
+    dev mode when USER_SERVICE_URL is unset).
+    """
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+    if not body.workspace_id:
+        raise HTTPException(status_code=400, detail="workspace_id is required.")
+    if not body.other_member_id:
+        raise HTTPException(status_code=400, detail="other_member_id is required.")
+    if body.other_member_id == user_id:
+        raise HTTPException(status_code=400, detail="Cannot create a DM with yourself.")
+
+    # Validate that other_member_id is a real workspace member (when user-service
+    # is available — permissive in dev mode when USER_SERVICE_URL is unset).
+    members = await list_workspace_members(body.workspace_id)
+    if members and body.other_member_id not in members:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Member '{body.other_member_id}' not found in workspace.",
+        )
+
+    session_id = await create_dm(
+        db,
+        workspace_id=body.workspace_id,
+        member_a=user_id,
+        member_b=body.other_member_id,
+    )
+
+    logger.info(
+        "DM resolved: %s (workspace=%s, caller=%s, other=%s)",
+        session_id,
+        body.workspace_id,
+        user_id,
+        body.other_member_id,
+    )
+    return JSONResponse({"session_id": session_id}, status_code=201)
+
+
+# ---------------------------------------------------------------------------
+# GET /dms
+# ---------------------------------------------------------------------------
+
+
+@router.get("/dms")
+async def list_dms_endpoint(
+    workspace_id: str = Query(..., description="Workspace slug or ID"),
+    limit: int = Query(50, ge=1, le=200, description="Max DMs to return"),
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Return the caller's DM sessions for the workspace, newest-first."""
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    dms = await list_dms(
+        db,
+        workspace_id=workspace_id,
+        user_id=user_id,
+        limit=limit,
+    )
+    return JSONResponse({"dms": dms})
