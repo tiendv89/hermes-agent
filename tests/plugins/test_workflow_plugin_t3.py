@@ -471,8 +471,11 @@ class TestRegisterT3:
         "request_approval",
         "approve_feature",
         "write_tasks",
+        "create_tasks",
+        "parse_tasks",
         "suggest_next_actions",
         "github_pr_context",
+        "github_pr_review",
     }
 
     def test_registers_all_tools(self):

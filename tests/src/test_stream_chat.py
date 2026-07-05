@@ -72,6 +72,7 @@ def _inject_mock_run_agent():
     ctx = sys.modules["plugins.context"]
     if not hasattr(ctx, "set_context"):
         ctx.set_context = MagicMock()  # type: ignore[attr-defined]
+        ctx.set_agent_context = MagicMock()  # type: ignore[attr-defined]
         ctx.clear_context = MagicMock()  # type: ignore[attr-defined]
 
     plugins_pkg = sys.modules["plugins"]
@@ -131,7 +132,12 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
     session_mock = MagicMock()
     session_mock.title = "existing title"  # non-null → auto-title skipped
 
-    _resolved = {"model": "claude-sonnet-4-6", "provider": "anthropic", "api_key": None, "base_url": None}
+    _resolved = {
+        "model": "claude-sonnet-4-6",
+        "provider": "anthropic",
+        "api_key": None,
+        "base_url": None,
+    }
     with (
         patch(
             "src.api.routers.chat.get_session",
@@ -145,7 +151,10 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
         patch("src.api.routers.chat.touch_session", AsyncMock()),
         patch("src.api.routers.chat.update_session_model", AsyncMock()),
         patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
-        patch("src.api.routers.chat.default_model", AsyncMock(return_value="claude-sonnet-4-6")),
+        patch(
+            "src.api.routers.chat.default_model",
+            AsyncMock(return_value="claude-sonnet-4-6"),
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=stream_chat_app),
@@ -186,7 +195,8 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
     assert len(done_events) >= 1, (
         f"Expected [DONE] sentinel in stream, got events: {events}"
     )
-    assert _content(content_events[0]) == "Hello from mock agent"
+    full_content = "".join(_content(e) or "" for e in content_events)
+    assert full_content == "Hello from mock agent"
 
 
 @pytest.mark.asyncio
@@ -202,7 +212,9 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     # Pretend a run for this session is already in flight.
     from src.api.agent_dispatch import ActiveRun
 
-    router_mod._active_runs["sess_busy"] = ActiveRun(run_id="test-run-busy", task=None, triggered_by="user_x")
+    router_mod._active_runs["sess_busy"] = ActiveRun(
+        run_id="test-run-busy", task=None, triggered_by="user_x"
+    )
     try:
         with (
             patch(

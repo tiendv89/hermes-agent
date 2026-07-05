@@ -193,7 +193,14 @@ Per-task YAMLs isolate git-push contention when multiple agents mutate state in 
 Narrative only. Mirrors the FARO-197 style. Must contain:
 
 - Header line: feature status (reference), stage status, short note that machine state lives in `tasks/T<n>.yaml`.
-- Index table: `ID | Wave | Title | Depends on` — a quick-scan overview. No status fields here (status lives in YAML).
+- Index table — the task manifest. Use **exactly** these columns, in this order (for `go` features this table is machine-parsed verbatim to seed task state; deviating will fail task creation):
+  ```
+  | ID | Title | Repo | Depends On | Actor |
+  |----|-------|------|------------|-------|
+  | T1 | <title> | <repo-slug> | — | agent |
+  | T2 | <title> | <repo-slug> | T1 | agent |
+  ```
+  Column rules: `ID` is `T<n>`. `Repo` matches a `workspace.yaml` `repos[].id`. `Depends On` is `—` when there are none, otherwise a comma-separated list of task IDs (e.g. `T1, T2`). `Actor` is one of `agent`, `human`, or `either` (defaults to `agent` if blank). No status fields belong here — status lives in the DB (`go`) or per-task YAML (`ts`).
 - Per task, one section:
   - `## T<n> — <Title>` heading
   - `### Description` — what the task accomplishes and why it fits the design

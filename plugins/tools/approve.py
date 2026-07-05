@@ -20,13 +20,211 @@ import yaml
 
 import re as _re
 
-from ..db import _validate_id, get_feature_detail, get_workspace_context, update_feature_stage
+from ..db import (
+    _validate_id,
+    get_feature_detail,
+    get_workspace_context,
+    update_feature_stage,
+)
 from ..document_repo import StaleBaseError, commit_to_branch, read_document
 from .artifacts import _resolve_management_repo
 
 _TASK_FILE_RE = _re.compile(r"^docs/features/[^/]+/tasks/(T\d+)\.yaml$")
 
 logger = logging.getLogger(__name__)
+
+
+def _find_open_prs(
+    gh_owner: str,
+    gh_repo: str,
+    head_branch: str,
+    base_branch: str,
+    github_token: str,
+) -> list:
+    """Return list of open PRs matching head_branch → base_branch."""
+    import requests as _requests
+
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    url = f"https://api.github.com/repos/{gh_owner}/{gh_repo}/pulls"
+    params = {
+        "state": "open",
+        "head": f"{gh_owner}:{head_branch}",
+        "base": base_branch,
+        "per_page": 10,
+    }
+    r = _requests.get(url, headers=headers, params=params, timeout=30)
+    r.raise_for_status()
+    return r.json()
+
+
+def _merge_pr(
+    gh_owner: str,
+    gh_repo: str,
+    pr_number: int,
+    github_token: str,
+) -> None:
+    """Merge a PR via the GitHub Merges API."""
+    import requests as _requests
+
+    headers = {
+        "Authorization": f"Bearer {github_token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    url = f"https://api.github.com/repos/{gh_owner}/{gh_repo}/pulls/{pr_number}/merge"
+    r = _requests.put(url, headers=headers, json={"merge_method": "squash"}, timeout=30)
+    if r.status_code == 405:
+        raise RuntimeError(
+            f"PR #{pr_number} is not mergeable (possibly has conflicts or is already merged): {r.text[:200]}"
+        )
+    if r.status_code == 409:
+        raise RuntimeError(f"PR #{pr_number} merge conflict: {r.text[:200]}")
+    r.raise_for_status()
+
+
+def _read_status_yaml_on_branch(
+    gh_owner: str,
+    gh_repo: str,
+    branch: str,
+    path: str,
+    github_token: str,
+) -> Optional[dict]:
+    """Read and parse status.yaml from a branch; return None if not found or parse error."""
+    try:
+        result = read_document(gh_owner, gh_repo, branch, path, github_token)
+        if not result["content"]:
+            return None
+        return yaml.safe_load(result["content"])
+    except Exception:
+        return None
+
+
+def _ensure_docs_on_base(
+    gh_owner: str,
+    gh_repo: str,
+    docs_branch: str,
+    base_branch: str,
+    status_path: str,
+    github_token: str,
+) -> Optional[str]:
+    """Step b: ensure the feature docs are on base_branch (content-keyed check).
+
+    Returns None on success (already on base, or PR merged successfully).
+    Returns a human-readable error string that should be returned to chat on halt.
+    """
+    # Check if the base branch already has the approved docs.
+    base_status = _read_status_yaml_on_branch(
+        gh_owner, gh_repo, base_branch, status_path, github_token
+    )
+    if base_status is not None:
+        base_tasks = base_status.get("stages", {}).get("tasks", {})
+        if base_tasks.get("review_status") == "approved":
+            logger.info(
+                "ensure_docs_on_base: base branch %r already contains approved docs — skip",
+                base_branch,
+            )
+            return None
+
+    # Docs not yet on base — find open PRs from docs_branch → base_branch.
+    try:
+        open_prs = _find_open_prs(
+            gh_owner, gh_repo, docs_branch, base_branch, github_token
+        )
+    except Exception as exc:
+        return (
+            f"Could not list open PRs from '{docs_branch}' to '{base_branch}': {exc}. "
+            "Re-run approve after verifying GitHub access."
+        )
+
+    if len(open_prs) == 1:
+        pr = open_prs[0]
+        pr_number = pr["number"]
+        pr_url = pr.get("html_url", f"PR #{pr_number}")
+        try:
+            _merge_pr(gh_owner, gh_repo, pr_number, github_token)
+            logger.info("ensure_docs_on_base: merged PR #%d (%s)", pr_number, pr_url)
+            return None
+        except Exception as exc:
+            return (
+                f"Merging docs PR #{pr_number} ({pr_url}) from '{docs_branch}' to "
+                f"'{base_branch}' failed: {exc}. "
+                "Resolve the conflict or merge the PR manually, then re-run approve."
+            )
+    elif len(open_prs) == 0:
+        return (
+            f"No open PR found from '{docs_branch}' to '{base_branch}', and the docs "
+            f"are not yet on the base branch. "
+            f"Open a PR from '{docs_branch}' to '{base_branch}' and re-run approve."
+        )
+    else:
+        pr_refs = ", ".join(
+            f"#{pr['number']} ({pr.get('html_url', '')})" for pr in open_prs
+        )
+        return (
+            f"Multiple open PRs match '{docs_branch}' → '{base_branch}': {pr_refs}. "
+            "Close all but one and re-run approve."
+        )
+
+
+def _relay_go_reason_code(reason_code: str) -> str:
+    """Return human-readable guidance for a workflow-backend reason code."""
+    if reason_code == "feature_not_tasks_approved":
+        return (
+            "The feature is not in the tasks-approved state yet. "
+            "Ensure the tasks stage was approved and the docs PR was merged, then retry."
+        )
+    if reason_code == "missing_config":
+        return (
+            "Missing configuration: WORKFLOW_BACKEND_URL or WORKFLOW_BACKEND_SERVICE_TOKEN "
+            "is not set. Contact your platform team to provision these values."
+        )
+    if reason_code == "empty_tasks":
+        return (
+            "No tasks found in the tasks.md Index table. Verify that tasks.md has a "
+            "valid Index table with columns | ID | Title | Repo | Depends On | Actor | "
+            "and at least one T<n> row."
+        )
+    return "An unexpected error occurred when creating tasks in workflow-backend."
+
+
+def _run_async_create_tasks(workspace_id: str, feature_id: str, tasks: list) -> dict:
+    """Bridge the async create_feature_tasks coroutine into a sync call.
+
+    ``tasks`` is an already-parsed task list (see ``parse_tasks_index``); this
+    bridge no longer parses tasks.md. Uses the running agent event loop when
+    available (production path via get_agent_loop); falls back to asyncio.run()
+    for tests and non-agent callers.
+    """
+    import asyncio
+
+    from plugins.context import get_agent_loop, get_org_id, get_user_id
+    from src.services.workflow_backend_client import create_feature_tasks
+
+    # Capture caller identity on THIS (worker) thread. When the coroutine is
+    # scheduled on the agent loop (a different thread), thread-local identity is
+    # not visible there — so resolve it here and pass it through explicitly.
+    user_id = get_user_id()
+    org_id = get_org_id()
+
+    loop = get_agent_loop()
+    if loop is not None and loop.is_running():
+        future = asyncio.run_coroutine_threadsafe(
+            create_feature_tasks(
+                workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id
+            ),
+            loop,
+        )
+        return future.result(timeout=30)
+    return asyncio.run(
+        create_feature_tasks(
+            workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id
+        )
+    )
+
 
 _VALID_STAGES = frozenset({"product_spec", "technical_design", "tasks", "handoff"})
 _VALID_ACTIONS = frozenset({"approve", "reject", "reopen"})
@@ -201,7 +399,9 @@ def _activate_tasks_git(
     if not tasks_by_id:
         return {"activated": [], "commit_sha": ""}
 
-    done_ids = {tid for tid, t in tasks_by_id.items() if (t.get("status") or "") == "done"}
+    done_ids = {
+        tid for tid, t in tasks_by_id.items() if (t.get("status") or "") == "done"
+    }
     now = _now_utc()
     activated = []
     updated_files: Dict[str, str] = {}
@@ -221,12 +421,14 @@ def _activate_tasks_git(
         t["status"] = "ready"
         if not isinstance(t.get("log"), list):
             t["log"] = []
-        t["log"].append({
-            "action": "ready",
-            "by": actor,
-            "at": now,
-            "note": "Task activated on tasks-stage approval — dependencies met.",
-        })
+        t["log"].append(
+            {
+                "action": "ready",
+                "by": actor,
+                "at": now,
+                "note": "Task activated on tasks-stage approval — dependencies met.",
+            }
+        )
         updated_files[f"docs/features/{doc_dir}/tasks/{task_id}.yaml"] = yaml.dump(
             t, default_flow_style=False, allow_unicode=True, sort_keys=False
         )
@@ -238,8 +440,12 @@ def _activate_tasks_git(
     # Commit all updated task files in one shot via Git Data API
     try:
         from .tasks_write import _commit_files
+
         commit_sha = _commit_files(
-            gh_owner, gh_repo, branch, updated_files,
+            gh_owner,
+            gh_repo,
+            branch,
+            updated_files,
             f"chore: activate {len(activated)} task(s) on tasks approval",
             github_token,
         )
@@ -285,6 +491,7 @@ def _activate_tasks_db(workspace_id: str, feature_id: str, actor: str) -> list:
 
         for row in rows:
             import json as _json
+
             deps = row["depends_on"]
             if isinstance(deps, str):
                 try:
@@ -308,7 +515,9 @@ def _activate_tasks_db(workspace_id: str, feature_id: str, actor: str) -> list:
 
 
 def _now_utc() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+0000")
+    return datetime.datetime.now(datetime.timezone.utc).strftime(
+        "%Y-%m-%dT%H:%M:%S+0000"
+    )
 
 
 def _resolve_status_branch_and_path(
@@ -332,6 +541,7 @@ def _resolve_status_branch_and_path(
     path = f"docs/features/{slug}/status.yaml"
 
     from ..document_repo import branch_exists
+
     if branch_exists(gh_owner, gh_repo, init_branch, github_token):
         return init_branch, path
 
@@ -433,8 +643,12 @@ def handle(
 
     # Fast-path: stage already approved — skip the status.yaml write but still
     # run task activation for stage=tasks so any unactivated tasks get set to ready.
-    already_approved = stage_block.get("review_status") == "approved" and action == "approve"
-    if already_approved:
+    # Exception: go-tasks-approve falls through so steps b/c/d can run (resumable pipeline).
+    already_approved = (
+        stage_block.get("review_status") == "approved" and action == "approve"
+    )
+    _is_go_tasks_approve = owner == "go" and stage == "tasks" and action == "approve"
+    if already_approved and not _is_go_tasks_approve:
         activated_tasks: list = []
         if stage == "tasks":
             doc_dir = feature_name or fid
@@ -442,9 +656,14 @@ def handle(
                 try:
                     activated_tasks = _activate_tasks_db(wid, fid, actor)
                 except Exception as exc:
-                    logger.warning("approve_feature (already-approved fast-path): DB activation failed: %s", exc)
+                    logger.warning(
+                        "approve_feature (already-approved fast-path): DB activation failed: %s",
+                        exc,
+                    )
             else:
-                activation = _activate_tasks_git(gh_owner, gh_repo, branch, doc_dir, actor, github_token)
+                activation = _activate_tasks_git(
+                    gh_owner, gh_repo, branch, doc_dir, actor, github_token
+                )
                 activated_tasks = activation.get("activated", [])
         return {
             "ok": True,
@@ -460,23 +679,42 @@ def handle(
             "activated_tasks": activated_tasks,
             "note": (
                 f"Stage '{stage}' was already approved — status.yaml unchanged. "
-                + (f"Activated {len(activated_tasks)} task(s): {activated_tasks}." if activated_tasks
-                   else "No additional tasks to activate (all are already ready/in-progress/done).")
+                + (
+                    f"Activated {len(activated_tasks)} task(s): {activated_tasks}."
+                    if activated_tasks
+                    else "No additional tasks to activate (all are already ready/in-progress/done)."
+                )
             ),
         }
+    # If already_approved and _is_go_tasks_approve: fall through with step_a already done.
 
     if action == "approve":
         stage_block["review_status"] = "approved"
         stage_block["reviewed_by"] = actor
         stage_block["reviewed_at"] = now
         stage_block["review_comment"] = comment
-        stage_block["review_history"].append({"review_status": "approved", "reviewed_by": actor, "reviewed_at": now, "comment": comment})
+        stage_block["review_history"].append(
+            {
+                "review_status": "approved",
+                "reviewed_by": actor,
+                "reviewed_at": now,
+                "comment": comment,
+            }
+        )
         effects = _APPROVE_EFFECTS.get(stage, {})
         if effects:
             status_data["feature_status"] = effects["feature_status"]
             status_data["current_stage"] = effects["current_stage"]
             status_data["next_action"] = effects["next_action"]
-        status_data["history"].append({"at": now, "by": actor, "action": "stage_approved", "stage": stage, "note": f"{stage} approved by {actor}."})
+        status_data["history"].append(
+            {
+                "at": now,
+                "by": actor,
+                "action": "stage_approved",
+                "stage": stage,
+                "note": f"{stage} approved by {actor}.",
+            }
+        )
         commit_msg = f"chore: approve {stage} stage"
 
     elif action == "reject":
@@ -484,9 +722,26 @@ def handle(
         stage_block["reviewed_by"] = actor
         stage_block["reviewed_at"] = now
         stage_block["review_comment"] = comment
-        stage_block["review_history"].append({"review_status": "rejected", "reviewed_by": actor, "reviewed_at": now, "comment": comment})
-        status_data["next_action"] = f"Stage {stage} rejected. Address the comment and re-submit for approval."
-        status_data["history"].append({"at": now, "by": actor, "action": "stage_rejected", "stage": stage, "note": f"{stage} rejected by {actor}. Comment: {comment or '(none)'}"})
+        stage_block["review_history"].append(
+            {
+                "review_status": "rejected",
+                "reviewed_by": actor,
+                "reviewed_at": now,
+                "comment": comment,
+            }
+        )
+        status_data["next_action"] = (
+            f"Stage {stage} rejected. Address the comment and re-submit for approval."
+        )
+        status_data["history"].append(
+            {
+                "at": now,
+                "by": actor,
+                "action": "stage_rejected",
+                "stage": stage,
+                "note": f"{stage} rejected by {actor}. Comment: {comment or '(none)'}",
+            }
+        )
         commit_msg = f"chore: reject {stage} stage"
 
     else:  # reopen
@@ -494,7 +749,14 @@ def handle(
         stage_block["reviewed_by"] = None
         stage_block["reviewed_at"] = None
         stage_block["review_comment"] = None
-        stage_block["review_history"].append({"review_status": "draft", "reviewed_by": actor, "reviewed_at": now, "comment": f"Stage reopened by {actor}."})
+        stage_block["review_history"].append(
+            {
+                "review_status": "draft",
+                "reviewed_by": actor,
+                "reviewed_at": now,
+                "comment": f"Stage reopened by {actor}.",
+            }
+        )
         effects = _REOPEN_EFFECTS.get(stage, {})
         if effects:
             status_data["feature_status"] = effects["feature_status"]
@@ -503,7 +765,15 @@ def handle(
             revalidation = status_data.setdefault("revalidation", {})
             for k, v in effects.get("revalidation", {}).items():
                 revalidation[k] = v
-        status_data["history"].append({"at": now, "by": actor, "action": "stage_reopened", "stage": stage, "note": f"{stage} reopened by {actor}."})
+        status_data["history"].append(
+            {
+                "at": now,
+                "by": actor,
+                "action": "stage_reopened",
+                "stage": stage,
+                "note": f"{stage} reopened by {actor}.",
+            }
+        )
         commit_msg = f"chore: reopen {stage} stage"
 
     new_feature_status = status_data.get("feature_status", "")
@@ -512,9 +782,152 @@ def handle(
 
     commit_sha = ""
     activated_tasks: list = []
+    doc_dir = feature_name or fid
 
-    if owner == "go":
-        # go/postgres features: persist approval state directly in the DB.
+    if _is_go_tasks_approve:
+        # NEW: go-tasks-approve resumable pipeline — steps a → b → c → d.
+
+        # Step a: promote (git) — commit updated status.yaml to the feature branch.
+        # Skip if status.yaml already shows the tasks stage as approved (resumable).
+        if not already_approved:
+            new_content = yaml.dump(
+                status_data, default_flow_style=False, allow_unicode=True
+            )
+            try:
+                from .tasks_write import _commit_files as _cf
+
+                commit_sha = _cf(
+                    gh_owner,
+                    gh_repo,
+                    branch,
+                    {path: new_content},
+                    commit_msg,
+                    github_token,
+                )
+            except Exception as exc:
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Step a (promote): git commit failed: {exc}. "
+                        "Re-run approve to retry."
+                    ),
+                    "failed_step": "a",
+                }
+
+        # Step b: ensure docs on base (content-keyed — merged PR is a skip, not an error).
+        step_b_error = _ensure_docs_on_base(
+            gh_owner, gh_repo, branch, base_branch, path, github_token
+        )
+        if step_b_error:
+            return {
+                "ok": False,
+                "error": f"Step b (ensure docs on base): {step_b_error} Re-run approve to retry.",
+                "failed_step": "b",
+            }
+
+        # Step c: DB status update (idempotent set).
+        try:
+            update_feature_stage(
+                workspace_id=wid,
+                feature_id=fid,
+                stage=stage,
+                review_status=stage_block["review_status"],
+                feature_status=new_feature_status,
+                current_stage=new_current_stage,
+                next_action=new_next_action,
+                actor=actor,
+            )
+        except Exception as exc:
+            logger.exception(
+                "approve_feature: step c DB update failed for feature %s", fid
+            )
+            return {
+                "ok": False,
+                "error": f"Step c (DB status): {exc}. Re-run approve to retry.",
+                "failed_step": "c",
+            }
+
+        # Step d: create tasks via workflow-backend API.
+        # Read tasks.md from base_branch: step b just merged the docs branch into
+        # base, and GitHub's auto-delete-on-merge rule may have removed the feature
+        # branch — so reading from `branch` would 404. base_branch is the
+        # authoritative post-merge location. Fall back to `branch` only if base has
+        # no content and the branch still exists (e.g. auto-delete disabled and a
+        # content-keyed skip left the merge for a later cycle).
+        tasks_md_path = f"docs/features/{doc_dir}/tasks.md"
+        tasks_md_content = ""
+        for read_branch in (base_branch, branch):
+            try:
+                tasks_md_result = read_document(
+                    gh_owner, gh_repo, read_branch, tasks_md_path, github_token
+                )
+            except Exception:
+                continue
+            tasks_md_content = tasks_md_result.get("content", "")
+            if tasks_md_content:
+                break
+        if not tasks_md_content:
+            return {
+                "ok": False,
+                "error": (
+                    f"Step d (create tasks): tasks.md not found at {tasks_md_path} "
+                    f"on {base_branch!r} (nor on {branch!r}). "
+                    "Re-run approve to retry."
+                ),
+                "failed_step": "d",
+            }
+
+        from .parse_tasks import parse_tasks_index
+
+        tasks = parse_tasks_index(tasks_md_content)
+        if not tasks:
+            return {
+                "ok": False,
+                "error": (
+                    "Step d (create tasks): no tasks parsed from tasks.md. It must "
+                    "contain an Index table with columns "
+                    "| ID | Title | Repo | Depends On | Actor | and at least one "
+                    "T<n> row. Fix tasks.md and re-run approve to retry."
+                ),
+                "failed_step": "d",
+            }
+
+        from src.services.workflow_backend_client import WorkflowBackendError as _WBE
+
+        try:
+            _run_async_create_tasks(wid, fid, tasks)
+        except _WBE as exc:
+            if exc.reason_code == "tasks_already_exist":
+                logger.info(
+                    "approve_feature: step d tasks already exist for feature %s — no-op",
+                    fid,
+                )
+            else:
+                relay = _relay_go_reason_code(exc.reason_code)
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Step d (create tasks): {relay} "
+                        f"[reason={exc.reason_code}] Re-run approve to retry."
+                    ),
+                    "failed_step": "d",
+                    "reason_code": exc.reason_code,
+                }
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": f"Step d (create tasks): {exc}. Re-run approve to retry.",
+                "failed_step": "d",
+            }
+
+        # Activate zero-dependency tasks in DB after creation.
+        try:
+            activated_tasks = _activate_tasks_db(wid, fid, actor)
+        except Exception as exc:
+            logger.warning("approve_feature: task activation (DB) failed: %s", exc)
+
+    elif owner == "go":
+        # go/postgres features: other stages/actions — DB update only.
         try:
             update_feature_stage(
                 workspace_id=wid,
@@ -530,39 +943,51 @@ def handle(
             logger.exception("approve_feature: DB update failed for feature %s", fid)
             return {"ok": False, "error": f"DB update failed: {exc}"}
 
-        # Activate zero-dependency tasks when approving the tasks stage.
-        if stage == "tasks" and action == "approve":
-            try:
-                activated_tasks = _activate_tasks_db(wid, fid, actor)
-            except Exception as exc:
-                logger.warning("approve_feature: task activation (DB) failed: %s", exc)
-
     else:
         # ts/git features: commit updated status.yaml to the feature branch or init branch.
-        new_content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
+        new_content = yaml.dump(
+            status_data, default_flow_style=False, allow_unicode=True
+        )
         try:
             if branch.endswith("-init"):
                 commit_sha = commit_to_branch(
-                    gh_owner, gh_repo, branch, path, new_content,
-                    current["sha"], commit_msg, github_token,
+                    gh_owner,
+                    gh_repo,
+                    branch,
+                    path,
+                    new_content,
+                    current["sha"],
+                    commit_msg,
+                    github_token,
                 )
             else:
                 from ..document_repo import write_document
+
                 # Pass the slug so write_document commits to feature/{slug}.
                 result = write_document(
-                    gh_owner, gh_repo, (feature_name or fid), base_branch, path, new_content,
-                    current["sha"], commit_msg, github_token,
+                    gh_owner,
+                    gh_repo,
+                    (feature_name or fid),
+                    base_branch,
+                    path,
+                    new_content,
+                    current["sha"],
+                    commit_msg,
+                    github_token,
                 )
                 commit_sha = result.get("commit_sha", "")
         except StaleBaseError as exc:
-            return {"ok": False, "conflict": True, "error": f"status.yaml changed since it was read. Retry. ({exc})"}
+            return {
+                "ok": False,
+                "conflict": True,
+                "error": f"status.yaml changed since it was read. Retry. ({exc})",
+            }
         except Exception as exc:
             logger.exception("approve_feature: commit failed for feature %s", fid)
             return {"ok": False, "error": str(exc)}
 
         # Activate zero-dependency tasks when approving the tasks stage.
         if stage == "tasks" and action == "approve":
-            doc_dir = feature_name or fid
             activation = _activate_tasks_git(
                 gh_owner, gh_repo, branch, doc_dir, actor, github_token
             )
