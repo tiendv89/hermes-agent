@@ -12,7 +12,8 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, ModelCatalog, Session, SessionMember
+from .models import Message, MessageMention, ModelCatalog, Session, SessionMember, SessionRead
+from src.services.author_resolver import author_for
 from src.services.notification_client import (
     build_channel_message_payload,
     build_dm_payload,
@@ -299,6 +300,7 @@ async def _emit_message_notifications(
     session_id: str,
     message_id: int,
     author_id: str,
+    content: str = "",
 ) -> None:
     """Look up the session kind and emit channel_message or dm notifications.
 
@@ -314,6 +316,9 @@ async def _emit_message_notifications(
         ws_id = getattr(session, "workspace_id", "") or ""
         if not ws_id:
             return
+
+        actor = await author_for(ws_id, author_id)
+        actor_name = actor.get("name") if actor else None
 
         if kind == "channel":
             # Notify all channel members except the message author.
@@ -331,7 +336,10 @@ async def _emit_message_notifications(
                         user_id=uid,
                         message_id=message_id,
                         session_id=session_id,
+                        content=content,
                         actor_user_id=author_id,
+                        actor_name=actor_name,
+                        feature_id=getattr(session, "feature_id", "") or None,
                     )
                     for uid in recipient_ids
                 ]
@@ -353,7 +361,9 @@ async def _emit_message_notifications(
                         user_id=uid,
                         message_id=message_id,
                         session_id=session_id,
+                        content=content,
                         actor_user_id=author_id,
+                        actor_name=actor_name,
                     )
                     for uid in recipient_ids
                 ]
@@ -422,11 +432,16 @@ async def append_message(
     message_id = msg.id
     await db.commit()
 
-    # Fire-and-forget notifications for human-authored messages.
-    # channel_message: broadcast to all channel members except the author.
-    # dm: notify the other party in a DM session.
     if role == "user" and author_id:
-        await _emit_message_notifications(db, session_id, message_id, author_id)
+        # Sending implies you're caught up on this session — advance your own
+        # read cursor so your own message never shows up as "unread" to you.
+        await mark_session_read(db, session_id, author_id)
+
+        # Fire-and-forget notifications for human-authored messages.
+        # channel_message: broadcast to all channel members except the author.
+        # dm: notify the other party in a DM session.
+        if content:
+            await _emit_message_notifications(db, session_id, message_id, author_id, content)
 
     return message_id
 
@@ -792,6 +807,7 @@ async def persist_mentions(
     message_id: int,
     session_id: str,
     mentions: List[Dict[str, str]],
+    content: str = "",
     author_id: Optional[str] = None,
 ) -> None:
     """Persist resolved mentions for a message.
@@ -800,7 +816,8 @@ async def persist_mentions(
     ``mentioned_kind`` ('user' | 'agent').
 
     author_id is the sender's user_id, used to populate actor_user_id in
-    the mention notification payloads.
+    the mention notification payloads. content is the raw message text, used
+    to build a Slack-style preview in the notification summary.
     """
     for m in mentions:
         db.add(
@@ -820,13 +837,18 @@ async def persist_mentions(
             session = await db.get(Session, session_id)
             ws_id = (getattr(session, "workspace_id", "") or "") if session else ""
             if ws_id:
+                actor = await author_for(ws_id, author_id) if author_id else None
+                actor_name = actor.get("name") if actor else None
                 payloads = [
                     build_mention_payload(
                         workspace_id=ws_id,
                         user_id=m["mentioned_id"],
                         message_id=message_id,
                         session_id=session_id,
+                        content=content,
                         actor_user_id=author_id,
+                        actor_name=actor_name,
+                        feature_id=(getattr(session, "feature_id", "") or None) if session else None,
                     )
                     for m in user_mentions
                 ]
@@ -910,6 +932,103 @@ async def get_unread_mentions_by_session(
         .group_by(MessageMention.session_id)
     )
     return {row[0]: int(row[1]) for row in result.all()}
+
+
+async def mark_session_read(
+    db: AsyncSession,
+    session_id: str,
+    user_id: str,
+) -> None:
+    """Advance user_id's read cursor for session_id to the current message count.
+
+    Decoupled from mark_mentions_read (mentions have their own read state) —
+    callers that want both call each explicitly.
+    """
+    session = await db.get(Session, session_id)
+    if session is None:
+        return
+    now = time.time()
+    existing = await db.get(SessionRead, (session_id, user_id))
+    if existing is not None:
+        existing.last_read_message_count = session.message_count
+        existing.updated_at = now
+    else:
+        db.add(
+            SessionRead(
+                session_id=session_id,
+                user_id=user_id,
+                last_read_message_count=session.message_count,
+                updated_at=now,
+            )
+        )
+    await db.commit()
+
+
+async def get_unread_message_counts_by_session(
+    db: AsyncSession,
+    workspace_id: str,
+    user_id: str,
+) -> Dict[str, int]:
+    """Return unread message counts keyed by session id, for every channel/DM/
+    thread user_id participates in. Unlike mention counts, this reflects ANY
+    new message since the user's last-read cursor, not just @mentions."""
+    result = await db.execute(
+        select(Session.id, Session.message_count, SessionRead.last_read_message_count)
+        .outerjoin(
+            SessionRead,
+            (SessionRead.session_id == Session.id) & (SessionRead.user_id == user_id),
+        )
+        .where(
+            Session.workspace_id == workspace_id,
+            Session.archived == False,  # noqa: E712
+            Session.kind.in_(("channel", "dm", "thread")),
+            or_(
+                Session.user_id == user_id,
+                Session.id.in_(
+                    select(SessionMember.session_id).where(
+                        SessionMember.user_id == user_id
+                    )
+                ),
+            ),
+        )
+    )
+    counts: Dict[str, int] = {}
+    for session_id, message_count, last_read in result.all():
+        unread = (message_count or 0) - (last_read or 0)
+        if unread > 0:
+            counts[session_id] = unread
+    return counts
+
+
+async def get_feature_participants(
+    db: AsyncSession,
+    workspace_id: str,
+    feature_id: str,
+) -> set[str]:
+    """Return the set of user_ids who participate in any session (channel, DM,
+    thread) scoped to feature_id — owners and explicit members alike. Used to
+    fan out feature-lifecycle notifications (stage approvals) to everyone
+    who's engaged with the feature, not just its current owner.
+    """
+    result = await db.execute(
+        select(Session.id, Session.user_id).where(
+            Session.workspace_id == workspace_id,
+            Session.feature_id == feature_id,
+        )
+    )
+    rows = result.all()
+    session_ids = [row[0] for row in rows]
+    participants: set[str] = {row[1] for row in rows if row[1]}
+
+    if session_ids:
+        member_result = await db.execute(
+            select(SessionMember.user_id).where(
+                SessionMember.session_id.in_(session_ids)
+            )
+        )
+        participants.update(row[0] for row in member_result.all())
+
+    return participants
 
 
 # ---------------------------------------------------------------------------

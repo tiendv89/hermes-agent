@@ -33,15 +33,16 @@ SCHEMA: Dict[str, Any] = {
 
 
 def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> Dict[str, Any]:
-    from ..context import get_feature_id, get_workspace_id
-    from ..db import get_feature_tasks
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
+    from src.services.workflow_backend_client import get_feature_tasks, run_async
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
     if not wid or not fid:
         return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
     try:
-        return {"ok": True, "tasks": get_feature_tasks(wid, fid)}
+        tasks = run_async(get_feature_tasks(wid, fid, user_id=get_user_id(), org_id=get_org_id()))
+        return {"ok": True, "tasks": tasks}
     except Exception as exc:
         logger.warning("get_tasks failed: %s", exc)
         return {"ok": False, "error": str(exc)}

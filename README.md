@@ -34,7 +34,7 @@ See `.env.example` for the full list. Key variables:
 | Variable | Required | Description |
 |---|---|---|
 | `DATABASE_URL` | yes | Postgres connection string for the gateway session store |
-| `WORKFLOW_DATABASE_URL` | yes | Postgres connection string for the workflow-backend DB |
+| `WORKFLOW_BACKEND_URL` / `WORKFLOW_BACKEND_SERVICE_TOKEN` | yes | workflow-backend HTTP API base URL + shared service token |
 | `ANTHROPIC_API_KEY` | yes | Anthropic API key (used when `HERMES_PROVIDER=anthropic`) |
 | `GITHUB_TOKEN` | write tools | PAT with `contents:write` — for artifact write tools |
 | `GATEWAY_SERVICE_TOKEN` | no | Shared token gating BFF-injected identity headers; unset = local/direct mode |

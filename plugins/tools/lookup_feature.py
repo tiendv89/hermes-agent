@@ -45,8 +45,8 @@ def check_available() -> bool:
     This tool is absent from feature-scoped sessions (which already have the
     richer feature tool set) and absent when the workflow DB is unreachable.
     """
-    from ..db import check_workflow_available
     from ..context import get_feature_id
+    from src.services.workflow_backend_client import check_workflow_available
 
     return check_workflow_available() and not get_feature_id()
 
@@ -72,12 +72,13 @@ def _extract_synopsis(content: str) -> str:
 
 
 def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
-    from ..context import get_workspace_id
-    from ..db import (
-        _validate_id,
+    from ..context import get_org_id, get_user_id, get_workspace_id
+    from ..validation import _validate_id
+    from src.services.workflow_backend_client import (
         check_workflow_available,
         get_feature_detail,
         get_workspace_context,
+        run_async,
     )
 
     if not feature_ref or not feature_ref.strip():
@@ -96,8 +97,13 @@ def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
     if not check_workflow_available():
         return {"ok": False, "error": "Workflow database is not available."}
 
+    # Capture identity on this (calling) thread — run_async may bridge onto a
+    # different thread, where thread-local context is unset.
+    caller_user_id = get_user_id()
+    caller_org_id = get_org_id()
+
     try:
-        detail = get_feature_detail(workspace_id, feature_ref)
+        detail = run_async(get_feature_detail(workspace_id, feature_ref, user_id=caller_user_id, org_id=caller_org_id))
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
@@ -123,7 +129,7 @@ def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
         from .artifacts import _resolve_management_repo
 
         feature_name = detail.get("feature_name") or feature_ref
-        workspace_context = get_workspace_context(workspace_id)
+        workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
         gh_owner, gh_repo = _resolve_management_repo(workspace_context)
         base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
         path = f"docs/features/{feature_name}/product-spec.md"

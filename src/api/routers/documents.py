@@ -39,9 +39,10 @@ async def save_document_endpoint(
     """
     import os as _os
 
-    from plugins.db import _validate_id, get_workspace_context
     from plugins.document_repo import StaleBaseError, write_document
     from plugins.tools.artifacts import _resolve_management_repo
+    from plugins.validation import _validate_id
+    from src.services.workflow_backend_client import get_workspace_context
 
     _DOCUMENT_FILES = {
         "product_spec": "product-spec.md",
@@ -77,7 +78,7 @@ async def save_document_endpoint(
         )
 
     try:
-        workspace_context = get_workspace_context(workspace_id)
+        workspace_context = await get_workspace_context(workspace_id, user_id=identity.user_id, org_id=identity.org_id)
         owner, repo = _resolve_management_repo(workspace_context)
     except Exception as exc:
         raise HTTPException(

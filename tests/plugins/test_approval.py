@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -121,7 +121,7 @@ class TestWorkflowRequestApproval:
         handle = self._import_handle()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]})),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
         ):
@@ -139,7 +139,7 @@ class TestWorkflowRequestApproval:
         handle = self._import_handle()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]})),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document") as mock_write,
             patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
@@ -172,7 +172,7 @@ class TestWorkflowRequestApproval:
         handle = self._import_handle()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]})),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()) as mock_read,
             patch("plugins.context.get_feature_id", return_value="context-feature"),
         ):
@@ -193,7 +193,7 @@ class TestWorkflowRequestApproval:
             "review_status: draft", "review_status: approved", 1
         )
         with (
-            patch("plugins.db.get_workspace_context", return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]})),
             patch("plugins.document_repo.read_document", return_value={"content": approved_yaml, "sha": "s1"}),
             patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
         ):
@@ -220,7 +220,7 @@ class TestWorkflowRequestApproval:
         handle = self._import_handle()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": [{"id": "mgmt", "github": f"https://github.com/{_OWNER}/{_REPO}"}]})),
             patch("plugins.document_repo.read_document", return_value={"content": "", "sha": None}),
             patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
         ):
@@ -311,8 +311,9 @@ class TestGetToolsEndpoint:
         assert tools[0]["description"] == ""
 
     def test_request_approval_in_live_registry(self, monkeypatch):
-        """When WORKFLOW_DATABASE_URL is set, request_approval must appear."""
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+        """When workflow-backend is configured, request_approval must appear."""
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         client = self._build_client(monkeypatch)
         resp = client.get("/api/v1/tools")
         assert resp.status_code == 200
@@ -367,7 +368,10 @@ class TestStageTransitionEndpoint:
 
     def _patch_context(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.setenv("WORKSPACE_ID", _WORKSPACE_ID)
+        monkeypatch.setattr(
+            "src.services.workflow_backend_client.get_workspace_id_for_feature",
+            AsyncMock(return_value=_WORKSPACE_ID),
+        )
 
     def _workspace_ctx(self):
         return {
@@ -380,7 +384,7 @@ class TestStageTransitionEndpoint:
     def test_approve_sets_review_status(self, monkeypatch):
         self._patch_context(monkeypatch)
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", return_value=_make_write_result()),
         ):
@@ -406,7 +410,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture_write),
         ):
@@ -430,7 +434,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):
@@ -457,7 +461,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):
@@ -477,7 +481,7 @@ class TestStageTransitionEndpoint:
         """Approve writes status.yaml but must never merge the PR."""
         self._patch_context(monkeypatch)
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", return_value=_make_write_result()),
             patch("requests.delete") as mock_delete,
@@ -505,7 +509,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):
@@ -535,7 +539,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):
@@ -569,7 +573,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value={"content": approved_status, "sha": _STATUS_YAML_SHA}),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):
@@ -597,7 +601,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):
@@ -617,7 +621,7 @@ class TestStageTransitionEndpoint:
         """A feature with no status.yaml (go feature guard) must return 404."""
         self._patch_context(monkeypatch)
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value={"content": "", "sha": None}),
         ):
             client = self._build_client(monkeypatch)
@@ -633,7 +637,7 @@ class TestStageTransitionEndpoint:
         from plugins.document_repo import StaleBaseError
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=StaleBaseError("status.yaml", "sha mismatch")),
         ):
@@ -673,15 +677,24 @@ class TestStageTransitionEndpoint:
         )
         assert resp.status_code == 500
 
-    def test_missing_workspace_id_returns_500(self, monkeypatch):
+    def test_unknown_feature_returns_404(self, monkeypatch):
+        """workspace_id is resolved from feature_id via the DB, not a global
+        env var — an unresolvable feature_id must 404, not 500."""
         monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.delenv("WORKSPACE_ID", raising=False)
+
+        def _raise_not_found(feature_id, **_kwargs):
+            raise ValueError(f"Feature not found: {feature_id!r}")
+
+        monkeypatch.setattr(
+            "src.services.workflow_backend_client.get_workspace_id_for_feature",
+            AsyncMock(side_effect=_raise_not_found),
+        )
         client = self._build_client(monkeypatch)
         resp = client.post(
             f"/api/v1/features/{_FEATURE_ID}/stage-transition",
             json={"stage": "product_spec", "action": "approve"},
         )
-        assert resp.status_code == 500
+        assert resp.status_code == 404
 
     def test_actor_recorded_as_x_user_id(self, monkeypatch):
         """The actor written to status.yaml must come from X-User-Id (Identity.user_id)."""
@@ -693,7 +706,7 @@ class TestStageTransitionEndpoint:
             return _make_write_result()
 
         with (
-            patch("plugins.db.get_workspace_context", return_value=self._workspace_ctx()),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value=self._workspace_ctx())),
             patch("plugins.document_repo.read_document", return_value=_make_read_result()),
             patch("plugins.document_repo.write_document", side_effect=_capture),
         ):

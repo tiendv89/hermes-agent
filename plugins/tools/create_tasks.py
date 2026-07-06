@@ -91,13 +91,19 @@ def load_feature_tasks_md(
     Returns ``{"ok": True, "tasks_md": <content>}`` or
     ``{"ok": False, "error": <message>}``.
     """
-    from ..db import get_feature_detail, get_workspace_context
+    from ..context import get_org_id, get_user_id
     from ..document_repo import read_document
     from .approve import _resolve_status_branch_and_path
     from .artifacts import _resolve_management_repo
+    from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
+
+    # Capture identity on this (calling) thread — run_async may bridge onto a
+    # different thread, where thread-local context is unset.
+    caller_user_id = get_user_id()
+    caller_org_id = get_org_id()
 
     try:
-        workspace_context = get_workspace_context(workspace_id)
+        workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
         gh_owner, gh_repo = _resolve_management_repo(workspace_context)
     except Exception as exc:
         return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
@@ -107,7 +113,7 @@ def load_feature_tasks_md(
     feature_name: Optional[str] = None
     init_pr_url: Optional[str] = None
     try:
-        detail = get_feature_detail(workspace_id, feature_id)
+        detail = run_async(get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id))
         feature_name = detail.get("feature_name")
         init_pr_url = detail.get("init_pr_url")
     except Exception as exc:

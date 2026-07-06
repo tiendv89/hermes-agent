@@ -8,11 +8,13 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from src.api.identity import Identity, require_identity
+from src.services.approval_notifications import notify_stage_approved
+from src.services.notification_client import schedule_background
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,7 @@ class StageTransitionRequest(BaseModel):
 async def stage_transition_endpoint(
     feature_id: str,
     body: StageTransitionRequest,
+    request: Request,
     identity: Identity = Depends(require_identity),
 ) -> JSONResponse:
     """Commit a stage-review state change to status.yaml on the feature branch.
@@ -95,9 +98,13 @@ async def stage_transition_endpoint(
 
     import yaml
 
-    from plugins.db import _validate_id, get_workspace_context
     from plugins.document_repo import StaleBaseError, read_document, write_document
     from plugins.tools.artifacts import _resolve_management_repo
+    from plugins.validation import _validate_id
+    from src.services.workflow_backend_client import (
+        get_workspace_context,
+        get_workspace_id_for_feature,
+    )
 
     _VALID_STAGES = {"product_spec", "technical_design", "tasks", "handoff"}
     _VALID_ACTIONS = {"approve", "reject", "reopen"}
@@ -124,15 +131,16 @@ async def stage_transition_endpoint(
             status_code=500, detail="GITHUB_TOKEN is not configured on the server."
         )
 
-    workspace_id = _os.environ.get("WORKSPACE_ID", "").strip()
-    if not workspace_id:
+    try:
+        workspace_id = await get_workspace_id_for_feature(feature_id, user_id=identity.user_id, org_id=identity.org_id)
+    except Exception as exc:
         raise HTTPException(
-            status_code=500,
-            detail="WORKSPACE_ID is not configured — cannot resolve management repo.",
-        )
+            status_code=404,
+            detail=f"Could not resolve workspace for feature {feature_id!r}: {exc}",
+        ) from exc
 
     try:
-        workspace_context = get_workspace_context(workspace_id)
+        workspace_context = await get_workspace_context(workspace_id, user_id=identity.user_id, org_id=identity.org_id)
         owner, repo = _resolve_management_repo(workspace_context)
     except Exception as exc:
         raise HTTPException(
@@ -146,13 +154,13 @@ async def stage_transition_endpoint(
     # All git artifacts are slug-keyed (branch feature/{slug}, docs path
     # docs/features/{slug}/...), never UUID-keyed. Resolve the slug and prefer
     # the init branch while the init PR is still open.
-    from plugins.db import get_feature_detail
     from plugins.document_repo import branch_exists
+    from src.services.workflow_backend_client import get_feature_detail
 
     slug = feature_id
     init_pr_url = None
     try:
-        _detail = get_feature_detail(workspace_id, feature_id)
+        _detail = await get_feature_detail(workspace_id, feature_id, user_id=identity.user_id, org_id=identity.org_id)
         slug = _detail.get("feature_name") or feature_id
         init_pr_url = _detail.get("init_pr_url")
     except Exception as _exc:
@@ -324,6 +332,14 @@ async def stage_transition_endpoint(
     except Exception as exc:
         logger.exception("stage_transition failed for feature %s", feature_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    db_session_factory = getattr(request.app.state, "db_session", None)
+    if body.action == "approve" and db_session_factory is not None:
+        schedule_background(
+            notify_stage_approved(
+                db_session_factory, workspace_id, feature_id, body.stage, actor
+            )
+        )
 
     return JSONResponse(
         {

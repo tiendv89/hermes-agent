@@ -1,11 +1,11 @@
-"""get_feature_state tool — reads feature lifecycle state from the workflow-backend DB."""
+"""get_feature_state tool — reads feature lifecycle state from workflow-backend."""
 
 from __future__ import annotations
 
 import logging
 from typing import Any, Dict
 
-from ..db import get_feature_detail
+from src.services.workflow_backend_client import get_feature_detail, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -33,14 +33,15 @@ SCHEMA: Dict[str, Any] = {
 
 
 def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> Dict[str, Any]:
-    from ..context import get_feature_id, get_workspace_id
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
     if not wid or not fid:
         return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
     try:
-        return {"ok": True, "feature": get_feature_detail(wid, fid)}
+        feature = run_async(get_feature_detail(wid, fid, user_id=get_user_id(), org_id=get_org_id()))
+        return {"ok": True, "feature": feature}
     except Exception as exc:
         logger.warning("get_feature_state failed: %s", exc)
         return {"ok": False, "error": str(exc)}

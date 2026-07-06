@@ -35,15 +35,20 @@ def test_build_mention_payload_with_actor():
         user_id="usr-2",
         message_id=42,
         session_id="sess-abc",
+        content="hey @usr-2 check this out",
         actor_user_id="usr-1",
+        actor_name="Duke Tran",
     )
     assert p["workspace_id"] == "ws-1"
     assert p["user_id"] == "usr-2"
     assert p["category"] == "mention"
     assert p["source_type"] == "message"
     assert p["source_id"] == "42"
-    assert "sess-abc" in p["link"]
+    assert p["session_id"] == "sess-abc"
+    assert p["link"] == "/chat/sess-abc"
     assert p["actor_user_id"] == "usr-1"
+    assert p["summary"] == "Duke Tran: hey @usr-2 check this out"
+    assert "feature_id" not in p
 
 
 def test_build_mention_payload_without_actor():
@@ -54,8 +59,25 @@ def test_build_mention_payload_without_actor():
         user_id="usr-2",
         message_id=1,
         session_id="sess-x",
+        content="hi",
     )
     assert "actor_user_id" not in p
+    assert p["summary"] == "Someone: hi"
+
+
+def test_build_mention_payload_feature_scoped_links_into_feature_ide():
+    from src.services.notification_client import build_mention_payload
+
+    p = build_mention_payload(
+        workspace_id="ws-1",
+        user_id="usr-2",
+        message_id=42,
+        session_id="sess-abc",
+        content="hi",
+        feature_id="feat-1",
+    )
+    assert p["link"] == "/feature/feat-1?channel=sess-abc"
+    assert p["feature_id"] == "feat-1"
 
 
 def test_build_channel_message_payload():
@@ -66,12 +88,34 @@ def test_build_channel_message_payload():
         user_id="usr-3",
         message_id=99,
         session_id="chan-1",
+        content="anyone around?",
         actor_user_id="usr-1",
+        actor_name="Duke Tran",
     )
     assert p["category"] == "channel_message"
     assert p["user_id"] == "usr-3"
     assert p["source_id"] == "99"
     assert p["actor_user_id"] == "usr-1"
+    assert p["session_id"] == "chan-1"
+    assert p["summary"] == "Duke Tran: anyone around?"
+    assert p["link"] == "/chat/chan-1"
+    assert "feature_id" not in p
+
+
+def test_build_channel_message_payload_feature_scoped_links_into_feature_ide():
+    from src.services.notification_client import build_channel_message_payload
+
+    p = build_channel_message_payload(
+        workspace_id="ws-1",
+        user_id="usr-3",
+        message_id=99,
+        session_id="chan-1",
+        content="anyone around?",
+        feature_id="feat-1",
+    )
+    assert p["link"] == "/feature/feat-1?channel=chan-1"
+    assert p["feature_id"] == "feat-1"
+    assert p["session_id"] == "chan-1"
 
 
 def test_build_dm_payload():
@@ -82,11 +126,32 @@ def test_build_dm_payload():
         user_id="usr-4",
         message_id=7,
         session_id="dm-sess",
+        content="hey there",
         actor_user_id="usr-2",
+        actor_name="Pye Tran",
     )
     assert p["category"] == "dm"
     assert p["user_id"] == "usr-4"
     assert p["source_id"] == "7"
+    assert p["summary"] == "Pye Tran: hey there"
+
+
+def test_compose_summary_truncates_long_content():
+    from src.services.notification_client import _PREVIEW_MAX_LEN, _compose_summary
+
+    long_content = "x" * 200
+    summary = _compose_summary("Duke Tran", long_content)
+    assert summary.startswith("Duke Tran: ")
+    preview = summary.split(": ", 1)[1]
+    assert len(preview) == _PREVIEW_MAX_LEN
+    assert preview.endswith("…")
+
+
+def test_compose_summary_collapses_whitespace():
+    from src.services.notification_client import _compose_summary
+
+    summary = _compose_summary("Duke Tran", "hello\n\nworld   again")
+    assert summary == "Duke Tran: hello world again"
 
 
 # ---------------------------------------------------------------------------

@@ -161,7 +161,7 @@ async def delete_channel_endpoint(
         raise HTTPException(status_code=404, detail="Channel not found.")
 
     # Admin gate (§3.6 / T5): verify caller is an org admin/owner.
-    organization_id = await get_workspace_organization_id(channel.workspace_id)
+    organization_id = await get_workspace_organization_id(channel.workspace_id, user_id=identity.user_id, org_id=identity.org_id)
     try:
         admin = await is_org_admin(organization_id, user_id)
     except UserServiceError as exc:

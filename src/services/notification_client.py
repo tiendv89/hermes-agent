@@ -21,6 +21,13 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
+# asyncio.Task objects are only weakly referenced by the event loop; with no
+# other reference, a task can be garbage-collected mid-flight (before its HTTP
+# call completes), silently dropping the notification. Keep a strong
+# reference here until each task finishes. See:
+# https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 def _base_url() -> str:
     return os.environ.get("NOTIFICATION_SERVICE_URL", "").rstrip("/")
@@ -52,8 +59,28 @@ async def _post(url: str, payload: Any) -> None:
         logger.exception("notification-service call failed: %s", url)
 
 
+def _publish_realtime(payload: Dict[str, Any]) -> None:
+    """Push a notification event to the recipient's live SSE subscribers
+    (GET /api/v1/notifications/stream), independent of and not blocked by the
+    notification-service HTTP call below — so a toast can render even if
+    notification-service is slow/unreachable, though the persisted row won't
+    exist until that call succeeds.
+    """
+    try:
+        from src.realtime.user_bus import get_user_bus
+
+        user_id = payload.get("user_id")
+        if user_id:
+            get_user_bus().publish(
+                user_id, {"event": "notification.created", "data": payload}
+            )
+    except Exception:
+        logger.exception("failed to publish realtime notification event")
+
+
 def schedule_notification(payload: Dict[str, Any]) -> None:
     """Fire-and-forget: emit a single notification without blocking the caller."""
+    _publish_realtime(payload)
     base = _base_url()
     if not base:
         return
@@ -64,6 +91,8 @@ def schedule_notifications_bulk(payloads: List[Dict[str, Any]]) -> None:
     """Fire-and-forget: emit N notifications in one bulk call without blocking."""
     if not payloads:
         return
+    for payload in payloads:
+        _publish_realtime(payload)
     base = _base_url()
     if not base:
         return
@@ -71,6 +100,13 @@ def schedule_notifications_bulk(payloads: List[Dict[str, Any]]) -> None:
         _schedule(_post(f"{base}/internal/notifications", payloads[0]))
         return
     _schedule(_post(f"{base}/internal/notifications/bulk", payloads))
+
+
+def schedule_background(coro: Any) -> None:
+    """Public wrapper around _schedule for callers outside this module (e.g.
+    approval_notifications) that need the same fire-and-forget, GC-safe
+    strong-reference behavior for an arbitrary coroutine."""
+    _schedule(coro)
 
 
 def _schedule(coro: Any) -> None:
@@ -82,10 +118,47 @@ def _schedule(coro: Any) -> None:
     """
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(coro)
+        task = loop.create_task(coro)
     except RuntimeError:
         # No running event loop — safe to ignore.
-        pass
+        return
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+
+
+_PREVIEW_MAX_LEN = 140
+
+
+def _truncate(text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
+    """Collapse whitespace/newlines and clip to max_len with an ellipsis."""
+    collapsed = " ".join(text.split())
+    if len(collapsed) <= max_len:
+        return collapsed
+    return collapsed[: max_len - 1].rstrip() + "…"
+
+
+def _compose_summary(actor_name: Optional[str], content: str) -> str:
+    """Build a preview: "<actor>: <content>".
+
+    <content> is passed through unmodified (aside from truncation) so the FE
+    can run it through the same @mention-highlighting renderer used for
+    regular chat messages. Channel/feature context is NOT embedded here —
+    the payload carries session_id/feature_id as structured fields and the FE
+    resolves display names (channel title, feature slug) by looking those up
+    against hermes-agent's own session/feature APIs, the same way the /chat
+    and /feature pages already do.
+    """
+    who = actor_name or "Someone"
+    return f"{who}: {_truncate(content)}"
+
+
+def _channel_link(session_id: str, feature_id: Optional[str]) -> str:
+    """Feature-scoped channels don't appear in the regular Chat sidebar — they
+    only live inside that feature's Feature IDE view — so route there instead
+    of the generic /chat/{id} used for workspace-level channels and DMs."""
+    if feature_id:
+        return f"/feature/{feature_id}?channel={session_id}"
+    return f"/chat/{session_id}"
 
 
 def build_mention_payload(
@@ -93,7 +166,10 @@ def build_mention_payload(
     user_id: str,
     message_id: int,
     session_id: str,
+    content: str,
     actor_user_id: Optional[str] = None,
+    actor_name: Optional[str] = None,
+    feature_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Construct a ``mention`` notification payload."""
     payload: Dict[str, Any] = {
@@ -102,11 +178,14 @@ def build_mention_payload(
         "category": "mention",
         "source_type": "message",
         "source_id": str(message_id),
-        "summary": "You were mentioned in a message",
-        "link": f"/sessions/{session_id}",
+        "session_id": session_id,
+        "summary": _compose_summary(actor_name, content),
+        "link": _channel_link(session_id, feature_id),
     }
     if actor_user_id:
         payload["actor_user_id"] = actor_user_id
+    if feature_id:
+        payload["feature_id"] = feature_id
     return payload
 
 
@@ -115,7 +194,10 @@ def build_channel_message_payload(
     user_id: str,
     message_id: int,
     session_id: str,
+    content: str,
     actor_user_id: Optional[str] = None,
+    actor_name: Optional[str] = None,
+    feature_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Construct a ``channel_message`` notification payload."""
     payload: Dict[str, Any] = {
@@ -124,11 +206,14 @@ def build_channel_message_payload(
         "category": "channel_message",
         "source_type": "message",
         "source_id": str(message_id),
-        "summary": "New message in a channel you follow",
-        "link": f"/sessions/{session_id}",
+        "session_id": session_id,
+        "summary": _compose_summary(actor_name, content),
+        "link": _channel_link(session_id, feature_id),
     }
     if actor_user_id:
         payload["actor_user_id"] = actor_user_id
+    if feature_id:
+        payload["feature_id"] = feature_id
     return payload
 
 
@@ -137,7 +222,9 @@ def build_dm_payload(
     user_id: str,
     message_id: int,
     session_id: str,
+    content: str,
     actor_user_id: Optional[str] = None,
+    actor_name: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Construct a ``dm`` notification payload."""
     payload: Dict[str, Any] = {
@@ -146,9 +233,52 @@ def build_dm_payload(
         "category": "dm",
         "source_type": "message",
         "source_id": str(message_id),
-        "summary": "You have a new direct message",
-        "link": f"/sessions/{session_id}",
+        "session_id": session_id,
+        "summary": _compose_summary(actor_name, content),
+        "link": f"/chat/{session_id}",
     }
     if actor_user_id:
         payload["actor_user_id"] = actor_user_id
     return payload
+
+
+# Maps a stage-transition's `stage` to the notification category it produces
+# on approval. "handoff" has no corresponding category — approving it isn't
+# one of the notified events.
+STAGE_CATEGORY: Dict[str, str] = {
+    "product_spec": "spec_approved",
+    "technical_design": "design_approved",
+    "tasks": "tasks_approved",
+}
+
+STAGE_DESCRIPTION: Dict[str, str] = {
+    "product_spec": "the product spec",
+    "technical_design": "the technical design",
+    "tasks": "the task breakdown",
+}
+
+
+def build_approval_payload(
+    workspace_id: str,
+    user_id: str,
+    feature_id: str,
+    stage: str,
+    actor_user_id: Optional[str] = None,
+    actor_name: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Construct a stage-approval notification payload (spec/design/tasks
+    approved). Raises KeyError if stage isn't one of the notified stages —
+    callers should check `stage in STAGE_CATEGORY` first."""
+    who = actor_name or "Someone"
+    description = STAGE_DESCRIPTION[stage]
+    return {
+        "workspace_id": workspace_id,
+        "user_id": user_id,
+        "category": STAGE_CATEGORY[stage],
+        "source_type": "feature",
+        "source_id": feature_id,
+        "feature_id": feature_id,
+        "summary": f"{who} approved {description}",
+        "link": f"/feature/{feature_id}",
+        **({"actor_user_id": actor_user_id} if actor_user_id else {}),
+    }

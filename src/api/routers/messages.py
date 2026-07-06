@@ -131,7 +131,7 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     ws_id = getattr(session, "workspace_id", "") or ""
-    org_id = await get_workspace_organization_id(ws_id)
+    org_id = await get_workspace_organization_id(ws_id, user_id=identity.user_id, org_id=identity.org_id)
 
     # --- Mention parse + resolve ---
     handles = parse_mention_handles(body.content)
@@ -157,6 +157,7 @@ async def send_message(
             message_id=message_id,
             session_id=session_id,
             mentions=resolved_mentions,
+            content=body.content,
             author_id=user_id,
         )
 

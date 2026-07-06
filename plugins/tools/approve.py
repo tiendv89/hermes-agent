@@ -20,14 +20,16 @@ import yaml
 
 import re as _re
 
-from ..db import (
-    _validate_id,
+from ..document_repo import StaleBaseError, commit_to_branch, read_document
+from ..validation import _validate_id
+from .artifacts import _resolve_management_repo
+from src.services.workflow_backend_client import (
+    activate_ready_tasks,
     get_feature_detail,
     get_workspace_context,
+    run_async,
     update_feature_stage,
 )
-from ..document_repo import StaleBaseError, commit_to_branch, read_document
-from .artifacts import _resolve_management_repo
 
 _TASK_FILE_RE = _re.compile(r"^docs/features/[^/]+/tasks/(T\d+)\.yaml$")
 
@@ -195,14 +197,10 @@ def _run_async_create_tasks(workspace_id: str, feature_id: str, tasks: list) -> 
     """Bridge the async create_feature_tasks coroutine into a sync call.
 
     ``tasks`` is an already-parsed task list (see ``parse_tasks_index``); this
-    bridge no longer parses tasks.md. Uses the running agent event loop when
-    available (production path via get_agent_loop); falls back to asyncio.run()
-    for tests and non-agent callers.
+    bridge no longer parses tasks.md.
     """
-    import asyncio
-
-    from plugins.context import get_agent_loop, get_org_id, get_user_id
-    from src.services.workflow_backend_client import create_feature_tasks
+    from plugins.context import get_org_id, get_user_id
+    from src.services.workflow_backend_client import create_feature_tasks, run_async
 
     # Capture caller identity on THIS (worker) thread. When the coroutine is
     # scheduled on the agent loop (a different thread), thread-local identity is
@@ -210,19 +208,8 @@ def _run_async_create_tasks(workspace_id: str, feature_id: str, tasks: list) -> 
     user_id = get_user_id()
     org_id = get_org_id()
 
-    loop = get_agent_loop()
-    if loop is not None and loop.is_running():
-        future = asyncio.run_coroutine_threadsafe(
-            create_feature_tasks(
-                workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id
-            ),
-            loop,
-        )
-        return future.result(timeout=30)
-    return asyncio.run(
-        create_feature_tasks(
-            workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id
-        )
+    return run_async(
+        create_feature_tasks(workspace_id, feature_id, tasks, user_id=user_id, org_id=org_id)
     )
 
 
@@ -456,62 +443,12 @@ def _activate_tasks_git(
 
 
 def _activate_tasks_db(workspace_id: str, feature_id: str, actor: str) -> list:
-    """Set zero-dependency tasks to ready in workspace_tasks (go features)."""
-    from ..db import _conn
+    """Set zero-dependency (or now-unblocked) tasks to ready in workspace_tasks (go features)."""
+    from ..context import get_org_id, get_user_id
 
-    activated = []
-    with _conn() as conn:
-        rows = conn.execute(
-            """
-            SELECT t.id, t.task_name, t.depends_on, t.status
-            FROM workspace_tasks t
-            JOIN workspace_features f ON f.id = t.feature_id
-            JOIN workspaces w ON w.id = f.workspace_id
-            WHERE (w.slug = %s OR w.id::text = %s)
-              AND (f.feature_name = %s OR f.feature_id::text = %s)
-              AND t.status = 'todo'
-            """,
-            (workspace_id, workspace_id, feature_id, feature_id),
-        ).fetchall()
-
-        # Collect done task names to evaluate dependencies
-        done_rows = conn.execute(
-            """
-            SELECT t.task_name
-            FROM workspace_tasks t
-            JOIN workspace_features f ON f.id = t.feature_id
-            JOIN workspaces w ON w.id = f.workspace_id
-            WHERE (w.slug = %s OR w.id::text = %s)
-              AND (f.feature_name = %s OR f.feature_id::text = %s)
-              AND t.status = 'done'
-            """,
-            (workspace_id, workspace_id, feature_id, feature_id),
-        ).fetchall()
-        done_names = {r["task_name"] for r in done_rows}
-
-        for row in rows:
-            import json as _json
-
-            deps = row["depends_on"]
-            if isinstance(deps, str):
-                try:
-                    deps = _json.loads(deps)
-                except Exception:
-                    deps = []
-            if not isinstance(deps, list):
-                deps = []
-
-            can_start = not deps or all(d in done_names for d in deps)
-            if not can_start:
-                continue
-
-            conn.execute(
-                "UPDATE workspace_tasks SET status = 'ready', updated_at = NOW() WHERE id = %s",
-                (row["id"],),
-            )
-            activated.append(row["task_name"])
-
-    return activated
+    return run_async(
+        activate_ready_tasks(workspace_id, feature_id, user_id=get_user_id(), org_id=get_org_id())
+    )
 
 
 def _now_utc() -> str:
@@ -556,10 +493,14 @@ def handle(
     feature_id: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
-    from ..context import get_feature_id, get_workspace_id
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
+    # Capture identity on this (calling) thread — run_async may bridge onto a
+    # different thread, where thread-local context is unset.
+    caller_user_id = get_user_id()
+    caller_org_id = get_org_id()
 
     if not wid or not fid:
         return {
@@ -592,7 +533,7 @@ def handle(
     actor = os.environ.get("GIT_AUTHOR_EMAIL", os.environ.get("HERMES_ACTOR", "agent"))
 
     try:
-        workspace_context = get_workspace_context(wid)
+        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
         gh_owner, gh_repo = _resolve_management_repo(workspace_context)
     except Exception as exc:
         return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
@@ -604,7 +545,7 @@ def handle(
     init_pr_url: Optional[str] = None
     owner: Optional[str] = None
     try:
-        detail = get_feature_detail(wid, fid)
+        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
         feature_name = detail.get("feature_name")
         init_pr_url = detail.get("init_pr_url")
         owner = detail.get("owner")
@@ -827,15 +768,19 @@ def handle(
 
         # Step c: DB status update (idempotent set).
         try:
-            update_feature_stage(
-                workspace_id=wid,
-                feature_id=fid,
-                stage=stage,
-                review_status=stage_block["review_status"],
-                feature_status=new_feature_status,
-                current_stage=new_current_stage,
-                next_action=new_next_action,
-                actor=actor,
+            run_async(
+                update_feature_stage(
+                    workspace_id=wid,
+                    feature_id=fid,
+                    stage=stage,
+                    review_status=stage_block["review_status"],
+                    feature_status=new_feature_status,
+                    current_stage=new_current_stage,
+                    next_action=new_next_action,
+                    actor=actor,
+                    user_id=caller_user_id,
+                    org_id=caller_org_id,
+                )
             )
         except Exception as exc:
             logger.exception(
@@ -929,15 +874,19 @@ def handle(
     elif owner == "go":
         # go/postgres features: other stages/actions — DB update only.
         try:
-            update_feature_stage(
-                workspace_id=wid,
-                feature_id=fid,
-                stage=stage,
-                review_status=stage_block["review_status"],
-                feature_status=new_feature_status,
-                current_stage=new_current_stage,
-                next_action=new_next_action,
-                actor=actor,
+            run_async(
+                update_feature_stage(
+                    workspace_id=wid,
+                    feature_id=fid,
+                    stage=stage,
+                    review_status=stage_block["review_status"],
+                    feature_status=new_feature_status,
+                    current_stage=new_current_stage,
+                    next_action=new_next_action,
+                    actor=actor,
+                    user_id=caller_user_id,
+                    org_id=caller_org_id,
+                )
             )
         except Exception as exc:
             logger.exception("approve_feature: DB update failed for feature %s", fid)

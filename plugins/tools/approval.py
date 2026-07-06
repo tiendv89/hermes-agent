@@ -54,11 +54,17 @@ def _read_review_status(feature_id: str, stage: str) -> str:
     try:
         import yaml
 
-        from ..db import get_feature_detail, get_workspace_context
+        from ..context import get_org_id, get_user_id
         from ..document_repo import branch_exists, read_document
         from .artifacts import _resolve_management_repo
+        from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
 
-        workspace_context = get_workspace_context(workspace_id)
+        # Capture identity on this (calling) thread — run_async may bridge
+        # onto a different thread, where thread-local context is unset.
+        caller_user_id = get_user_id()
+        caller_org_id = get_org_id()
+
+        workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
         owner, repo = _resolve_management_repo(workspace_context)
 
         # All git artifacts are slug-keyed. Resolve the slug and prefer the
@@ -66,7 +72,7 @@ def _read_review_status(feature_id: str, stage: str) -> str:
         slug = feature_id
         init_pr_url = None
         try:
-            detail = get_feature_detail(workspace_id, feature_id)
+            detail = run_async(get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id))
             slug = detail.get("feature_name") or feature_id
             init_pr_url = detail.get("init_pr_url")
         except Exception:
