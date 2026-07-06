@@ -23,6 +23,7 @@ import re as _re
 from ..document_repo import StaleBaseError, commit_to_branch, read_document
 from ..validation import _validate_id
 from .artifacts import _resolve_management_repo
+from src.services.approval_notifications import notify_stage_approved
 from src.services.workflow_backend_client import (
     activate_ready_tasks,
     get_feature_detail,
@@ -943,6 +944,17 @@ def handle(
             activated_tasks = activation.get("activated", [])
             if activation.get("commit_sha"):
                 commit_sha = activation["commit_sha"]
+
+    # Notify other workspace members (mirrors the human-facing
+    # POST /features/{id}/stage-transition endpoint's own notify_stage_approved
+    # call in src/api/routers/stages.py — this agent-tool path previously had
+    # no notification wiring at all). Only on a genuine new approval; the
+    # already-approved fast-path above returns before reaching here.
+    if action == "approve":
+        try:
+            run_async(notify_stage_approved(wid, fid, stage, caller_user_id, caller_org_id))
+        except Exception:
+            logger.exception("approve_feature: notify_stage_approved failed for feature %s", fid)
 
     return {
         "ok": True,

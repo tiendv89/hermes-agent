@@ -5,7 +5,6 @@ subscription that powers real-time toasts on the frontend.
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import patch
 
 import pytest
 

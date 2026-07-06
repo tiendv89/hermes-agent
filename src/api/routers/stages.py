@@ -8,7 +8,7 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
@@ -83,7 +83,6 @@ class StageTransitionRequest(BaseModel):
 async def stage_transition_endpoint(
     feature_id: str,
     body: StageTransitionRequest,
-    request: Request,
     identity: Identity = Depends(require_identity),
 ) -> JSONResponse:
     """Commit a stage-review state change to status.yaml on the feature branch.
@@ -333,12 +332,9 @@ async def stage_transition_endpoint(
         logger.exception("stage_transition failed for feature %s", feature_id)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
-    db_session_factory = getattr(request.app.state, "db_session", None)
-    if body.action == "approve" and db_session_factory is not None:
+    if body.action == "approve":
         schedule_background(
-            notify_stage_approved(
-                db_session_factory, workspace_id, feature_id, body.stage, actor
-            )
+            notify_stage_approved(workspace_id, feature_id, body.stage, actor, identity.org_id)
         )
 
     return JSONResponse(

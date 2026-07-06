@@ -4,7 +4,7 @@ build_approval_payload / STAGE_CATEGORY helpers in notification_client.py.
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -78,15 +78,16 @@ def test_stage_category_excludes_handoff():
 async def test_notify_stage_approved_excludes_actor_and_notifies_rest():
     from src.services.approval_notifications import notify_stage_approved
 
-    mock_db = MagicMock()
-    session_factory = MagicMock()
-    session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-    session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
-
     with (
         patch(
-            "src.services.approval_notifications.get_feature_participants",
-            AsyncMock(return_value={"actor-1", "usr-2", "usr-3"}),
+            "src.services.approval_notifications.get_workspace_organization_id",
+            AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.services.approval_notifications.list_org_members",
+            AsyncMock(
+                return_value={"actor-1": {}, "usr-2": {}, "usr-3": {}}
+            ),
         ),
         patch(
             "src.services.approval_notifications.author_for",
@@ -94,9 +95,7 @@ async def test_notify_stage_approved_excludes_actor_and_notifies_rest():
         ),
         patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk,
     ):
-        await notify_stage_approved(
-            session_factory, "ws-1", "feat-1", "product_spec", "actor-1"
-        )
+        await notify_stage_approved("ws-1", "feat-1", "product_spec", "actor-1", "org-1")
 
     mock_bulk.assert_called_once()
     payloads = mock_bulk.call_args[0][0]
@@ -112,43 +111,66 @@ async def test_notify_stage_approved_excludes_actor_and_notifies_rest():
 async def test_notify_stage_approved_noop_for_unmapped_stage():
     from src.services.approval_notifications import notify_stage_approved
 
-    session_factory = MagicMock()
-    with patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk:
-        await notify_stage_approved(session_factory, "ws-1", "feat-1", "handoff", "actor-1")
+    with (
+        patch(
+            "src.services.approval_notifications.get_workspace_organization_id"
+        ) as mock_get_org,
+        patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk,
+    ):
+        await notify_stage_approved("ws-1", "feat-1", "handoff", "actor-1", "org-1")
 
     mock_bulk.assert_not_called()
-    session_factory.assert_not_called()
+    mock_get_org.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_notify_stage_approved_noop_without_actor():
     from src.services.approval_notifications import notify_stage_approved
 
-    session_factory = MagicMock()
-    with patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk:
-        await notify_stage_approved(session_factory, "ws-1", "feat-1", "tasks", None)
+    with (
+        patch(
+            "src.services.approval_notifications.get_workspace_organization_id"
+        ) as mock_get_org,
+        patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk,
+    ):
+        await notify_stage_approved("ws-1", "feat-1", "tasks", None, "org-1")
 
     mock_bulk.assert_not_called()
-    session_factory.assert_not_called()
+    mock_get_org.assert_not_called()
 
 
 @pytest.mark.asyncio
-async def test_notify_stage_approved_noop_when_no_other_participants():
+async def test_notify_stage_approved_noop_when_org_unresolved():
     from src.services.approval_notifications import notify_stage_approved
-
-    mock_db = MagicMock()
-    session_factory = MagicMock()
-    session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-    session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
     with (
         patch(
-            "src.services.approval_notifications.get_feature_participants",
-            AsyncMock(return_value={"actor-1"}),
+            "src.services.approval_notifications.get_workspace_organization_id",
+            AsyncMock(return_value=""),
         ),
         patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk,
     ):
-        await notify_stage_approved(session_factory, "ws-1", "feat-1", "tasks", "actor-1")
+        await notify_stage_approved("ws-1", "feat-1", "tasks", "actor-1", "org-1")
+
+    mock_bulk.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_notify_stage_approved_noop_when_no_other_members():
+    from src.services.approval_notifications import notify_stage_approved
+
+    with (
+        patch(
+            "src.services.approval_notifications.get_workspace_organization_id",
+            AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.services.approval_notifications.list_org_members",
+            AsyncMock(return_value={"actor-1": {}}),
+        ),
+        patch("src.services.approval_notifications.schedule_notifications_bulk") as mock_bulk,
+    ):
+        await notify_stage_approved("ws-1", "feat-1", "tasks", "actor-1", "org-1")
 
     mock_bulk.assert_not_called()
 
@@ -158,7 +180,9 @@ async def test_notify_stage_approved_swallows_errors():
     """Must never raise — this runs fire-and-forget after an HTTP response."""
     from src.services.approval_notifications import notify_stage_approved
 
-    session_factory = MagicMock(side_effect=RuntimeError("db unavailable"))
-
-    # Must not raise.
-    await notify_stage_approved(session_factory, "ws-1", "feat-1", "tasks", "actor-1")
+    with patch(
+        "src.services.approval_notifications.get_workspace_organization_id",
+        AsyncMock(side_effect=RuntimeError("workflow-backend unavailable")),
+    ):
+        # Must not raise.
+        await notify_stage_approved("ws-1", "feat-1", "tasks", "actor-1", "org-1")

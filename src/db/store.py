@@ -1000,37 +1000,6 @@ async def get_unread_message_counts_by_session(
     return counts
 
 
-async def get_feature_participants(
-    db: AsyncSession,
-    workspace_id: str,
-    feature_id: str,
-) -> set[str]:
-    """Return the set of user_ids who participate in any session (channel, DM,
-    thread) scoped to feature_id — owners and explicit members alike. Used to
-    fan out feature-lifecycle notifications (stage approvals) to everyone
-    who's engaged with the feature, not just its current owner.
-    """
-    result = await db.execute(
-        select(Session.id, Session.user_id).where(
-            Session.workspace_id == workspace_id,
-            Session.feature_id == feature_id,
-        )
-    )
-    rows = result.all()
-    session_ids = [row[0] for row in rows]
-    participants: set[str] = {row[1] for row in rows if row[1]}
-
-    if session_ids:
-        member_result = await db.execute(
-            select(SessionMember.user_id).where(
-                SessionMember.session_id.in_(session_ids)
-            )
-        )
-        participants.update(row[0] for row in member_result.all())
-
-    return participants
-
-
 # ---------------------------------------------------------------------------
 # Channel store
 # ---------------------------------------------------------------------------

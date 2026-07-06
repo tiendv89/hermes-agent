@@ -297,8 +297,6 @@ def _setup_create_tasks_sys_modules(
     wbc_mock.get_workspace_context = _fake_get_workspace_context
     wbc_mock.get_feature_detail = _fake_get_feature_detail
     wbc_mock.run_async = _real_run_async
-    sys.modules["src"] = MagicMock()
-    sys.modules["src.services"] = MagicMock()
     sys.modules["src.services.workflow_backend_client"] = wbc_mock
 
 
@@ -680,8 +678,6 @@ class TestE2EResumableApproveAfterStepDFailure:
         wbc_stub = MagicMock()
         wbc_stub.WorkflowBackendError = _WorkflowBackendError
         wbc_stub.run_async = _real_run_async
-        sys.modules["src"] = MagicMock()
-        sys.modules["src.services"] = MagicMock()
         sys.modules["src.services.workflow_backend_client"] = wbc_stub
 
         mod = _load_approve_mod()
