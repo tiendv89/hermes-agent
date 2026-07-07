@@ -71,7 +71,7 @@ async def create_dm_endpoint(
 
     # Validate that other_member_id is a real org member (when user-service is
     # available and the workspace's org could be resolved — permissive otherwise).
-    organization_id = await get_workspace_organization_id(body.workspace_id)
+    organization_id = await get_workspace_organization_id(body.workspace_id, user_id=identity.user_id, org_id=identity.org_id)
     if organization_id:
         members = await list_org_members(organization_id)
         if members and body.other_member_id not in members:

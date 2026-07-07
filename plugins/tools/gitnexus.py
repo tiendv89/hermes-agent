@@ -27,8 +27,8 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
-from ..db import resolve_workspace_slug
 from ..mcp_client import call_mcp_tool, coerce_text
+from src.services.workflow_backend_client import resolve_workspace_slug
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ async def handle(
     from ..context import get_workspace_id, mark_context_gathered
 
     mark_context_gathered()
-    workspace_id = resolve_workspace_slug(get_workspace_id())
+    workspace_id = await resolve_workspace_slug(get_workspace_id())
     if not workspace_id:
         return {
             "ok": False,
@@ -240,7 +240,7 @@ def list_indexed_repos(
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return None
-    workspace_id = resolve_workspace_slug(workspace_id)
+    workspace_id = _run_coro_sync(resolve_workspace_slug(workspace_id))
     if not workspace_id:
         logger.debug(
             "list_indexed_repos: no workspace_id in context — GitNexus requires "

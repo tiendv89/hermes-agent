@@ -6,8 +6,8 @@ import logging
 import os
 from typing import Any, Dict
 
-from ..db import resolve_workspace_slug
 from ..mcp_client import call_mcp_tool, coerce_text
+from src.services.workflow_backend_client import resolve_workspace_slug
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ async def handle(
             "ok": False,
             "error": "workspace_id is required but was not provided and no workspace context is set.",
         }
-    wid = resolve_workspace_slug(wid)
+    wid = await resolve_workspace_slug(wid)
     url = os.environ.get("RAG_MCP_URL", "").strip()
     if not url:
         return {"ok": False, "error": "RAG_MCP_URL is not configured."}

@@ -7,7 +7,7 @@ import os
 from typing import Any
 
 from .context import get_context_for_session
-from .db import check_workflow_available
+from src.services.workflow_backend_client import check_workflow_available
 from .skills import get_index
 
 logger = logging.getLogger(__name__)

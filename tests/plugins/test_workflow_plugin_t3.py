@@ -93,7 +93,7 @@ class TestWorkflowGetTasks:
                 "execution": {},
             },
         ]
-        with patch("plugins.db.get_feature_tasks", return_value=fake_tasks):
+        with patch("src.services.workflow_backend_client.get_feature_tasks", AsyncMock(return_value=fake_tasks)):
             from plugins.tools.tasks import handle
 
             result = handle(workspace_id="ws-1", feature_id="feat-1")
@@ -101,7 +101,10 @@ class TestWorkflowGetTasks:
         assert result["tasks"] == fake_tasks
 
     def test_db_error_returns_ok_false(self):
-        with patch("plugins.db.get_feature_tasks", side_effect=RuntimeError("db down")):
+        with patch(
+            "src.services.workflow_backend_client.get_feature_tasks",
+            AsyncMock(side_effect=RuntimeError("db down")),
+        ):
             from plugins.tools.tasks import handle
 
             result = handle(workspace_id="ws-1", feature_id="feat-1")
@@ -120,14 +123,15 @@ class TestWorkflowGetTasks:
         ],
     )
     def test_passes_args_to_get_feature_tasks(self, workspace_id, feature_id):
-        with patch("plugins.db.get_feature_tasks", return_value=[]) as mock_fn:
+        mock_fn = AsyncMock(return_value=[])
+        with patch("src.services.workflow_backend_client.get_feature_tasks", mock_fn):
             from plugins.tools.tasks import handle
 
             handle(workspace_id=workspace_id, feature_id=feature_id)
-        mock_fn.assert_called_once_with(workspace_id, feature_id)
+        assert mock_fn.call_args.args == (workspace_id, feature_id)
 
     def test_extra_kwargs_ignored(self):
-        with patch("plugins.db.get_feature_tasks", return_value=[]):
+        with patch("src.services.workflow_backend_client.get_feature_tasks", AsyncMock(return_value=[])):
             from plugins.tools.tasks import handle
 
             result = handle(
@@ -951,14 +955,14 @@ class TestWriteArtifactCoercesContent:
             return {"commit_sha": "deadbeef", "pr": {"url": "http://pr"}}
 
         with (
-            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("o", "r"),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value={"init_pr_url": None, "owner": "ts"},
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value={"init_pr_url": None, "owner": "ts"}),
             ),
             patch(
                 "plugins.tools.artifacts._resolve_document_branch",

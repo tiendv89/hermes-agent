@@ -1,4 +1,4 @@
-from src.db.models import Base, Message, MessageMention, Session, SessionMember
+from src.db.models import Base, Message, MessageMention, Session, SessionMember, SessionRead
 from src.db.store import (
     init_db,
     create_session,
@@ -34,6 +34,8 @@ from src.db.store import (
     get_unread_mention_count,
     get_unread_mentions_by_session,
     mark_mentions_read,
+    get_unread_message_counts_by_session,
+    mark_session_read,
     create_channel,
     list_channels,
     get_channel,
@@ -51,6 +53,7 @@ __all__ = [
     "MessageMention",
     "Session",
     "SessionMember",
+    "SessionRead",
     "init_db",
     "create_session",
     "get_session",
@@ -85,6 +88,8 @@ __all__ = [
     "get_unread_mention_count",
     "get_unread_mentions_by_session",
     "mark_mentions_read",
+    "get_unread_message_counts_by_session",
+    "mark_session_read",
     "create_channel",
     "list_channels",
     "get_channel",

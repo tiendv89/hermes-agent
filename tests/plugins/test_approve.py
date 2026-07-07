@@ -24,7 +24,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -385,7 +385,7 @@ def _run_go_tasks_approve_handle(
     if merge_raises:
         merge_mock.side_effect = merge_raises
 
-    update_mock = MagicMock()
+    update_mock = AsyncMock()
     if update_feature_stage_raises:
         update_mock.side_effect = update_feature_stage_raises
 
@@ -399,8 +399,8 @@ def _run_go_tasks_approve_handle(
     mod = _load_approve_mod()
 
     # Patch module-level imports in approve's namespace
-    mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-    mod.get_feature_detail = MagicMock(return_value=_make_feature_detail(owner))
+    mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+    mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail(owner))
     mod.update_feature_stage = update_mock
     mod.read_document = MagicMock(
         side_effect=read_document_side_effect
@@ -647,8 +647,10 @@ class TestGoTasksApproveStepCFailure:
 class TestGoTasksApproveStepDTasksAlreadyExist:
     def test_tasks_already_exist_is_ok(self, monkeypatch):
         """tasks_already_exist is treated as a no-op (idempotent)."""
-        # Build a fake WorkflowBackendError in sys.modules so approve.py can import it
-        wbe_mod = types.ModuleType("src.services.workflow_backend_client")
+        # Patch WorkflowBackendError in place on the real module — approve.py
+        # also imports get_feature_detail/get_workspace_context/run_async/etc.
+        # from it, so replacing it wholesale would break those imports.
+        import src.services.workflow_backend_client as wbe_mod
 
         class _FakeWBE(Exception):
             def __init__(self, msg="", *, reason_code="", status=0):
@@ -657,9 +659,6 @@ class TestGoTasksApproveStepDTasksAlreadyExist:
                 self.status = status
 
         wbe_mod.WorkflowBackendError = _FakeWBE
-        sys.modules.setdefault("src", types.ModuleType("src"))
-        sys.modules.setdefault("src.services", types.ModuleType("src.services"))
-        sys.modules["src.services.workflow_backend_client"] = wbe_mod
 
         import yaml
 
@@ -676,7 +675,7 @@ class TestGoTasksApproveStepDTasksAlreadyExist:
         mocks["activate"].assert_called()
 
     def test_tasks_already_exist_does_not_return_failed_step(self, monkeypatch):
-        wbe_mod = types.ModuleType("src.services.workflow_backend_client")
+        import src.services.workflow_backend_client as wbe_mod
 
         class _FakeWBE(Exception):
             def __init__(self, msg="", *, reason_code="", status=0):
@@ -685,9 +684,6 @@ class TestGoTasksApproveStepDTasksAlreadyExist:
                 self.status = status
 
         wbe_mod.WorkflowBackendError = _FakeWBE
-        sys.modules.setdefault("src", types.ModuleType("src"))
-        sys.modules.setdefault("src.services", types.ModuleType("src.services"))
-        sys.modules["src.services.workflow_backend_client"] = wbe_mod
 
         import yaml
 
@@ -709,7 +705,11 @@ class TestGoTasksApproveStepDTasksAlreadyExist:
 
 class TestGoTasksApproveStepDReasonCodeRelay:
     def _setup_fake_wbe(self, reason_code):
-        wbe_mod = types.ModuleType("src.services.workflow_backend_client")
+        # Patch WorkflowBackendError in place on the real module (imported
+        # for real, not stubbed) — approve.py/artifacts.py also import
+        # get_feature_detail/get_workspace_context/run_async/etc. from this
+        # same module, so replacing it wholesale would break those imports.
+        import src.services.workflow_backend_client as wbe_mod
 
         class _FakeWBE(Exception):
             def __init__(self, msg="", *, reason_code="", status=0):
@@ -718,9 +718,6 @@ class TestGoTasksApproveStepDReasonCodeRelay:
                 self.status = status
 
         wbe_mod.WorkflowBackendError = _FakeWBE
-        sys.modules.setdefault("src", types.ModuleType("src"))
-        sys.modules.setdefault("src.services", types.ModuleType("src.services"))
-        sys.modules["src.services.workflow_backend_client"] = wbe_mod
         return _FakeWBE("error", reason_code=reason_code)
 
     def test_feature_not_tasks_approved_relayed(self, monkeypatch):
@@ -829,9 +826,9 @@ class TestGoTasksApproveStepAFailure:
         monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail("go"))
-        mod.update_feature_stage = MagicMock()
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("go"))
+        mod.update_feature_stage = AsyncMock()
         mod.read_document = MagicMock(side_effect=_make_read_document())
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         mod._read_status_yaml_on_branch = MagicMock(return_value=None)
@@ -865,9 +862,9 @@ class TestGoTasksApproveStepAFailure:
         monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail("go"))
-        mod.update_feature_stage = MagicMock()
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("go"))
+        mod.update_feature_stage = AsyncMock()
         mod.read_document = MagicMock(side_effect=_make_read_document())
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         find_prs_mock = MagicMock(return_value=[])
@@ -919,13 +916,13 @@ stages:
     review_history: []
 history: []
 """
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         commit_mock = MagicMock()
         create_mock = MagicMock()
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail("go"))
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("go"))
         mod.update_feature_stage = update_mock
         mod.read_document = MagicMock(
             return_value={"content": status_yaml, "sha": "s1"}
@@ -987,15 +984,15 @@ class TestTsFeatureBehaviorUnchanged:
         monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         commit_to_branch_mock = MagicMock(return_value="sha_ts")
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         create_tasks_mock = MagicMock()
         activate_git_mock = MagicMock(
             return_value={"activated": ["T1"], "commit_sha": "sha_act"}
         )
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail("ts"))
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("ts"))
         mod.update_feature_stage = update_mock
         mod.read_document = MagicMock(side_effect=_make_read_document())
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
@@ -1038,11 +1035,11 @@ stages:
 history: []
 """
         commit_to_branch_mock = MagicMock(return_value="sha_ts_ps")
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail("ts"))
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("ts"))
         mod.update_feature_stage = update_mock
         mod.read_document = MagicMock(
             return_value={"content": status_yaml, "sha": "s1"}

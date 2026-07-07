@@ -16,7 +16,7 @@ import base64
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -150,17 +150,17 @@ class TestWriteArtifactInitPrPath:
         """When init PR is open, commit_to_branch is called (not write_document)."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         with (
-            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("org", "repo"),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value={
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value={
                     "init_pr_url": "https://github.com/org/repo/pull/7",
                     "owner": "ts",
-                },
+                }),
             ),
             patch(
                 "plugins.tools.artifacts._resolve_document_branch",
@@ -200,14 +200,14 @@ class TestWriteArtifactInitPrPath:
         """When feature branch path, write_document is called (not commit_to_branch)."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         with (
-            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("org", "repo"),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value={"init_pr_url": None, "owner": "ts"},
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value={"init_pr_url": None, "owner": "ts"}),
             ),
             patch(
                 "plugins.tools.artifacts._resolve_document_branch",
@@ -252,14 +252,14 @@ class TestWriteArtifactInitPrPath:
             "review_status": "draft",
         }
         with (
-            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("o", "r"),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value={"init_pr_url": None, "owner": "ts"},
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value={"init_pr_url": None, "owner": "ts"}),
             ),
             patch(
                 "plugins.tools.artifacts._resolve_document_branch",
@@ -291,14 +291,14 @@ class TestWriteArtifactInitPrPath:
         """A request_approval failure should not cause the write to fail."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         with (
-            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("o", "r"),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value={"init_pr_url": None, "owner": "ts"},
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value={"init_pr_url": None, "owner": "ts"}),
             ),
             patch(
                 "plugins.tools.artifacts._resolve_document_branch",
@@ -329,14 +329,14 @@ class TestWriteArtifactInitPrPath:
         """When DB lookup fails, init_pr_url defaults to None (pre-existing feature path)."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
         with (
-            patch("plugins.tools.artifacts.get_workspace_context", return_value={}),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("o", "r"),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                side_effect=RuntimeError("db down"),
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(side_effect=RuntimeError("db down")),
             ),
             patch(
                 "plugins.tools.artifacts._resolve_document_branch",
@@ -572,12 +572,12 @@ class TestHandleWriteProductSpecInitPr:
 
         with (
             patch(
-                "plugins.tools.artifacts.get_workspace_context",
-                return_value=workspace_ctx,
+                "src.services.workflow_backend_client.get_workspace_context",
+                AsyncMock(return_value=workspace_ctx),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value=feature_detail,
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value=feature_detail),
             ),
             patch("plugins.tools.approval.handle", return_value={"ok": False}),
         ):
@@ -634,12 +634,12 @@ class TestHandleWriteProductSpecInitPr:
 
         with (
             patch(
-                "plugins.tools.artifacts.get_workspace_context",
-                return_value=workspace_ctx,
+                "src.services.workflow_backend_client.get_workspace_context",
+                AsyncMock(return_value=workspace_ctx),
             ),
             patch(
-                "plugins.tools.artifacts.get_feature_detail",
-                return_value=feature_detail,
+                "src.services.workflow_backend_client.get_feature_detail",
+                AsyncMock(return_value=feature_detail),
             ),
             patch("plugins.tools.approval.handle", return_value={"ok": False}),
         ):

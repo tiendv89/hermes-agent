@@ -24,10 +24,11 @@ import re
 
 import yaml
 
-from ..db import _validate_id, get_feature_detail, get_workspace_context
 from ..document_repo import branch_exists
 from ..skills import get_index
+from ..validation import _validate_id
 from .artifacts import _resolve_management_repo
+from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -265,10 +266,14 @@ def handle(
     feature_id: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
-    from ..context import get_feature_id, get_workspace_id
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
+    # Capture identity on this (calling) thread — run_async may bridge onto a
+    # different thread, where thread-local context is unset.
+    caller_user_id = get_user_id()
+    caller_org_id = get_org_id()
 
     if not wid or not fid:
         return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
@@ -344,7 +349,7 @@ def handle(
     init_pr_url: Optional[str] = None
     owner: Optional[str] = None
     try:
-        detail = get_feature_detail(wid, fid)
+        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
         feature_name = detail.get("feature_name") or fid
         init_pr_url = detail.get("init_pr_url")
         owner = detail.get("owner") or "ts"
@@ -354,7 +359,7 @@ def handle(
         owner = "ts"
 
     try:
-        workspace_context = get_workspace_context(wid)
+        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
         gh_owner, gh_repo = _resolve_management_repo(workspace_context)
     except Exception as exc:
         return {"ok": False, "error": f"Could not resolve management repo: {exc}"}

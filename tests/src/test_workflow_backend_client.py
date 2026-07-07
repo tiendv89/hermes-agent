@@ -439,3 +439,562 @@ class TestCreateFeatureTasks:
         assert len(captured_url) == 1
         assert "my-workspace" in captured_url[0]
         assert "my-feature" in captured_url[0]
+
+
+# ---------------------------------------------------------------------------
+# _call / run_async / check_workflow_available and the plugins.db replacement
+# functions (get_workspace_context, get_feature_detail, update_feature_stage, ...)
+# ---------------------------------------------------------------------------
+
+
+def _import_call_helpers():
+    import src.services.workflow_backend_client as mod
+
+    return mod
+
+
+def _fake_request_session(fake_resp):
+    """A fake aiohttp.ClientSession whose .request(...) returns fake_resp."""
+    fake_session = MagicMock()
+    fake_session.request = MagicMock(return_value=fake_resp)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    return fake_session
+
+
+def _fake_response(status, body):
+    fake_resp = MagicMock()
+    fake_resp.status = status
+    fake_resp.json = AsyncMock(return_value=body)
+    fake_resp.text = AsyncMock(return_value=str(body))
+    fake_resp.__aenter__ = AsyncMock(return_value=fake_resp)
+    fake_resp.__aexit__ = AsyncMock(return_value=False)
+    return fake_resp
+
+
+class TestCheckWorkflowAvailable:
+    def test_true_when_both_set(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+        assert mod.check_workflow_available() is True
+
+    def test_false_when_url_missing(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+        assert mod.check_workflow_available() is False
+
+    def test_false_when_token_missing(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
+        assert mod.check_workflow_available() is False
+
+
+class TestRunAsync:
+    def test_uses_asyncio_run_when_no_agent_loop(self):
+        mod = _import_call_helpers()
+
+        async def coro():
+            return 42
+
+        with patch("plugins.context.get_agent_loop", return_value=None):
+            assert mod.run_async(coro()) == 42
+
+
+class TestCall:
+    @pytest.mark.asyncio
+    async def test_unwraps_success_envelope(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(200, {"success": True, "data": {"slug": "ws-1"}})
+        with (
+            patch(
+                "src.services.workflow_backend_client.aiohttp.ClientSession",
+                return_value=_fake_request_session(fake_resp),
+            ),
+            patch("plugins.context.get_user_id", return_value="u"),
+            patch("plugins.context.get_org_id", return_value="o"),
+        ):
+            result = await mod._call("GET", "/api/workspaces/ws-1", user_id="u", org_id="o")
+
+        assert result == {"slug": "ws-1"}
+
+    @pytest.mark.asyncio
+    async def test_404_with_not_found_message_raises_value_error(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {"code": "DATABASE_NOT_FOUND"}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            with pytest.raises(ValueError, match="not found"):
+                await mod._call(
+                    "GET",
+                    "/api/workspaces/missing",
+                    user_id="u",
+                    org_id="o",
+                    not_found_message="Workspace not found: 'missing'",
+                )
+
+    @pytest.mark.asyncio
+    async def test_404_without_not_found_message_raises_backend_error(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {"code": "DATABASE_NOT_FOUND"}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            with pytest.raises(mod.WorkflowBackendError) as exc_info:
+                await mod._call("GET", "/api/workspaces/missing", user_id="u", org_id="o")
+        assert exc_info.value.status == 404
+
+    @pytest.mark.asyncio
+    async def test_missing_config_raises(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        with pytest.raises(mod.WorkflowBackendError) as exc_info:
+            await mod._call("GET", "/api/workspaces/x", user_id="u", org_id="o")
+        assert exc_info.value.reason_code == "missing_config"
+
+
+class TestGetWorkspaceContext:
+    @pytest.mark.asyncio
+    async def test_shapes_response(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200,
+            {
+                "success": True,
+                "data": {
+                    "management_repo_id": "mgmt-repo",
+                    "repo_url": "https://github.com/org/repo",
+                },
+            },
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod.get_workspace_context("ws-1", user_id="u", org_id="o")
+
+        assert result == {
+            "management_repo": "mgmt-repo",
+            "repos": [{"id": "mgmt-repo", "github": "https://github.com/org/repo"}],
+        }
+
+    @pytest.mark.asyncio
+    async def test_no_repo_url_gives_empty_repos(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200, {"success": True, "data": {"management_repo_id": "mgmt-repo", "repo_url": ""}}
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod.get_workspace_context("ws-1", user_id="u", org_id="o")
+
+        assert result["repos"] == []
+
+
+class TestGetWorkspaceOrganizationIdAndSlug:
+    @pytest.mark.asyncio
+    async def test_organization_id_found(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(200, {"success": True, "data": {"organization_id": "org-1"}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            assert await mod.get_workspace_organization_id("ws-1", user_id="u", org_id="o") == "org-1"
+
+    @pytest.mark.asyncio
+    async def test_organization_id_none_when_not_found(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            assert await mod.get_workspace_organization_id("ws-1", user_id="u", org_id="o") is None
+
+    @pytest.mark.asyncio
+    async def test_slug_empty_when_not_found(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            assert await mod.get_workspace_slug("ws-1", user_id="u", org_id="o") == ""
+
+
+class TestResolveWorkspaceSlug:
+    @pytest.mark.asyncio
+    async def test_passthrough_when_unavailable(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        assert await mod.resolve_workspace_slug("ws-1") == "ws-1"
+
+    @pytest.mark.asyncio
+    async def test_returns_resolved_slug(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(200, {"success": True, "data": {"slug": "canonical-slug"}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            assert await mod.resolve_workspace_slug("ws-1", user_id="u", org_id="o") == "canonical-slug"
+
+    @pytest.mark.asyncio
+    async def test_lookup_miss_falls_back_to_raw_value(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            assert await mod.resolve_workspace_slug("unknown-id", user_id="u", org_id="o") == "unknown-id"
+
+    @pytest.mark.asyncio
+    async def test_error_falls_back_to_raw_value(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            side_effect=RuntimeError("connection refused"),
+        ):
+            assert await mod.resolve_workspace_slug("some-id", user_id="u", org_id="o") == "some-id"
+
+
+class TestGetWorkspaceIdForFeature:
+    @pytest.mark.asyncio
+    async def test_returns_workspace_id(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200, {"success": True, "data": {"workspace_id": "ws-1", "feature_id": "feat-1"}}
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            assert await mod.get_workspace_id_for_feature("feat-1", user_id="u", org_id="o") == "ws-1"
+
+    @pytest.mark.asyncio
+    async def test_not_found_raises_value_error(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            with pytest.raises(ValueError, match="Feature not found"):
+                await mod.get_workspace_id_for_feature("feat-1", user_id="u", org_id="o")
+
+
+class TestGetFeatureDetailAndTasks:
+    @pytest.mark.asyncio
+    async def test_get_feature_detail_shapes_response(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200,
+            {
+                "success": True,
+                "data": {
+                    "feature_name": "my-feature",
+                    "title": "My Feature",
+                    "current_stage": "tasks",
+                    "status": "ready_for_implementation",
+                    "next_action": "write tasks.md",
+                    "owner": "go",
+                    "init_pr_url": None,
+                    "tasks": [],
+                },
+            },
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod.get_feature_detail("ws-1", "feat-1", user_id="u", org_id="o")
+
+        assert result == {
+            "feature_name": "my-feature",
+            "title": "My Feature",
+            "stage": "tasks",
+            "status": "ready_for_implementation",
+            "next_action": "write tasks.md",
+            "owner": "go",
+            "init_pr_url": None,
+        }
+
+    @pytest.mark.asyncio
+    async def test_get_feature_detail_falls_back_to_name_search_on_404(self, monkeypatch):
+        """feature_id may be a feature_name slug — workflow-backend's direct
+        lookup 404s, so a name-search resolves it to the UUID and retries."""
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        responses = [
+            _fake_response(404, {"success": False, "error": {}}),
+            _fake_response(
+                200,
+                {"success": True, "data": {"items": [{"feature_id": "resolved-uuid"}]}},
+            ),
+            _fake_response(
+                200,
+                {
+                    "success": True,
+                    "data": {
+                        "feature_name": "my-slug",
+                        "title": "My Feature",
+                        "current_stage": "tasks",
+                        "status": "ready_for_implementation",
+                        "next_action": "",
+                        "owner": "go",
+                        "init_pr_url": None,
+                    },
+                },
+            ),
+        ]
+        captured_urls = []
+
+        def fake_request(method, url, *, headers, json, timeout):
+            captured_urls.append(url)
+            return responses[len(captured_urls) - 1]
+
+        fake_session = MagicMock()
+        fake_session.request = fake_request
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=fake_session,
+        ):
+            result = await mod.get_feature_detail("ws-1", "my-slug", user_id="u", org_id="o")
+
+        assert result["feature_name"] == "my-slug"
+        assert "ws-1/features/my-slug" in captured_urls[0]
+        assert "ws-1/features?name=my-slug" in captured_urls[1]
+        assert "ws-1/features/resolved-uuid" in captured_urls[2]
+
+    @pytest.mark.asyncio
+    async def test_get_feature_detail_raises_when_name_search_also_misses(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        responses = [
+            _fake_response(404, {"success": False, "error": {}}),
+            _fake_response(200, {"success": True, "data": {"items": []}}),
+        ]
+        captured_urls = []
+
+        def fake_request(method, url, *, headers, json, timeout):
+            captured_urls.append(url)
+            return responses[len(captured_urls) - 1]
+
+        fake_session = MagicMock()
+        fake_session.request = fake_request
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=fake_session,
+        ):
+            with pytest.raises(ValueError, match="not found"):
+                await mod.get_feature_detail("ws-1", "no-such-feature", user_id="u", org_id="o")
+
+    @pytest.mark.asyncio
+    async def test_get_feature_tasks_shapes_response(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200,
+            {
+                "success": True,
+                "data": {
+                    "tasks": [
+                        {
+                            "task_name": "T1",
+                            "title": "First task",
+                            "status": "ready",
+                            "blocked_reason": "",
+                            "depends_on": [],
+                            "pr": {},
+                            "execution": {},
+                        }
+                    ]
+                },
+            },
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod.get_feature_tasks("ws-1", "feat-1", user_id="u", org_id="o")
+
+        assert result == [
+            {
+                "task_name": "T1",
+                "title": "First task",
+                "status": "ready",
+                "blocked_reason": "",
+                "depends_on": [],
+                "pr": {},
+                "execution": {},
+            }
+        ]
+
+
+class TestUpdateFeatureStage:
+    @pytest.mark.asyncio
+    async def test_sends_patch_with_expected_body(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        captured = {}
+
+        def fake_request(method, url, *, headers, json, timeout):
+            captured["method"] = method
+            captured["url"] = url
+            captured["json"] = json
+            return _fake_response(200, {"success": True, "data": {"ok": True}})
+
+        fake_session = MagicMock()
+        fake_session.request = fake_request
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=fake_session,
+        ):
+            await mod.update_feature_stage(
+                "ws-1",
+                "feat-1",
+                "technical_design",
+                "approved",
+                "ready_for_implementation",
+                "tasks",
+                "write tasks.md",
+                "bob",
+                user_id="u",
+                org_id="o",
+            )
+
+        assert captured["method"] == "PATCH"
+        assert "ws-1" in captured["url"]
+        assert "feat-1" in captured["url"]
+        assert captured["json"]["stage"] == "technical_design"
+        assert captured["json"]["actor"] == "bob"
+
+    @pytest.mark.asyncio
+    async def test_not_found_raises_value_error(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            with pytest.raises(ValueError):
+                await mod.update_feature_stage(
+                    "ws-1", "feat-1", "tasks", "approved", "s", "c", "n", "actor", user_id="u", org_id="o"
+                )
+
+
+class TestActivateReadyTasks:
+    @pytest.mark.asyncio
+    async def test_returns_activated_task_names(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(200, {"success": True, "data": {"activated": ["T1", "T2"]}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod.activate_ready_tasks("ws-1", "feat-1", user_id="u", org_id="o")
+
+        assert result == ["T1", "T2"]
+
+    @pytest.mark.asyncio
+    async def test_empty_when_nothing_activated(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(200, {"success": True, "data": {"activated": None}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod.activate_ready_tasks("ws-1", "feat-1", user_id="u", org_id="o")
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_not_found_raises_value_error(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(404, {"success": False, "error": {}})
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            with pytest.raises(ValueError):
+                await mod.activate_ready_tasks("ws-1", "feat-1", user_id="u", org_id="o")

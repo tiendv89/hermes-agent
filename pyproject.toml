@@ -45,3 +45,10 @@ addopts = "-m 'not integration'"
 [tool.ruff]
 # Don't lint the vendored upstream submodule — it has its own tooling/config.
 extend-exclude = ["vendor"]
+
+[dependency-groups]
+dev = [
+    "aiohttp>=3.13.3",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+]

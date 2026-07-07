@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 
-from ..db import _validate_id, get_feature_detail, get_workspace_context
+from ..validation import _validate_id
 from ..document_repo import (
     StaleBaseError,
     branch_exists,
@@ -470,7 +470,15 @@ def _write_artifact(
     if not github_token:
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
 
-    workspace_context = get_workspace_context(workspace_id)
+    from ..context import get_org_id, get_user_id
+    from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
+
+    # Capture identity on this (calling) thread — run_async may bridge onto a
+    # different thread, where thread-local context is unset.
+    caller_user_id = get_user_id()
+    caller_org_id = get_org_id()
+
+    workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
     gh_owner, gh_repo = _resolve_management_repo(workspace_context)
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
 
@@ -480,7 +488,7 @@ def _write_artifact(
     feature_title: str = ""
     owner: str = "ts"
     try:
-        feature_detail = get_feature_detail(workspace_id, feature_id)
+        feature_detail = run_async(get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id))
         init_pr_url = feature_detail.get("init_pr_url")
         feature_name = feature_detail.get("feature_name")
         feature_title = feature_detail.get("title") or ""

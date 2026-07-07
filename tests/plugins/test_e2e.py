@@ -18,7 +18,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -258,15 +258,17 @@ def _setup_create_tasks_sys_modules(
     wbc_error_class=_WorkflowBackendError,
 ):
     """Inject all sys.modules stubs needed by create_tasks.handle()."""
+    from src.services.workflow_backend_client import run_async as _real_run_async
+
     ctx_mock = MagicMock()
     ctx_mock.get_workspace_id.return_value = _WORKSPACE_ID
     ctx_mock.get_feature_id.return_value = _FEATURE_ID
+    ctx_mock.get_user_id.return_value = ""
+    ctx_mock.get_org_id.return_value = ""
+    # run_async checks get_agent_loop() to decide sync-fallback vs cross-thread
+    # scheduling — must be None here so it takes the asyncio.run() path.
+    ctx_mock.get_agent_loop.return_value = None
     sys.modules["plugins.context"] = ctx_mock
-
-    db_mock = MagicMock()
-    db_mock.get_workspace_context.return_value = _make_workspace_context()
-    db_mock.get_feature_detail.return_value = _make_feature_detail()
-    sys.modules["plugins.db"] = db_mock
 
     doc_repo_mock = MagicMock()
     doc_repo_mock.read_document.return_value = {"content": tasks_content, "sha": _TASKS_MD_SHA}
@@ -284,10 +286,17 @@ def _setup_create_tasks_sys_modules(
     artifacts_mock._resolve_management_repo.return_value = (_OWNER, _REPO)
     sys.modules["plugins.tools.artifacts"] = artifacts_mock
 
+    async def _fake_get_workspace_context(*_a, **_kw):
+        return _make_workspace_context()
+
+    async def _fake_get_feature_detail(*_a, **_kw):
+        return _make_feature_detail()
+
     wbc_mock = MagicMock()
     wbc_mock.WorkflowBackendError = wbc_error_class
-    sys.modules["src"] = MagicMock()
-    sys.modules["src.services"] = MagicMock()
+    wbc_mock.get_workspace_context = _fake_get_workspace_context
+    wbc_mock.get_feature_detail = _fake_get_feature_detail
+    wbc_mock.run_async = _real_run_async
     sys.modules["src.services.workflow_backend_client"] = wbc_mock
 
 
@@ -309,12 +318,12 @@ class TestE2EFullPipeline:
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
         monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         commit_to_branch_mock = MagicMock(return_value=_COMMIT_SHA)
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail(stage=stage))
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail(stage=stage))
         mod.update_feature_stage = update_mock
         mod.read_document = MagicMock(
             return_value={"content": status_content, "sha": _STATUS_SHA}
@@ -419,14 +428,14 @@ class TestE2EFullPipeline:
 
         commit_mock = MagicMock(return_value=_COMMIT_SHA)
         merge_mock = MagicMock()
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         create_tasks_mock = MagicMock(return_value={"tasks": [{"id": "T1"}, {"id": "T2"}]})
         activate_mock = MagicMock(return_value=["T1"])
         open_prs = [_make_open_pr(1)]
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail())
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
         mod.update_feature_stage = update_mock
         mod.read_document = MagicMock(side_effect=_make_read_document())
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
@@ -474,9 +483,9 @@ class TestE2EFullPipeline:
         activated = ["T1", "T2"]
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail())
-        mod.update_feature_stage = MagicMock()
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
+        mod.update_feature_stage = AsyncMock()
         mod.read_document = MagicMock(side_effect=_make_read_document())
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         mod._read_status_yaml_on_branch = MagicMock(return_value=None)
@@ -516,12 +525,12 @@ class TestE2EResumableApproveAfterStepBFailure:
         monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         commit_mock = MagicMock(return_value=_COMMIT_SHA)
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         create_mock = MagicMock()
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail())
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
         mod.update_feature_stage = update_mock
         mod.read_document = MagicMock(side_effect=_make_read_document(_STATUS_YAML_TASKS_DRAFT))
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
@@ -578,13 +587,13 @@ class TestE2EResumableApproveAfterStepBFailure:
             open_prs = [_make_open_pr(10)]
 
         commit_mock = MagicMock(return_value=_COMMIT_SHA)
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         create_mock = MagicMock(return_value={"tasks": []})
         merge_mock = MagicMock()
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail())
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
         mod.update_feature_stage = update_mock
         # Status now shows approved (step a committed it in first call)
         mod.read_document = MagicMock(
@@ -652,23 +661,28 @@ class TestE2EResumableApproveAfterStepDFailure:
             create_tasks_side_effect = MagicMock(return_value={"tasks": []})
 
         commit_mock = MagicMock(return_value=_COMMIT_SHA)
-        update_mock = MagicMock()
+        update_mock = AsyncMock()
         merge_mock = MagicMock()
 
         # Parse the approved status for the "already on base" check
         _approved_status = _yaml.safe_load(_STATUS_YAML_TASKS_APPROVED)
 
         # Inject the workflow_backend_client stub so the inline import inside
-        # approve.handle() gets our _WorkflowBackendError stand-in.
+        # approve.handle() gets our _WorkflowBackendError stand-in. run_async
+        # must stay the real bridge (approve.py's module-level `run_async`
+        # name is bound to this stub at reload time, and its own callers
+        # below only override get_workspace_context/get_feature_detail/
+        # update_feature_stage, not run_async itself).
+        from src.services.workflow_backend_client import run_async as _real_run_async
+
         wbc_stub = MagicMock()
         wbc_stub.WorkflowBackendError = _WorkflowBackendError
-        sys.modules["src"] = MagicMock()
-        sys.modules["src.services"] = MagicMock()
+        wbc_stub.run_async = _real_run_async
         sys.modules["src.services.workflow_backend_client"] = wbc_stub
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = MagicMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = MagicMock(return_value=_make_feature_detail())
+        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
+        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
         mod.update_feature_stage = update_mock
         # Status already approved (step a already done)
         mod.read_document = MagicMock(

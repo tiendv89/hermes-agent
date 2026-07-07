@@ -134,6 +134,27 @@ class SessionMember(Base):
     __table_args__ = (Index("idx_session_members_user", "user_id"),)
 
 
+class SessionRead(Base):
+    """Per-user "last read" cursor for a session — powers the general
+    unread-message-count badge (as opposed to MessageMention's @mention-only
+    count). Decoupled from SessionMember so it also covers thread owners who
+    never get an explicit membership row."""
+
+    __tablename__ = "session_reads"
+
+    session_id = Column(
+        SessionUUID,
+        ForeignKey("sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    user_id = Column(String, nullable=False, primary_key=True)
+    last_read_message_count = Column(Integer, nullable=False, default=0)
+    updated_at = Column(Double, nullable=False)
+
+    __table_args__ = (Index("idx_session_reads_user", "user_id"),)
+
+
 class MessageMention(Base):
     """Resolved @mentions within messages (v4 team-chat)."""
 

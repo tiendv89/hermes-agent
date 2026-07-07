@@ -19,9 +19,10 @@ import logging
 import os
 from typing import Any, Dict
 
-from ..db import _validate_id, get_feature_detail, get_workspace_context
 from ..document_repo import read_document
+from ..validation import _validate_id
 from .artifacts import _resolve_document_branch, _resolve_management_repo
+from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +72,14 @@ def handle_read_document(
     **_: Any,
 ) -> Dict[str, Any]:
     """Read a feature document from the resolved feature branch in git."""
-    from ..context import get_feature_id, get_workspace_id, mark_context_gathered
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id, mark_context_gathered
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
+    # Capture identity on this (calling) thread — run_async may bridge onto a
+    # different thread, where thread-local context is unset.
+    caller_user_id = get_user_id()
+    caller_org_id = get_org_id()
     if not wid or not fid:
         return {
             "ok": False,
@@ -95,7 +100,7 @@ def handle_read_document(
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
 
     try:
-        workspace_context = get_workspace_context(wid)
+        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
         owner, repo = _resolve_management_repo(workspace_context)
     except Exception as exc:
         return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
@@ -107,7 +112,7 @@ def handle_read_document(
     slug = fid
     init_pr_url = None
     try:
-        detail = get_feature_detail(wid, fid)
+        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
         slug = detail.get("feature_name") or fid
         init_pr_url = detail.get("init_pr_url")
     except Exception as exc:

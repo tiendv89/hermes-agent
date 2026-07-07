@@ -7,7 +7,7 @@ import json
 import logging
 from typing import Any
 
-from .db import check_workflow_available
+from src.services.workflow_backend_client import check_workflow_available
 from .hooks import inject_context
 from .tools import (
     workspace,

@@ -24,7 +24,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -71,6 +71,8 @@ def _clean_modules():
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
     monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
@@ -135,7 +137,8 @@ class TestCheckAvailable:
         assert check_available() is False
 
     def test_false_when_feature_id_set(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-1", "ws-1", "some-feature")
@@ -144,7 +147,8 @@ class TestCheckAvailable:
         assert check_available() is False
 
     def test_true_for_non_feature_session_with_db(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-2", "ws-1", "")
@@ -153,7 +157,8 @@ class TestCheckAvailable:
         assert check_available() is True
 
     def test_false_for_blank_db_url(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "   ")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "   ")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-3", "ws-1", "")
@@ -169,7 +174,8 @@ class TestCheckAvailable:
 
 class TestHandleLookupFeature:
     def test_successful_lookup_returns_fields(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-1", "ws-1", "")
@@ -183,7 +189,7 @@ class TestHandleLookupFeature:
             "owner": None,
             "init_pr_url": None,
         }
-        with patch("plugins.db.get_feature_detail", return_value=fake_detail):
+        with patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)):
             from plugins.tools.lookup_feature import handle
 
             result = handle(feature_ref="agent-general-chat")
@@ -196,13 +202,14 @@ class TestHandleLookupFeature:
         assert result["feature_ref"] == "agent-general-chat"
 
     def test_unknown_feature_ref_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-2", "ws-1", "")
         with patch(
-            "plugins.db.get_feature_detail",
-            side_effect=ValueError("Feature 'no-such' not found in workspace 'ws-1'"),
+            "src.services.workflow_backend_client.get_feature_detail",
+            AsyncMock(side_effect=ValueError("Feature 'no-such' not found in workspace 'ws-1'")),
         ):
             from plugins.tools.lookup_feature import handle
 
@@ -212,12 +219,14 @@ class TestHandleLookupFeature:
         assert "not found" in result["error"]
 
     def test_db_error_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-3", "ws-1", "")
         with patch(
-            "plugins.db.get_feature_detail", side_effect=RuntimeError("connection refused")
+            "src.services.workflow_backend_client.get_feature_detail",
+            AsyncMock(side_effect=RuntimeError("connection refused")),
         ):
             from plugins.tools.lookup_feature import handle
 
@@ -227,7 +236,8 @@ class TestHandleLookupFeature:
         assert "connection refused" in result["error"]
 
     def test_empty_feature_ref_returns_error(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-4", "ws-1", "")
@@ -238,7 +248,8 @@ class TestHandleLookupFeature:
         assert "required" in result["error"]
 
     def test_invalid_feature_ref_characters_rejected(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-5", "ws-1", "")
@@ -271,7 +282,8 @@ class TestHandleLookupFeature:
 
     def test_workspace_id_always_from_context_not_arg(self, monkeypatch):
         """Cross-workspace leakage: workspace_id is always the session context, not caller-supplied."""
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-8", "correct-workspace", "")
@@ -285,16 +297,17 @@ class TestHandleLookupFeature:
             "owner": None,
             "init_pr_url": None,
         }
-        with patch("plugins.db.get_feature_detail", return_value=fake_detail) as mock_fn:
+        with patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)) as mock_fn:
             from plugins.tools.lookup_feature import handle
 
             handle(feature_ref="my-feat")
 
         # Must always use the workspace from context, not a caller-supplied one.
-        mock_fn.assert_called_once_with("correct-workspace", "my-feat")
+        assert mock_fn.call_args.args == ("correct-workspace", "my-feat")
 
     def test_synopsis_extracted_when_github_token_set(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
         import plugins.context as ctx
 
@@ -312,8 +325,8 @@ class TestHandleLookupFeature:
         fake_doc = {"content": "# Title\n\nThis is the feature synopsis.", "sha": "abc"}
 
         with (
-            patch("plugins.db.get_feature_detail", return_value=fake_detail),
-            patch("plugins.db.get_workspace_context", return_value={"management_repo": "mgmt", "repos": []}),
+            patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)),
+            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": []})),
             patch(
                 "plugins.tools.artifacts._resolve_management_repo",
                 return_value=("owner", "repo"),
@@ -328,7 +341,8 @@ class TestHandleLookupFeature:
         assert result["synopsis"] == "This is the feature synopsis."
 
     def test_synopsis_empty_when_no_github_token(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-10", "ws-1", "")
@@ -342,7 +356,7 @@ class TestHandleLookupFeature:
             "owner": None,
             "init_pr_url": None,
         }
-        with patch("plugins.db.get_feature_detail", return_value=fake_detail):
+        with patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)):
             from plugins.tools.lookup_feature import handle
 
             result = handle(feature_ref="my-feat")
@@ -351,7 +365,8 @@ class TestHandleLookupFeature:
         assert result["synopsis"] == ""
 
     def test_synopsis_failure_is_silent(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
         import plugins.context as ctx
 
@@ -367,10 +382,10 @@ class TestHandleLookupFeature:
             "init_pr_url": None,
         }
         with (
-            patch("plugins.db.get_feature_detail", return_value=fake_detail),
+            patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)),
             patch(
-                "plugins.db.get_workspace_context",
-                side_effect=RuntimeError("network error"),
+                "src.services.workflow_backend_client.get_workspace_context",
+                AsyncMock(side_effect=RuntimeError("network error")),
             ),
         ):
             from plugins.tools.lookup_feature import handle
@@ -389,7 +404,8 @@ class TestHandleLookupFeature:
 
 class TestInjectContextLookupHint:
     def test_lookup_hint_present_when_no_feature_id(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-hook-1", "ws-1", "")
@@ -409,7 +425,8 @@ class TestInjectContextLookupHint:
         assert "general" in context_text or "no feature scope" in context_text
 
     def test_lookup_hint_absent_when_feature_id_set(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
 
         ctx.set_context("sess-hook-2", "ws-1", "some-feature")
@@ -473,7 +490,8 @@ class TestToolsRegistration:
         The write tool check_fn (check_workflow_available) is also True here, so
         this test simply confirms the lookup tool's check_fn is present and callable.
         """
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         plugins = _load_plugins_init()
         import plugins.context as ctx
 
@@ -503,7 +521,8 @@ class TestToolsRegistration:
             assert callable(wt.get("check_fn"))
 
     def test_lookup_tool_check_fn_false_when_feature_scoped(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://localhost/test")
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         plugins = _load_plugins_init()
         import plugins.context as ctx
 
