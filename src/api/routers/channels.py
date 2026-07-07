@@ -35,7 +35,7 @@ from src.db import (
 )
 from src.realtime.bus import get_bus
 from src.services.user_service_client import UserServiceError, is_org_admin
-from src.services.workflow_db_client import get_workspace_organization_id
+from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
 
@@ -146,8 +146,7 @@ async def delete_channel_endpoint(
     """Hard-delete a channel. Admin-gated: caller must be an org admin.
 
     Fetches the channel to resolve its workspace's organization_id (looked up
-    live from workflow-backend's DB, cached briefly — see
-    src/services/workflow_db_client.py), then verifies the caller's role via
+    live from workflow-backend), then verifies the caller's role via
     user-service (§3.6). On success, the channel session row and all its
     messages (cascade FK) are deleted, and a ``channel.deleted`` event is
     published to the in-process bus.
@@ -161,7 +160,15 @@ async def delete_channel_endpoint(
         raise HTTPException(status_code=404, detail="Channel not found.")
 
     # Admin gate (§3.6 / T5): verify caller is an org admin/owner.
-    organization_id = await get_workspace_organization_id(channel.workspace_id, user_id=identity.user_id, org_id=identity.org_id)
+    try:
+        organization_id = await get_workspace_organization_id(
+            channel.workspace_id, user_id=identity.user_id, org_id=identity.org_id
+        ) or ""
+    except Exception:
+        logger.exception(
+            "workflow-backend org_id lookup failed for workspace %s", channel.workspace_id
+        )
+        organization_id = ""
     try:
         admin = await is_org_admin(organization_id, user_id)
     except UserServiceError as exc:

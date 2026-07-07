@@ -41,7 +41,7 @@ from src.db import (
 from src.db.store import append_message
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
-from src.services.workflow_db_client import get_workspace_organization_id
+from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
 
@@ -131,7 +131,13 @@ async def send_message(
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     ws_id = getattr(session, "workspace_id", "") or ""
-    org_id = await get_workspace_organization_id(ws_id, user_id=identity.user_id, org_id=identity.org_id)
+    try:
+        org_id = await get_workspace_organization_id(
+            ws_id, user_id=identity.user_id, org_id=identity.org_id
+        ) or ""
+    except Exception:
+        logger.exception("workflow-backend org_id lookup failed for workspace %s", ws_id)
+        org_id = ""
 
     # --- Mention parse + resolve ---
     handles = parse_mention_handles(body.content)

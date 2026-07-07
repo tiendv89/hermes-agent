@@ -23,7 +23,7 @@ from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.db import create_dm, list_dms
 from src.services.user_service_client import list_org_members, list_users_by_ids
-from src.services.workflow_db_client import get_workspace_organization_id
+from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,15 @@ async def create_dm_endpoint(
 
     # Validate that other_member_id is a real org member (when user-service is
     # available and the workspace's org could be resolved — permissive otherwise).
-    organization_id = await get_workspace_organization_id(body.workspace_id, user_id=identity.user_id, org_id=identity.org_id)
+    try:
+        organization_id = await get_workspace_organization_id(
+            body.workspace_id, user_id=identity.user_id, org_id=identity.org_id
+        ) or ""
+    except Exception:
+        logger.exception(
+            "workflow-backend org_id lookup failed for workspace %s", body.workspace_id
+        )
+        organization_id = ""
     if organization_id:
         members = await list_org_members(organization_id)
         if members and body.other_member_id not in members:
