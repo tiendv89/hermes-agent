@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Optional
 
 from src.api.agent_dispatch import schedule_agent_turn
 from src.api.deps import get_db
@@ -38,7 +39,7 @@ from src.db import (
     touch_session,
     update_session_model,
 )
-from src.db.store import append_message
+from src.db.store import append_message, get_thread_reply_summaries
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
 from src.services.workflow_backend_client import get_workspace_organization_id
@@ -52,6 +53,10 @@ class SendMessageRequest(BaseModel):
     content: str
     # Optional model override (same semantics as legacy /chat).
     model: str = ""
+    # Optional: ID of the message this is a direct reply to (G1 inline reply).
+    # When set, reply_to_message_id is stored on the persisted message.
+    # thread_root_id remains NULL — the reply stays in the main transcript.
+    reply_to_message_id: Optional[str] = None
 
 
 def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
@@ -97,6 +102,16 @@ async def get_thread_messages(
     session = await get_session(db, session_id)
     workspace_id = getattr(session, "workspace_id", "") or "" if session else ""
     await attach_authors(workspace_id, messages)
+
+    # Attach thread_summary to each top-level message (reply count + recent repliers).
+    if messages:
+        root_ids = [int(m["id"]) for m in messages]
+        summaries = await get_thread_reply_summaries(db, session_id, root_ids)
+        for m in messages:
+            mid = int(m["id"])
+            if mid in summaries:
+                m["thread_summary"] = summaries[mid]
+
     return JSONResponse({"messages": messages})
 
 
@@ -148,12 +163,20 @@ async def send_message(
     resolved_mentions = resolve_mentions(handles, await mention_candidates(org_id))
 
     # --- Persist the human message (with author_id) ---
+    reply_to_id: Optional[int] = None
+    if body.reply_to_message_id:
+        try:
+            reply_to_id = int(body.reply_to_message_id)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="reply_to_message_id must be a numeric id.")
+
     message_id = await append_message(
         db,
         session_id=session_id,
         role="user",
         content=body.content,
         author_id=user_id,
+        reply_to_message_id=reply_to_id,
     )
 
     # --- Persist resolved mentions ---
@@ -190,6 +213,8 @@ async def send_message(
                 "author": author,
                 "created_at": _time.time(),
                 "mentions": resolved_mentions,
+                "reply_to_message_id": str(reply_to_id) if reply_to_id is not None else None,
+                "thread_root_id": None,
             },
         },
     )
