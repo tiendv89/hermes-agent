@@ -11,6 +11,11 @@ This tool exposes the same git-backed read path that ``edit_document`` and the
 stage-transition endpoint already use (``document_repo.read_document`` against
 the resolved feature branch), so the agent can load the actual
 ``product-spec.md`` / ``technical-design.md`` / ``status.yaml`` before drafting.
+
+Owner guard: for go-owned features, document content lives in storage-service
+(not git). In that case, this tool proxies to storage-service's document-content
+endpoint using STORAGE_SERVICE_TOKEN instead of reading from GitHub. ts-owned
+and absent-owner features continue to use the git-backed path unchanged.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ import os
 from typing import Any, Dict
 
 from ..document_repo import read_document
+from ..storage_service_client import StorageServiceError, read_document_content
 from ..validation import _validate_id
 from .artifacts import _resolve_document_branch, _resolve_management_repo
 from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
@@ -71,7 +77,10 @@ def handle_read_document(
     feature_id: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
-    """Read a feature document from the resolved feature branch in git."""
+    """Read a feature document from the resolved feature branch in git.
+
+    For go-owned features, proxies to storage-service instead of git.
+    """
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id, mark_context_gathered
 
     wid = workspace_id or get_workspace_id()
@@ -95,36 +104,70 @@ def handle_read_document(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not github_token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
-
-    try:
-        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
-        owner, repo = _resolve_management_repo(workspace_context)
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
-
-    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-
-    # All git artifacts are slug-keyed (branch feature/{slug}, path
-    # docs/features/{slug}/...). Resolve the slug + the branch documents live on.
+    # Resolve owner to decide which backend to read from.
+    owner_value: str = "ts"
     slug = fid
     init_pr_url = None
     try:
         detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
         slug = detail.get("feature_name") or fid
         init_pr_url = detail.get("init_pr_url")
+        owner_value = detail.get("owner") or "ts"
     except Exception as exc:
         logger.debug("read_document: could not fetch feature_detail: %s", exc)
 
+    # Owner guard: go-owned features proxy to storage-service; ts/absent use git.
+    if owner_value == "go":
+        # status.yaml is not stored in storage-service; fall back to git for it.
+        if document == "status":
+            pass  # handled below by the git path
+        else:
+            try:
+                result = read_document_content(
+                    wid, fid, document,
+                    user_id=caller_user_id, org_id=caller_org_id,
+                )
+            except StorageServiceError as exc:
+                logger.warning("read_document (go): storage-service error: %s", exc)
+                return {"ok": False, "error": str(exc)}
+            except Exception as exc:
+                logger.warning("read_document (go): unexpected error: %s", exc)
+                return {"ok": False, "error": str(exc)}
+
+            content = result.get("content", "")
+            exists = bool(content)
+            if exists:
+                mark_context_gathered(fid)
+            return {
+                "ok": True,
+                "exists": exists,
+                "document": document,
+                "path": f"storage-service://{wid}/{fid}/{document}",
+                "branch": None,
+                "content": content,
+                "sha": result.get("version_id"),
+            }
+
+    # ts-owned (or absent owner, or status.yaml for go): read from git as before.
+    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not github_token:
+        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
+
+    try:
+        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
+        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
+    except Exception as exc:
+        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
+
+    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
+
     target_branch, _pr_url = _resolve_document_branch(
-        owner, repo, fid, slug, init_pr_url, base_branch, github_token
+        gh_owner, gh_repo, fid, slug, init_pr_url, base_branch, github_token
     )
     path = f"docs/features/{slug}/{filename}"
 
     try:
-        current = read_document(owner, repo, target_branch, path, github_token)
+        current = read_document(gh_owner, gh_repo, target_branch, path, github_token)
     except Exception as exc:
         logger.warning("read_document failed: %s", exc)
         return {"ok": False, "error": str(exc)}

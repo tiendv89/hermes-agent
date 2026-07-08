@@ -4,6 +4,11 @@ Full-rewrite handlers: read the current document SHA, replace the entire
 content, and commit to the feature branch via the document_repo pipeline.
 This replaces the old direct-to-main Contents PUT and fixes the
 "no direct push to main" rule violation.
+
+Owner guard: for go-owned features, document content lives in storage-service
+(not git). write_product_spec / write_technical_design proxy to storage-service
+using STORAGE_SERVICE_TOKEN. ts-owned and absent-owner features continue to
+commit to git unchanged.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from ..document_repo import (
     read_document,
     write_document,
 )
+from ..storage_service_client import StorageServiceError, write_document_content
 
 import yaml as _yaml
 
@@ -466,9 +472,6 @@ def _write_artifact(
                 "Generate the full markdown document and pass it as the content string."
             ),
         }
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not github_token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
 
     from ..context import get_org_id, get_user_id
     from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
@@ -478,11 +481,9 @@ def _write_artifact(
     caller_user_id = get_user_id()
     caller_org_id = get_org_id()
 
-    workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
-    gh_owner, gh_repo = _resolve_management_repo(workspace_context)
-    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-
-    # Look up init_pr_url, feature_name, title and owner from the DB.
+    # Look up init_pr_url, feature_name, title and owner from the DB first so we
+    # can branch on owner before touching GitHub. go-owned features do not need
+    # GITHUB_TOKEN or the workspace management-repo resolution.
     init_pr_url: Optional[str] = None
     feature_name: Optional[str] = None
     feature_title: str = ""
@@ -495,6 +496,42 @@ def _write_artifact(
         owner = feature_detail.get("owner") or "ts"
     except Exception as exc:
         logger.debug("_write_artifact: could not fetch feature_detail: %s", exc)
+
+    # Owner guard: go-owned features store document content in storage-service,
+    # not git. Proxy the write there and return early — no git commit.
+    if owner == "go":
+        # Derive the document kind from the stage/filename mapping.
+        kind_map = {"product_spec": "product_spec", "technical_design": "technical_design"}
+        kind = kind_map.get(stage, stage)
+        try:
+            result = write_document_content(
+                workspace_id, feature_id, kind, content,
+                user_id=caller_user_id, org_id=caller_org_id,
+            )
+        except StorageServiceError as exc:
+            logger.warning("_write_artifact (go): storage-service error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("_write_artifact (go): unexpected error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "path": f"storage-service://{workspace_id}/{feature_id}/{kind}",
+            "commit": None,
+            "commit_sha": None,
+            "pr_url": None,
+            "conflict": False,
+            "version_id": result.get("version_id"),
+        }
+
+    # ts path: GITHUB_TOKEN and workspace management-repo are required from here.
+    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not github_token:
+        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
+
+    workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
+    gh_owner, gh_repo = _resolve_management_repo(workspace_context)
+    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
 
     # All git artifacts are slug-keyed (branch + docs path). Fall back to the
     # passed id only when the slug couldn't be resolved from the DB.
