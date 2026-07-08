@@ -119,7 +119,11 @@ _pending_lock = threading.Lock()
 
 
 async def _backfill_assistant(
-    db_factory: Callable, session_id: str, content: str
+    db_factory: Callable,
+    session_id: str,
+    content: str,
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ) -> None:
     """Safety-net persist of the assistant reply.
 
@@ -149,7 +153,14 @@ async def _backfill_assistant(
             m.get("role") == "assistant" for m in existing[last_user_idx + 1 :]
         )
         if not has_assistant_this_turn:
-            await append_message(db, session_id, role="assistant", content=content)
+            await append_message(
+                db,
+                session_id,
+                role="assistant",
+                content=content,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
+            )
 
 
 async def _run_agent_turn_async(
@@ -160,6 +171,8 @@ async def _run_agent_turn_async(
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
     translator: HermesSSETranslator,
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
     **kwargs: Any,
 ) -> None:
     """Async Task wrapper for the blocking turn executor.
@@ -183,6 +196,8 @@ async def _run_agent_turn_async(
                 db_factory=db_factory,
                 loop=loop,
                 translator=translator,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
                 **kwargs,
             ),
         )
@@ -202,6 +217,8 @@ async def _run_agent_turn_async(
                         role="assistant",
                         content=partial,
                         finish_reason="stopped",
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
                     )
                     message_id = str(mid) if mid is not None else None
             except Exception:
@@ -296,6 +313,8 @@ def _run_agent_turn(
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
     cancel_event: Optional[threading.Event] = None,
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
 
@@ -353,9 +372,16 @@ def _run_agent_turn(
                             role="user",
                             content=message,
                             author_id=author_id,
+                            reply_to_message_id=reply_to_message_id,
+                            thread_root_id=thread_root_id,
                         )
                     await append_message(
-                        db, session_id, role="assistant", content=SCOPE_DECLINE
+                        db,
+                        session_id,
+                        role="assistant",
+                        content=SCOPE_DECLINE,
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
                     )
 
             try:
@@ -434,9 +460,16 @@ def _run_agent_turn(
                             role="user",
                             content=message,
                             author_id=author_id,
+                            reply_to_message_id=reply_to_message_id,
+                            thread_root_id=thread_root_id,
                         )
                     await append_message(
-                        db, session_id, role="system", content=block_msg
+                        db,
+                        session_id,
+                        role="system",
+                        content=block_msg,
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
                     )
 
             try:
@@ -462,6 +495,8 @@ def _run_agent_turn(
                 author_id=author_id,
                 skip_user_persist=skip_user_persist,
                 is_cancelled=_is_cancelled,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
             )
         except Exception:
             logger.exception(
@@ -556,7 +591,14 @@ def _run_agent_turn(
         if final_text:
             try:
                 fut = asyncio.run_coroutine_threadsafe(
-                    _backfill_assistant(db_factory, session_id, final_text), loop
+                    _backfill_assistant(
+                        db_factory,
+                        session_id,
+                        final_text,
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
+                    ),
+                    loop,
                 )
                 fut.result(timeout=15)
             except Exception:
@@ -639,6 +681,8 @@ async def _schedule_follow_up(
                 translator=follow_translator,
                 skip_user_persist=True,
                 cancel_event=cancel_event,
+                reply_to_message_id=pending.get("reply_to_message_id"),
+                thread_root_id=pending.get("thread_root_id"),
             )
         )
         with _active_runs_lock:
@@ -673,6 +717,8 @@ async def schedule_agent_turn(
     org_id: Optional[str] = None,
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ) -> bool:
     """Schedule an agent turn with coalescing.
 
@@ -695,6 +741,8 @@ async def schedule_agent_turn(
                     "org_id": org_id,
                     "model": model,
                     "db_factory": db_factory,
+                    "reply_to_message_id": reply_to_message_id,
+                    "thread_root_id": thread_root_id,
                 }
             logger.debug(
                 "agent_dispatch: coalesced pending turn for %s (turn already in flight)",
@@ -735,6 +783,8 @@ async def schedule_agent_turn(
             author_id=author_id,
             skip_user_persist=skip_user_persist,
             cancel_event=cancel_event,
+            reply_to_message_id=reply_to_message_id,
+            thread_root_id=thread_root_id,
         )
     )
     with _active_runs_lock:

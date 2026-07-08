@@ -301,13 +301,24 @@ async def _emit_message_notifications(
     message_id: int,
     author_id: str,
     content: str = "",
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ) -> None:
     """Look up the session kind and emit channel_message or dm notifications.
 
     Called after append_message commits; errors are caught so they never
     propagate to the caller. The actual HTTP call is scheduled as a
     background task (fire-and-forget via schedule_notifications_bulk).
+
+    `thread_root_id` set means this message was posted through the thread side
+    panel; `reply_to_message_id` set (with `thread_root_id` absent) means it's an
+    inline quoted reply in the main transcript. Either way it's a reply, not a
+    plain top-level post, so channel_message notifications for it get a "replied
+    to a thread"/"replied to a message" summary instead of the plain "<name>:
+    <text>" one — otherwise a reply looks identical to an ordinary channel
+    message in the activity feed.
     """
+    reply_kind = "thread" if thread_root_id is not None else ("message" if reply_to_message_id is not None else None)
     try:
         session = await db.get(Session, session_id)
         if session is None:
@@ -340,6 +351,7 @@ async def _emit_message_notifications(
                         actor_user_id=author_id,
                         actor_name=actor_name,
                         feature_id=getattr(session, "feature_id", "") or None,
+                        reply_kind=reply_kind,
                     )
                     for uid in recipient_ids
                 ]
@@ -399,6 +411,8 @@ async def append_message(
     platform_message_id: Optional[str] = None,
     observed: bool = False,
     author_id: Optional[str] = None,
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -419,6 +433,8 @@ async def append_message(
         active=True,
         created_at=time.time(),
         author_id=author_id,
+        reply_to_message_id=reply_to_message_id,
+        thread_root_id=thread_root_id,
     )
     db.add(msg)
 
@@ -441,7 +457,9 @@ async def append_message(
         # channel_message: broadcast to all channel members except the author.
         # dm: notify the other party in a DM session.
         if content:
-            await _emit_message_notifications(db, session_id, message_id, author_id, content)
+            await _emit_message_notifications(
+                db, session_id, message_id, author_id, content, reply_to_message_id=reply_to_message_id, thread_root_id=thread_root_id
+            )
 
     return message_id
 
@@ -498,7 +516,11 @@ async def get_session_messages(
     """
     result = await db.execute(
         select(Message)
-        .where(Message.session_id == session_id, Message.active == True)  # noqa: E712
+        .where(
+            Message.session_id == session_id,
+            Message.active == True,  # noqa: E712
+            Message.thread_root_id == None,  # noqa: E711
+        )
         .order_by(Message.created_at, Message.id)
     )
     messages = []
@@ -519,6 +541,8 @@ async def get_session_messages(
                 entry["tool_calls"] = json.loads(msg.tool_calls)
             except (ValueError, TypeError):
                 entry["tool_calls"] = msg.tool_calls
+        if msg.reply_to_message_id is not None:
+            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
         messages.append(entry)
     return messages
 
@@ -533,6 +557,14 @@ async def get_messages_since(
     Used by the SSE stream endpoint's ``?since=`` replay to catch up a
     reconnecting client without missing events that arrived while the bus queue
     was empty (§4.3 / T3).
+
+    Includes thread replies (``thread_root_id`` set) alongside top-level
+    messages — the frontend's ``message.created`` handler already routes a
+    reply into the open thread panel (or just bumps that thread's summary
+    count if the panel isn't open) and never lets it leak into the main
+    transcript, so replaying them here is safe. Without this, an SSE
+    reconnect mid-turn silently drops a thread reply from the live view even
+    though it's correctly persisted — recoverable only by reloading.
     """
     result = await db.execute(
         select(Message)
@@ -555,8 +587,114 @@ async def get_messages_since(
         }
         if msg.tool_name:
             entry["tool_name"] = msg.tool_name
+        if msg.reply_to_message_id is not None:
+            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        if msg.thread_root_id is not None:
+            entry["thread_root_id"] = str(msg.thread_root_id)
         messages.append(entry)
     return messages
+
+
+async def get_thread_replies(
+    db: AsyncSession,
+    session_id: str,
+    root_message_id: int,
+    since: Optional[int] = None,
+) -> list[Dict[str, Any]]:
+    """Return replies belonging to the message thread rooted at root_message_id.
+
+    Results are ordered oldest-first. When *since* is provided (a message id),
+    only replies with id > since are returned (SSE catch-up use-case).
+    """
+    conditions = [
+        Message.session_id == session_id,
+        Message.thread_root_id == root_message_id,
+        Message.active == True,  # noqa: E712
+    ]
+    if since is not None:
+        conditions.append(Message.id > since)
+
+    result = await db.execute(
+        select(Message)
+        .where(*conditions)
+        .order_by(Message.created_at, Message.id)
+    )
+    messages = []
+    for msg in result.scalars().all():
+        entry: Dict[str, Any] = {
+            "id": str(msg.id),
+            "session_id": session_id,
+            "role": msg.role,
+            "content": msg.content or "",
+            "author_id": msg.author_id,
+            "created_at": msg.created_at,
+            "thread_root_id": str(root_message_id),
+        }
+        if msg.reply_to_message_id is not None:
+            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        if msg.tool_name:
+            entry["tool_name"] = msg.tool_name
+        messages.append(entry)
+    return messages
+
+
+async def get_thread_reply_summaries(
+    db: AsyncSession,
+    session_id: str,
+    root_message_ids: List[int],
+) -> Dict[int, Dict[str, Any]]:
+    """Return reply count and recent repliers for each root message id.
+
+    Executes a single grouped query (no N+1). Returns a dict keyed by
+    root_message_id; absent keys mean zero replies. ``recent_repliers`` lists
+    the distinct author_id values of the three most recent repliers.
+    """
+    if not root_message_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            Message.thread_root_id,
+            func.count(Message.id).label("reply_count"),
+        )
+        .where(
+            Message.session_id == session_id,
+            Message.thread_root_id.in_(root_message_ids),
+            Message.active == True,  # noqa: E712
+        )
+        .group_by(Message.thread_root_id)
+    )
+    counts: Dict[int, int] = {row.thread_root_id: row.reply_count for row in result.all()}
+
+    # Fetch the most recent replies per thread root to extract recent repliers.
+    # One query with a window function alternative; we use a simpler approach:
+    # fetch all reply author_ids ordered by id desc and pick the first 3 distinct
+    # per root in Python (avoids complex lateral joins for portability).
+    replier_result = await db.execute(
+        select(Message.thread_root_id, Message.author_id)
+        .where(
+            Message.session_id == session_id,
+            Message.thread_root_id.in_(root_message_ids),
+            Message.active == True,  # noqa: E712
+            Message.author_id != None,  # noqa: E711
+        )
+        .order_by(Message.thread_root_id, Message.id.desc())
+    )
+
+    recent_repliers: Dict[int, list] = {}
+    for thread_root_id, author_id in replier_result.all():
+        seen = recent_repliers.setdefault(thread_root_id, [])
+        if author_id not in seen and len(seen) < 3:
+            seen.append(author_id)
+
+    summaries: Dict[int, Dict[str, Any]] = {}
+    for root_id in root_message_ids:
+        if root_id in counts:
+            summaries[root_id] = {
+                "reply_count": counts[root_id],
+                "recent_repliers": recent_repliers.get(root_id, []),
+            }
+    return summaries
 
 
 # ---------------------------------------------------------------------------

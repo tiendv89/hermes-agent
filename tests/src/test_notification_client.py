@@ -102,6 +102,52 @@ def test_build_channel_message_payload():
     assert "feature_id" not in p
 
 
+def test_build_channel_message_payload_thread_reply_summary():
+    from src.services.notification_client import build_channel_message_payload
+
+    p = build_channel_message_payload(
+        workspace_id="ws-1",
+        user_id="usr-3",
+        message_id=99,
+        session_id="chan-1",
+        content="anyone around?",
+        actor_name="Duke Tran",
+        reply_kind="thread",
+    )
+    assert p["category"] == "channel_message"
+    assert p["summary"] == "Duke Tran replied to a thread: anyone around?"
+
+
+def test_build_channel_message_payload_inline_reply_summary():
+    from src.services.notification_client import build_channel_message_payload
+
+    p = build_channel_message_payload(
+        workspace_id="ws-1",
+        user_id="usr-3",
+        message_id=99,
+        session_id="chan-1",
+        content="anyone around?",
+        actor_name="Duke Tran",
+        reply_kind="message",
+    )
+    assert p["category"] == "channel_message"
+    assert p["summary"] == "Duke Tran replied to a message: anyone around?"
+
+
+def test_build_channel_message_payload_defaults_to_plain_summary():
+    from src.services.notification_client import build_channel_message_payload
+
+    p = build_channel_message_payload(
+        workspace_id="ws-1",
+        user_id="usr-3",
+        message_id=99,
+        session_id="chan-1",
+        content="anyone around?",
+        actor_name="Duke Tran",
+    )
+    assert p["summary"] == "Duke Tran: anyone around?"
+
+
 def test_build_channel_message_payload_feature_scoped_links_into_feature_ide():
     from src.services.notification_client import build_channel_message_payload
 
@@ -152,6 +198,27 @@ def test_compose_summary_collapses_whitespace():
 
     summary = _compose_summary("Duke Tran", "hello\n\nworld   again")
     assert summary == "Duke Tran: hello world again"
+
+
+def test_compose_summary_thread_reply_adds_verb():
+    from src.services.notification_client import _compose_summary
+
+    summary = _compose_summary("Duke Tran", "hello", reply_kind="thread")
+    assert summary == "Duke Tran replied to a thread: hello"
+
+
+def test_compose_summary_inline_reply_adds_verb():
+    from src.services.notification_client import _compose_summary
+
+    summary = _compose_summary("Duke Tran", "hello", reply_kind="message")
+    assert summary == "Duke Tran replied to a message: hello"
+
+
+def test_compose_summary_thread_reply_falls_back_to_someone():
+    from src.services.notification_client import _compose_summary
+
+    summary = _compose_summary(None, "hello", reply_kind="thread")
+    assert summary == "Someone replied to a thread: hello"
 
 
 # ---------------------------------------------------------------------------

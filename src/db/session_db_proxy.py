@@ -34,6 +34,8 @@ def make_gateway_session_db(
     author_id: Optional[str] = None,
     skip_user_persist: bool = False,
     is_cancelled: Optional[Callable[[], bool]] = None,
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ):
     """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres.
 
@@ -44,6 +46,10 @@ def make_gateway_session_db(
         cancelled, so mirror writes are suppressed. The agent loop may not unwind
         instantly after interrupt(), and we must not persist messages produced
         after the user pressed Stop.
+    reply_to_message_id / thread_root_id: when the triggering user message was a
+        thread reply, every row mirrored for this turn (assistant text, tool
+        calls, etc.) is tagged with the same thread context so the agent's
+        response lands inside the thread instead of the main channel.
     """
     from hermes_state import SessionDB
     from src.db.store import (
@@ -132,6 +138,8 @@ def make_gateway_session_db(
                         platform_message_id=platform_message_id,
                         observed=observed,
                         author_id=_author,
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
                     )
 
             # Message persistence must be reliable — fire-and-forget would
