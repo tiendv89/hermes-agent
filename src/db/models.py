@@ -108,10 +108,17 @@ class Message(Base):
     # m3-agent-cta: CTA suggestions attached to an assistant turn
     cta_suggestions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
+    # chat-reply-and-thread: message-level reply/thread linkage (nullable;
+    # NULL on both = plain message with no reply or thread context).
+    reply_to_message_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
+    thread_root_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
+
     __table_args__ = (
         Index("idx_messages_session", "session_id", "created_at"),
         Index("idx_messages_session_active", "session_id", "active", "created_at"),
         Index("idx_messages_author", "session_id", "author_id"),
+        Index("idx_messages_thread_root", "session_id", "thread_root_id", "created_at"),
+        Index("idx_messages_reply_to", "reply_to_message_id"),
     )
 
 
