@@ -137,8 +137,22 @@ def _truncate(text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
     return collapsed[: max_len - 1].rstrip() + "…"
 
 
-def _compose_summary(actor_name: Optional[str], content: str) -> str:
-    """Build a preview: "<actor>: <content>".
+_REPLY_VERB: Dict[str, str] = {
+    "thread": "replied to a thread",
+    "message": "replied to a message",
+}
+
+
+def _compose_summary(actor_name: Optional[str], content: str, reply_kind: Optional[str] = None) -> str:
+    """Build a preview: "<actor>: <content>" for a plain post, or "<actor> replied to
+    a thread: <content>" / "<actor> replied to a message: <content>" for a reply —
+    otherwise a reply is indistinguishable from an ordinary channel post in the
+    activity feed, even though the two land in very different places in the UI.
+
+    `reply_kind` is "thread" for a message posted through the thread side panel
+    (thread_root_id set), "message" for an inline quoted reply in the main
+    transcript (reply_to_message_id set, no thread_root_id), or None for a plain,
+    non-reply message.
 
     <content> is passed through unmodified (aside from truncation) so the FE
     can run it through the same @mention-highlighting renderer used for
@@ -149,7 +163,9 @@ def _compose_summary(actor_name: Optional[str], content: str) -> str:
     and /feature pages already do.
     """
     who = actor_name or "Someone"
-    return f"{who}: {_truncate(content)}"
+    verb = _REPLY_VERB.get(reply_kind or "", "")
+    prefix = f"{who} {verb}" if verb else who
+    return f"{prefix}: {_truncate(content)}"
 
 
 def _channel_link(session_id: str, feature_id: Optional[str]) -> str:
@@ -198,8 +214,12 @@ def build_channel_message_payload(
     actor_user_id: Optional[str] = None,
     actor_name: Optional[str] = None,
     feature_id: Optional[str] = None,
+    reply_kind: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Construct a ``channel_message`` notification payload."""
+    """Construct a ``channel_message`` notification payload. `reply_kind`
+    ("thread" | "message" | None, see _compose_summary) only changes the summary
+    wording — the category stays ``channel_message`` since notification-service's
+    category allow-list has no dedicated reply value."""
     payload: Dict[str, Any] = {
         "workspace_id": workspace_id,
         "user_id": user_id,
@@ -207,7 +227,7 @@ def build_channel_message_payload(
         "source_type": "message",
         "source_id": str(message_id),
         "session_id": session_id,
-        "summary": _compose_summary(actor_name, content),
+        "summary": _compose_summary(actor_name, content, reply_kind=reply_kind),
         "link": _channel_link(session_id, feature_id),
     }
     if actor_user_id:

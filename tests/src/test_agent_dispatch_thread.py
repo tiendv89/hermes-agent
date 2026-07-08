@@ -214,8 +214,105 @@ async def test_schedule_agent_turn_without_thread_params_is_backward_compatible(
 
 
 # ---------------------------------------------------------------------------
-# _run_agent_turn_async — cancelled-partial propagates thread context
+# schedule_agent_turn — coalescing preserves thread context for the follow-up
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_schedule_agent_turn_coalesce_preserves_thread_context():
+    """When a turn is already in flight, the coalesced pending entry retains
+    reply_to_message_id / thread_root_id so the eventual follow-up turn (run
+    via _schedule_follow_up) still persists as a thread reply instead of
+    silently reverting to a top-level channel message."""
+    import src.api.agent_dispatch as agent_dispatch
+    from src.api.agent_dispatch import ActiveRun, schedule_agent_turn
+
+    loop = asyncio.get_running_loop()
+    db_factory, _ = _mock_db_factory()
+    session_id = "sess-coalesce"
+
+    agent_dispatch._active_runs[session_id] = ActiveRun(
+        run_id="existing-run", task=None, triggered_by="u-0"
+    )
+    try:
+        result = await schedule_agent_turn(
+            session_id=session_id,
+            message="@agent second message",
+            history=[],
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            user_id="u-1",
+            model="claude-3-5-sonnet-20241022",
+            provider=None,
+            api_key=None,
+            base_url=None,
+            db_factory=db_factory,
+            loop=loop,
+            reply_to_message_id=42,
+            thread_root_id=10,
+        )
+
+        assert result is False
+        pending = agent_dispatch._pending_agent_turns[session_id]
+        assert pending["reply_to_message_id"] == 42
+        assert pending["thread_root_id"] == 10
+    finally:
+        agent_dispatch._active_runs.pop(session_id, None)
+        agent_dispatch._pending_agent_turns.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_schedule_follow_up_passes_thread_context_to_run_agent_turn_async():
+    """_schedule_follow_up forwards the coalesced pending entry's thread context
+    into _run_agent_turn_async, so the follow-up turn's mirrored assistant rows
+    are still tagged as replies to the correct thread."""
+    from src.api.agent_dispatch import _schedule_follow_up
+
+    loop = asyncio.get_running_loop()
+    db_factory, db = _mock_db_factory()
+    session_id = "sess-follow-up"
+
+    pending = {
+        "message": "@agent second message",
+        "workspace_id": "ws-1",
+        "feature_id": "feat-1",
+        "user_id": "u-1",
+        "org_id": None,
+        "model": "claude-3-5-sonnet-20241022",
+        "db_factory": db_factory,
+        "reply_to_message_id": 42,
+        "thread_root_id": 10,
+    }
+
+    with (
+        patch("src.db.get_messages_as_conversation", AsyncMock(return_value=[])),
+        patch("src.db.touch_session", AsyncMock()),
+        patch(
+            "src.api.model_catalog.resolve_model",
+            AsyncMock(
+                return_value={
+                    "model": pending["model"],
+                    "provider": None,
+                    "api_key": None,
+                    "base_url": None,
+                }
+            ),
+        ),
+        patch("src.api.agent_dispatch.get_bus") as mock_bus,
+        patch("src.api.agent_dispatch.asyncio.ensure_future") as mock_ensure,
+    ):
+        mock_bus.return_value.publish = MagicMock()
+        mock_ensure.return_value = MagicMock()
+
+        await _schedule_follow_up(session_id, pending, loop)
+
+    coro = mock_ensure.call_args[0][0]
+    # A coroutine's frame locals hold its bound arguments as soon as it's created
+    # (before ever running) — inspect before close() clears cr_frame to None.
+    frame_locals = coro.cr_frame.f_locals if coro.cr_frame else {}
+    assert frame_locals.get("reply_to_message_id") == 42
+    assert frame_locals.get("thread_root_id") == 10
+    coro.close()
 
 
 @pytest.mark.asyncio

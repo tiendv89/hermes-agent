@@ -495,6 +495,8 @@ def _run_agent_turn(
                 author_id=author_id,
                 skip_user_persist=skip_user_persist,
                 is_cancelled=_is_cancelled,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
             )
         except Exception:
             logger.exception(
@@ -679,6 +681,8 @@ async def _schedule_follow_up(
                 translator=follow_translator,
                 skip_user_persist=True,
                 cancel_event=cancel_event,
+                reply_to_message_id=pending.get("reply_to_message_id"),
+                thread_root_id=pending.get("thread_root_id"),
             )
         )
         with _active_runs_lock:
@@ -737,6 +741,8 @@ async def schedule_agent_turn(
                     "org_id": org_id,
                     "model": model,
                     "db_factory": db_factory,
+                    "reply_to_message_id": reply_to_message_id,
+                    "thread_root_id": thread_root_id,
                 }
             logger.debug(
                 "agent_dispatch: coalesced pending turn for %s (turn already in flight)",

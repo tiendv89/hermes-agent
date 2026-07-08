@@ -208,6 +208,8 @@ async def post_thread_reply(
         loop=loop,
         author_id=user_id,
         skip_user_persist=True,
+        reply_to_message_id=inner_reply_to_id,
+        thread_root_id=root_id,
     )
 
     return JSONResponse(

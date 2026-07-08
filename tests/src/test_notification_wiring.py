@@ -244,6 +244,113 @@ async def test_emit_channel_message_notifies_all_except_author(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_emit_channel_message_thread_reply_summary(monkeypatch):
+    """A message with thread_root_id set (a thread reply) gets a "replied to a
+    thread" summary, distinguishing it from an ordinary channel post — otherwise
+    the two are indistinguishable in the activity feed even though they land in
+    very different places in the UI (side panel vs. main transcript)."""
+    _inject_stubs()
+    monkeypatch.setenv("NOTIFICATION_SERVICE_URL", "http://notif:8080")
+
+    from src.db.store import _emit_message_notifications
+
+    mock_session = MagicMock()
+    mock_session.kind = "channel"
+    mock_session.workspace_id = "ws-1"
+
+    members_result = MagicMock()
+    members_result.all.return_value = [("usr-2",)]
+
+    mock_db = MagicMock()
+    mock_db.get = AsyncMock(return_value=mock_session)
+    mock_db.execute = AsyncMock(return_value=members_result)
+
+    with patch("src.db.store.schedule_notifications_bulk") as mock_bulk:
+        await _emit_message_notifications(
+            mock_db,
+            session_id="chan-1",
+            message_id=55,
+            author_id="usr-1",
+            content="hello",
+            thread_root_id=42,
+        )
+
+    payloads = mock_bulk.call_args[0][0]
+    assert payloads[0]["category"] == "channel_message"
+    assert "replied to a thread" in payloads[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_emit_channel_message_inline_reply_summary(monkeypatch):
+    """A message with reply_to_message_id set but no thread_root_id (an inline
+    quoted reply in the main transcript) gets a "replied to a message" summary —
+    distinct wording from a thread-side-panel reply, since it's a different UI
+    surface even though both are "replies" conceptually."""
+    _inject_stubs()
+    monkeypatch.setenv("NOTIFICATION_SERVICE_URL", "http://notif:8080")
+
+    from src.db.store import _emit_message_notifications
+
+    mock_session = MagicMock()
+    mock_session.kind = "channel"
+    mock_session.workspace_id = "ws-1"
+
+    members_result = MagicMock()
+    members_result.all.return_value = [("usr-2",)]
+
+    mock_db = MagicMock()
+    mock_db.get = AsyncMock(return_value=mock_session)
+    mock_db.execute = AsyncMock(return_value=members_result)
+
+    with patch("src.db.store.schedule_notifications_bulk") as mock_bulk:
+        await _emit_message_notifications(
+            mock_db,
+            session_id="chan-1",
+            message_id=55,
+            author_id="usr-1",
+            content="hello",
+            reply_to_message_id=17,
+        )
+
+    payloads = mock_bulk.call_args[0][0]
+    assert payloads[0]["category"] == "channel_message"
+    assert "replied to a message" in payloads[0]["summary"]
+    assert "replied to a thread" not in payloads[0]["summary"]
+
+
+@pytest.mark.asyncio
+async def test_emit_channel_message_no_thread_root_id_plain_summary(monkeypatch):
+    """A top-level channel post (no thread_root_id) keeps the plain summary wording."""
+    _inject_stubs()
+    monkeypatch.setenv("NOTIFICATION_SERVICE_URL", "http://notif:8080")
+
+    from src.db.store import _emit_message_notifications
+
+    mock_session = MagicMock()
+    mock_session.kind = "channel"
+    mock_session.workspace_id = "ws-1"
+
+    members_result = MagicMock()
+    members_result.all.return_value = [("usr-2",)]
+
+    mock_db = MagicMock()
+    mock_db.get = AsyncMock(return_value=mock_session)
+    mock_db.execute = AsyncMock(return_value=members_result)
+
+    with patch("src.db.store.schedule_notifications_bulk") as mock_bulk:
+        await _emit_message_notifications(
+            mock_db,
+            session_id="chan-1",
+            message_id=55,
+            author_id="usr-1",
+            content="hello",
+        )
+
+    payloads = mock_bulk.call_args[0][0]
+    assert "replied to a thread" not in payloads[0]["summary"]
+
+
+@pytest.mark.asyncio
 async def test_emit_dm_notifies_other_party(monkeypatch):
     """DM session message → dm payload for the non-author member."""
     _inject_stubs()

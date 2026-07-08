@@ -301,13 +301,24 @@ async def _emit_message_notifications(
     message_id: int,
     author_id: str,
     content: str = "",
+    reply_to_message_id: Optional[int] = None,
+    thread_root_id: Optional[int] = None,
 ) -> None:
     """Look up the session kind and emit channel_message or dm notifications.
 
     Called after append_message commits; errors are caught so they never
     propagate to the caller. The actual HTTP call is scheduled as a
     background task (fire-and-forget via schedule_notifications_bulk).
+
+    `thread_root_id` set means this message was posted through the thread side
+    panel; `reply_to_message_id` set (with `thread_root_id` absent) means it's an
+    inline quoted reply in the main transcript. Either way it's a reply, not a
+    plain top-level post, so channel_message notifications for it get a "replied
+    to a thread"/"replied to a message" summary instead of the plain "<name>:
+    <text>" one — otherwise a reply looks identical to an ordinary channel
+    message in the activity feed.
     """
+    reply_kind = "thread" if thread_root_id is not None else ("message" if reply_to_message_id is not None else None)
     try:
         session = await db.get(Session, session_id)
         if session is None:
@@ -340,6 +351,7 @@ async def _emit_message_notifications(
                         actor_user_id=author_id,
                         actor_name=actor_name,
                         feature_id=getattr(session, "feature_id", "") or None,
+                        reply_kind=reply_kind,
                     )
                     for uid in recipient_ids
                 ]
@@ -445,7 +457,9 @@ async def append_message(
         # channel_message: broadcast to all channel members except the author.
         # dm: notify the other party in a DM session.
         if content:
-            await _emit_message_notifications(db, session_id, message_id, author_id, content)
+            await _emit_message_notifications(
+                db, session_id, message_id, author_id, content, reply_to_message_id=reply_to_message_id, thread_root_id=thread_root_id
+            )
 
     return message_id
 
@@ -527,6 +541,8 @@ async def get_session_messages(
                 entry["tool_calls"] = json.loads(msg.tool_calls)
             except (ValueError, TypeError):
                 entry["tool_calls"] = msg.tool_calls
+        if msg.reply_to_message_id is not None:
+            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
         messages.append(entry)
     return messages
 
@@ -541,6 +557,14 @@ async def get_messages_since(
     Used by the SSE stream endpoint's ``?since=`` replay to catch up a
     reconnecting client without missing events that arrived while the bus queue
     was empty (§4.3 / T3).
+
+    Includes thread replies (``thread_root_id`` set) alongside top-level
+    messages — the frontend's ``message.created`` handler already routes a
+    reply into the open thread panel (or just bumps that thread's summary
+    count if the panel isn't open) and never lets it leak into the main
+    transcript, so replaying them here is safe. Without this, an SSE
+    reconnect mid-turn silently drops a thread reply from the live view even
+    though it's correctly persisted — recoverable only by reloading.
     """
     result = await db.execute(
         select(Message)
@@ -548,7 +572,6 @@ async def get_messages_since(
             Message.session_id == session_id,
             Message.active == True,  # noqa: E712
             Message.id > since_message_id,
-            Message.thread_root_id == None,  # noqa: E711
         )
         .order_by(Message.created_at, Message.id)
     )
@@ -564,6 +587,10 @@ async def get_messages_since(
         }
         if msg.tool_name:
             entry["tool_name"] = msg.tool_name
+        if msg.reply_to_message_id is not None:
+            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        if msg.thread_root_id is not None:
+            entry["thread_root_id"] = str(msg.thread_root_id)
         messages.append(entry)
     return messages
 

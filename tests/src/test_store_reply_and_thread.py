@@ -5,7 +5,9 @@ Covers:
   and passes them to the Message constructor (both set, only one set, neither set).
 - Existing callers (no new kwargs) remain source-compatible.
 - get_session_messages excludes messages where thread_root_id IS NOT NULL.
-- get_messages_since excludes messages where thread_root_id IS NOT NULL.
+- get_messages_since includes thread replies (tagged with thread_root_id /
+  reply_to_message_id) alongside top-level messages, so SSE reconnect replay
+  doesn't drop them.
 - get_thread_replies returns only replies for the given root, oldest-first,
   and respects the optional `since` cursor.
 - get_thread_reply_summaries returns a single-query result with reply_count
@@ -259,24 +261,66 @@ async def test_get_session_messages_returns_top_level_only():
     assert len(result) == 1
 
 
+@pytest.mark.asyncio
+async def test_get_session_messages_includes_reply_to_message_id():
+    """A top-level inline reply (G1: reply_to_message_id set, thread_root_id absent)
+    must carry reply_to_message_id in the returned entry — otherwise the main channel
+    transcript loses its quoted-parent preview on every page reload, even though the
+    field is correctly persisted and shows up fine while the SSE connection is live."""
+    from src.db.store import get_session_messages
+
+    reply = _msg(id=5, thread_root_id=None, reply_to_message_id=2, content="inline reply")
+    db = _mock_db()
+    db.execute.return_value = _scalars_result([reply])
+
+    result = await get_session_messages(db, "sess-1")
+
+    assert len(result) == 1
+    assert result[0]["reply_to_message_id"] == "2"
+
+
+@pytest.mark.asyncio
+async def test_get_session_messages_omits_reply_to_message_id_when_absent():
+    """A plain top-level message (no reply) must not carry a reply_to_message_id key at all."""
+    from src.db.store import get_session_messages
+
+    plain = _msg(id=6, thread_root_id=None, reply_to_message_id=None, content="plain")
+    db = _mock_db()
+    db.execute.return_value = _scalars_result([plain])
+
+    result = await get_session_messages(db, "sess-1")
+
+    assert "reply_to_message_id" not in result[0]
+
+
 # ---------------------------------------------------------------------------
-# get_messages_since — thread_root_id IS NULL filter
+# get_messages_since — includes thread replies alongside top-level messages
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_get_messages_since_excludes_thread_replies():
-    """get_messages_since only returns messages with thread_root_id IS NULL."""
+async def test_get_messages_since_includes_thread_replies():
+    """get_messages_since returns both top-level messages and thread replies,
+    tagging replies with thread_root_id/reply_to_message_id so the SSE reconnect
+    replay can route them into an open thread panel instead of silently dropping
+    them (a reply is otherwise still correctly persisted, just invisible live)."""
     from src.db.store import get_messages_since
 
     top = _msg(id=20, thread_root_id=None, content="new top-level")
+    reply = _msg(id=21, thread_root_id=10, reply_to_message_id=10, content="a reply")
     db = _mock_db()
-    db.execute.return_value = _scalars_result([top])
+    db.execute.return_value = _scalars_result([top, reply])
 
     result = await get_messages_since(db, "sess-1", since_message_id=15)
 
-    assert len(result) == 1
-    assert result[0]["id"] == "20"
+    assert len(result) == 2
+    top_entry, reply_entry = result
+    assert top_entry["id"] == "20"
+    assert "thread_root_id" not in top_entry
+    assert "reply_to_message_id" not in top_entry
+    assert reply_entry["id"] == "21"
+    assert reply_entry["thread_root_id"] == "10"
+    assert reply_entry["reply_to_message_id"] == "10"
     db.execute.assert_called_once()
 
 
