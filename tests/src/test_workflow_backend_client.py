@@ -998,3 +998,57 @@ class TestActivateReadyTasks:
         ):
             with pytest.raises(ValueError):
                 await mod.activate_ready_tasks("ws-1", "feat-1", user_id="u", org_id="o")
+
+    @pytest.mark.asyncio
+    async def test_sends_actor_in_request_body(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        captured = {}
+
+        def fake_request(method, url, *, headers, json, timeout):
+            captured["method"] = method
+            captured["json"] = json
+            return _fake_response(200, {"success": True, "data": {"activated": []}})
+
+        fake_session = MagicMock()
+        fake_session.request = fake_request
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=fake_session,
+        ):
+            await mod.activate_ready_tasks("ws-1", "feat-1", user_id="user-uuid-123", org_id="o")
+
+        assert captured["method"] == "POST"
+        assert captured["json"] == {"actor": "user-uuid-123"}
+
+    @pytest.mark.asyncio
+    async def test_actor_falls_back_to_context_get_user_id(self, monkeypatch):
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        captured = {}
+
+        def fake_request(method, url, *, headers, json, timeout):
+            captured["json"] = json
+            return _fake_response(200, {"success": True, "data": {"activated": []}})
+
+        fake_session = MagicMock()
+        fake_session.request = fake_request
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=fake_session,
+        ), patch("plugins.context.get_user_id", return_value="ctx-user-uuid"), patch(
+            "plugins.context.get_org_id", return_value="o"
+        ):
+            await mod.activate_ready_tasks("ws-1", "feat-1")
+
+        assert captured["json"] == {"actor": "ctx-user-uuid"}

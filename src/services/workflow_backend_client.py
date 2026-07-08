@@ -555,11 +555,17 @@ async def activate_ready_tasks(
     tasks-stage approval so dependency-free (or now-unblocked) tasks become
     claimable immediately.
     """
+    actor = user_id
+    if actor is None:
+        from plugins.context import get_user_id
+
+        actor = get_user_id()
     data = await _call(
         "POST",
         f"/api/workspaces/{workspace_id}/features/{feature_id}/tasks/activate-ready",
         user_id=user_id,
         org_id=org_id,
+        json_body={"actor": actor},
         not_found_message=f"Feature {feature_id!r} not found in workspace {workspace_id!r}",
     )
     return data.get("activated") or []
