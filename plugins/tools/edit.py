@@ -36,6 +36,15 @@ _DOCUMENT_FILES: Dict[str, str] = {
     "technical_design": "technical-design.md",
 }
 
+# storage-service document paths for go-owned features — distinct from
+# _DOCUMENT_FILES (git filenames, hyphenated) since storage-service documents
+# are identified by path directly (see storage_service_client.py's contract),
+# matching workflow-backend's provisioning convention (feature_create.go).
+_STORAGE_DOC_PATHS: Dict[str, str] = {
+    "product_spec": "product_spec.md",
+    "technical_design": "tech_design.md",
+}
+
 EDIT_DOCUMENT_SCHEMA: Dict[str, Any] = {
     "description": (
         "Make targeted find-and-replace edits to a feature document "
@@ -151,15 +160,16 @@ def handle_edit_document(
 
     # Owner guard: go-owned features proxy read + apply + write to storage-service.
     if owner_value == "go":
+        storage_path = _STORAGE_DOC_PATHS.get(document, filename)
         try:
             read_result = read_document_content(
-                wid, fid, document,
+                wid, fid, storage_path,
                 user_id=caller_user_id, org_id=caller_org_id,
             )
             current_content = read_result.get("content", "")
             new_content, warnings = _apply_edits(current_content, edits)
             write_result = write_document_content(
-                wid, fid, document, new_content,
+                wid, fid, storage_path, new_content,
                 user_id=caller_user_id, org_id=caller_org_id,
             )
         except StorageServiceError as exc:

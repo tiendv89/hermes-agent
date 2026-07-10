@@ -500,12 +500,13 @@ def _write_artifact(
     # Owner guard: go-owned features store document content in storage-service,
     # not git. Proxy the write there and return early — no git commit.
     if owner == "go":
-        # Derive the document kind from the stage/filename mapping.
-        kind_map = {"product_spec": "product_spec", "technical_design": "technical_design"}
-        kind = kind_map.get(stage, stage)
+        # Derive the storage-service document path from the stage, matching
+        # workflow-backend's provisioning convention (feature_create.go).
+        storage_path_map = {"product_spec": "product_spec.md", "technical_design": "tech_design.md"}
+        storage_path = storage_path_map.get(stage, stage)
         try:
             result = write_document_content(
-                workspace_id, feature_id, kind, content,
+                workspace_id, feature_id, storage_path, content,
                 user_id=caller_user_id, org_id=caller_org_id,
             )
         except StorageServiceError as exc:
@@ -516,7 +517,7 @@ def _write_artifact(
             return {"ok": False, "error": str(exc)}
         return {
             "ok": True,
-            "path": f"storage-service://{workspace_id}/{feature_id}/{kind}",
+            "path": f"storage-service://{workspace_id}/{feature_id}/{storage_path}",
             "commit": None,
             "commit_sha": None,
             "pr_url": None,

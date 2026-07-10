@@ -238,7 +238,7 @@ class TestReadDocumentGoOwner:
         assert result["exists"] is True
         assert result["sha"] == _VERSION_ID
         fake_ssc.read_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "product_spec",
+            _WORKSPACE_ID, _FEATURE_ID, "product_spec.md",
             user_id="user-1", org_id="org-1",
         )
 
@@ -263,7 +263,7 @@ class TestReadDocumentGoOwner:
         assert result["ok"] is True
         assert result["content"] == _TD_CONTENT
         fake_ssc.read_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "technical_design",
+            _WORKSPACE_ID, _FEATURE_ID, "tech_design.md",
             user_id="user-1", org_id="org-1",
         )
 
@@ -458,7 +458,7 @@ class TestWriteProductSpecGoOwner:
         assert result.get("version_id") == _VERSION_ID
         assert commit_called == [], "no git commit must happen for go-owned write_product_spec"
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "product_spec", _PRODUCT_SPEC_CONTENT,
+            _WORKSPACE_ID, _FEATURE_ID, "product_spec.md", _PRODUCT_SPEC_CONTENT,
             user_id="user-1", org_id="org-1",
         )
 
@@ -613,7 +613,7 @@ class TestWriteTechnicalDesignGoOwner:
         assert result.get("version_id") == _VERSION_ID
         assert commit_called == [], "no git commit for go-owned write_technical_design"
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "technical_design", _TD_CONTENT,
+            _WORKSPACE_ID, _FEATURE_ID, "tech_design.md", _TD_CONTENT,
             user_id="user-1", org_id="org-1",
         )
 
@@ -708,7 +708,7 @@ class TestEditDocumentGoOwner:
         assert result.get("version_id") == _VERSION_ID
         assert commit_called == [], "no git commit for go-owned edit_document"
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "product_spec", edited,
+            _WORKSPACE_ID, _FEATURE_ID, "product_spec.md", edited,
             user_id="user-1", org_id="org-1",
         )
 
@@ -889,12 +889,12 @@ class TestStorageServiceClient:
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
         requests_mock.get(
-            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/product_spec/content",
+            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/content?path=product_spec.md",
             json={"content": "# Hello\n", "version_id": "v1"},
         )
 
         from plugins.storage_service_client import read_document_content
-        result = read_document_content("ws1", "feat1", "product_spec")
+        result = read_document_content("ws1", "feat1", "product_spec.md")
         assert result["content"] == "# Hello\n"
         assert result["version_id"] == "v1"
 
@@ -903,12 +903,12 @@ class TestStorageServiceClient:
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
         requests_mock.get(
-            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/product_spec/content",
+            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/content?path=product_spec.md",
             status_code=404,
         )
 
         from plugins.storage_service_client import read_document_content
-        result = read_document_content("ws1", "feat1", "product_spec")
+        result = read_document_content("ws1", "feat1", "product_spec.md")
         assert result["content"] == ""
         assert result["version_id"] is None
 
@@ -917,12 +917,12 @@ class TestStorageServiceClient:
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
         requests_mock.put(
-            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/product_spec/content",
+            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/content?path=product_spec.md",
             json={"ok": True, "version_id": "v2"},
         )
 
         from plugins.storage_service_client import write_document_content
-        result = write_document_content("ws1", "feat1", "product_spec", "# New content\n")
+        result = write_document_content("ws1", "feat1", "product_spec.md", "# New content\n")
         assert result["ok"] is True
         assert result["version_id"] == "v2"
 
@@ -932,7 +932,7 @@ class TestStorageServiceClient:
 
         from plugins.storage_service_client import StorageServiceError, read_document_content
         with pytest.raises(StorageServiceError) as exc_info:
-            read_document_content("ws1", "feat1", "product_spec")
+            read_document_content("ws1", "feat1", "product_spec.md")
         assert exc_info.value.reason_code == "missing_config"
 
     def test_server_error_raises_storage_service_error(self, monkeypatch, requests_mock):
@@ -940,14 +940,14 @@ class TestStorageServiceClient:
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
         requests_mock.get(
-            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/product_spec/content",
+            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/content?path=product_spec.md",
             status_code=500,
             json={"error": "internal_server_error"},
         )
 
         from plugins.storage_service_client import StorageServiceError, read_document_content
         with pytest.raises(StorageServiceError) as exc_info:
-            read_document_content("ws1", "feat1", "product_spec")
+            read_document_content("ws1", "feat1", "product_spec.md")
         assert exc_info.value.status == 500
 
     def test_write_sends_content_in_body(self, monkeypatch, requests_mock):
@@ -955,12 +955,12 @@ class TestStorageServiceClient:
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
         requests_mock.put(
-            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/technical_design/content",
+            f"{_STORAGE_URL}/api/workspaces/ws1/features/feat1/documents/content?path=tech_design.md",
             json={"ok": True, "version_id": "v3"},
         )
 
         from plugins.storage_service_client import write_document_content
-        result = write_document_content("ws1", "feat1", "technical_design", "# Tech Design\n")
+        result = write_document_content("ws1", "feat1", "tech_design.md", "# Tech Design\n")
         assert result["ok"] is True
 
         import json

@@ -38,6 +38,15 @@ _DOCUMENT_FILES: Dict[str, str] = {
     "status": "status.yaml",
 }
 
+# storage-service document paths for go-owned features — distinct from
+# _DOCUMENT_FILES (git filenames, hyphenated) since storage-service documents
+# are identified by path directly (see storage_service_client.py's contract),
+# matching workflow-backend's provisioning convention (feature_create.go).
+_STORAGE_DOC_PATHS: Dict[str, str] = {
+    "product_spec": "product_spec.md",
+    "technical_design": "tech_design.md",
+}
+
 READ_DOCUMENT_SCHEMA: Dict[str, Any] = {
     "description": (
         "Read a feature document (product_spec, technical_design, or status) straight from the "
@@ -122,9 +131,10 @@ def handle_read_document(
         if document == "status":
             pass  # handled below by the git path
         else:
+            storage_path = _STORAGE_DOC_PATHS.get(document, document)
             try:
                 result = read_document_content(
-                    wid, fid, document,
+                    wid, fid, storage_path,
                     user_id=caller_user_id, org_id=caller_org_id,
                 )
             except StorageServiceError as exc:
@@ -142,7 +152,7 @@ def handle_read_document(
                 "ok": True,
                 "exists": exists,
                 "document": document,
-                "path": f"storage-service://{wid}/{fid}/{document}",
+                "path": f"storage-service://{wid}/{fid}/{storage_path}",
                 "branch": None,
                 "content": content,
                 "sha": result.get("version_id"),

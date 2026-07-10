@@ -9,9 +9,11 @@ Configuration (env vars):
   STORAGE_SERVICE_TOKEN  Bearer token accepted by storage-service's RequireBFFIdentity.
                          If unset, same error.
 
-Endpoint contract (storage-service, T6):
-  GET  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/features/{fid}/documents/{kind}/content
-  PUT  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/features/{fid}/documents/{kind}/content
+Endpoint contract (storage-service):
+  GET  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/features/{fid}/documents/content?path={path}
+  PUT  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/features/{fid}/documents/content?path={path}
+  path is the document's relative filename within the feature folder (e.g.
+  "product_spec.md", "tech_design.md", "tasks.md").
   Headers:
     Authorization: Bearer <STORAGE_SERVICE_TOKEN>
     X-User-Id: <caller user_id>
@@ -28,15 +30,13 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict
+from urllib.parse import quote
 
 import requests
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30
-
-# Valid document kinds for storage-service documents.
-DOCUMENT_KINDS = frozenset({"product_spec", "technical_design", "tasks", "handoff"})
 
 
 class StorageServiceError(Exception):
@@ -77,14 +77,14 @@ def _build_headers(token: str, user_id: str, org_id: str) -> Dict[str, str]:
     }
 
 
-def _content_url(base_url: str, workspace_id: str, feature_id: str, kind: str) -> str:
-    return f"{base_url}/api/workspaces/{workspace_id}/features/{feature_id}/documents/{kind}/content"
+def _content_url(base_url: str, workspace_id: str, feature_id: str, path: str) -> str:
+    return f"{base_url}/api/workspaces/{workspace_id}/features/{feature_id}/documents/content?path={quote(path, safe='')}"
 
 
 def read_document_content(
     workspace_id: str,
     feature_id: str,
-    kind: str,
+    path: str,
     *,
     user_id: str = "",
     org_id: str = "",
@@ -98,7 +98,7 @@ def read_document_content(
     Raises StorageServiceError on config errors or non-2xx/404 responses.
     """
     base_url, token = _resolve_config()
-    url = _content_url(base_url, workspace_id, feature_id, kind)
+    url = _content_url(base_url, workspace_id, feature_id, path)
     headers = _build_headers(token, user_id, org_id)
     try:
         resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
@@ -131,7 +131,7 @@ def read_document_content(
 def write_document_content(
     workspace_id: str,
     feature_id: str,
-    kind: str,
+    path: str,
     content: str,
     *,
     user_id: str = "",
@@ -146,7 +146,7 @@ def write_document_content(
     Raises StorageServiceError on config errors or non-2xx responses.
     """
     base_url, token = _resolve_config()
-    url = _content_url(base_url, workspace_id, feature_id, kind)
+    url = _content_url(base_url, workspace_id, feature_id, path)
     headers = _build_headers(token, user_id, org_id)
     payload = {"content": content}
     try:
