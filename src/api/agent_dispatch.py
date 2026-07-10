@@ -16,7 +16,7 @@ import os
 import threading
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import re as _re
 
@@ -315,6 +315,7 @@ def _run_agent_turn(
     cancel_event: Optional[threading.Event] = None,
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
+    image_ids: Optional[List[str]] = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
 
@@ -329,6 +330,7 @@ def _run_agent_turn(
         return cancel_event is not None and cancel_event.is_set()
 
     workflow_context = None
+    downloaded_image_paths: List[str] = []
     try:
         from plugins import context as workflow_context
 
@@ -351,8 +353,13 @@ def _run_agent_turn(
         # Off-topic risk is highest at entry; once a workspace conversation is
         # established the classifier almost always returns IN, so running it on
         # every follow-up just adds a serialized ~1s LLM round-trip to TTFT.
+        # An attached image is unambiguous workspace evidence (a screenshot, a
+        # diagram, an error) even when the accompanying text is generic (e.g.
+        # the composer's "What's in the attached image?" fallback for an
+        # image-only send) — skip the classifier rather than let a vague-looking
+        # caption get a real request declined.
         is_first_turn = len(history or []) <= 1
-        if is_first_turn and is_out_of_scope(
+        if is_first_turn and not image_ids and is_out_of_scope(
             message, provider=provider, model=model, api_key=api_key, base_url=base_url
         ):
             logger.info(
@@ -519,6 +526,52 @@ def _run_agent_turn(
             else {"enabled": True, "effort": _reasoning_effort}
         )
 
+        # Chat-attached images: downloaded here (trusted backend code) rather
+        # than handed to the agent as a URL, since storage-service is
+        # internal-only and vision_analyze_tool's SSRF guard would reject a
+        # direct fetch. The agent gets a local file path instead.
+        if image_ids:
+            import mimetypes
+
+            import hermes_constants
+            from plugins import storage_service_client
+
+            image_cache_dir = hermes_constants.get_hermes_home() / "cache" / "chat_images"
+            try:
+                image_cache_dir.mkdir(parents=True, exist_ok=True)
+            except OSError:
+                logger.exception(
+                    "agent_dispatch: failed to create chat image cache dir for session %s",
+                    session_id,
+                )
+                image_cache_dir = None
+
+            if image_cache_dir is not None:
+                for image_id in image_ids:
+                    try:
+                        image = storage_service_client.download_image(
+                            workspace_id, image_id, user_id=user_id or "", org_id=org_id or ""
+                        )
+                        ext = mimetypes.guess_extension(image["content_type"]) or ""
+                        image_path = image_cache_dir / f"{run_id}-{image_id}{ext}"
+                        image_path.write_bytes(image["data"])
+                        downloaded_image_paths.append(str(image_path))
+                    except Exception:
+                        logger.exception(
+                            "agent_dispatch: failed to download chat image %s for session %s",
+                            image_id,
+                            session_id,
+                        )
+
+        llm_message = message
+        if downloaded_image_paths:
+            paths_list = "\n".join(f"- {p}" for p in downloaded_image_paths)
+            llm_message = (
+                f"{message}\n\n"
+                "[Attached image(s) saved locally — call vision_analyze on these "
+                f"file paths if relevant to the request:]\n{paths_list}"
+            )
+
         from run_agent import AIAgent
 
         agent = AIAgent(
@@ -526,7 +579,7 @@ def _run_agent_turn(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
-            enabled_toolsets=["workflow"],
+            enabled_toolsets=["workflow", "vision"] if downloaded_image_paths else ["workflow"],
             max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
             quiet_mode=True,
             platform="workflow_gateway",
@@ -553,7 +606,14 @@ def _run_agent_turn(
         if _is_cancelled():
             agent.interrupt()
 
-        agent.run_conversation(message, conversation_history=history)
+        if downloaded_image_paths:
+            agent.run_conversation(
+                llm_message,
+                conversation_history=history,
+                persist_user_message=message,
+            )
+        else:
+            agent.run_conversation(llm_message, conversation_history=history)
 
         if _is_cancelled():
             logger.info(
@@ -613,6 +673,11 @@ def _run_agent_turn(
         translator.done()
         if workflow_context is not None:
             workflow_context.clear_context(session_id)
+        for _image_path in downloaded_image_paths:
+            try:
+                os.remove(_image_path)
+            except OSError:
+                pass
         # Guard with run_id: if this turn was cancelled, _run_agent_turn_async
         # already freed the slot and a new turn may have registered. Only pop if
         # the current dict entry still belongs to this run.
@@ -683,6 +748,7 @@ async def _schedule_follow_up(
                 cancel_event=cancel_event,
                 reply_to_message_id=pending.get("reply_to_message_id"),
                 thread_root_id=pending.get("thread_root_id"),
+                image_ids=pending.get("image_ids"),
             )
         )
         with _active_runs_lock:
@@ -719,6 +785,7 @@ async def schedule_agent_turn(
     skip_user_persist: bool = False,
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
+    image_ids: Optional[List[str]] = None,
 ) -> bool:
     """Schedule an agent turn with coalescing.
 
@@ -743,6 +810,7 @@ async def schedule_agent_turn(
                     "db_factory": db_factory,
                     "reply_to_message_id": reply_to_message_id,
                     "thread_root_id": thread_root_id,
+                    "image_ids": image_ids,
                 }
             logger.debug(
                 "agent_dispatch: coalesced pending turn for %s (turn already in flight)",
@@ -785,6 +853,7 @@ async def schedule_agent_turn(
             cancel_event=cancel_event,
             reply_to_message_id=reply_to_message_id,
             thread_root_id=thread_root_id,
+            image_ids=image_ids,
         )
     )
     with _active_runs_lock:

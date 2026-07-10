@@ -1,7 +1,8 @@
-"""HTTP client for storage-service document read/write (service-to-service).
+"""HTTP client for storage-service document/image read (service-to-service).
 
 hermes-agent calls storage-service directly (no BFF) to read/write documents
-for go-owned features. ts-owned features continue to use document_repo (git).
+for go-owned features, and to download chat-attached images. ts-owned
+features continue to use document_repo (git).
 
 Configuration (env vars):
   STORAGE_SERVICE_URL    Base URL of storage-service, e.g. http://storage-service:8090.
@@ -23,6 +24,14 @@ Endpoint contract (storage-service):
   PUT body:     {"content": "..."}
   PUT response: {"ok": true, "version_id": "..."}
   → 4xx         {"error": "<reason_code>", "message": "..."}
+
+  GET  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/images/{image_id}
+  Same headers as above (no Content-Type). Returns the raw image bytes with
+  its real Content-Type — see download_image. Deliberately NOT handed to
+  vision_analyze_tool as a URL: storage-service is internal-only, so the
+  tool's SSRF guard (tools/url_safety.py) would reject fetching it directly.
+  Callers should download the bytes here and pass a local file path instead
+  (see agent_dispatch.py's chat-image handling).
 """
 
 from __future__ import annotations
@@ -79,6 +88,55 @@ def _build_headers(token: str, user_id: str, org_id: str) -> Dict[str, str]:
 
 def _content_url(base_url: str, workspace_id: str, feature_id: str, path: str) -> str:
     return f"{base_url}/api/workspaces/{workspace_id}/features/{feature_id}/documents/content?path={quote(path, safe='')}"
+
+
+def _image_url(base_url: str, workspace_id: str, image_id: str) -> str:
+    return f"{base_url}/api/workspaces/{workspace_id}/images/{quote(image_id, safe='')}"
+
+
+def download_image(
+    workspace_id: str,
+    image_id: str,
+    *,
+    user_id: str = "",
+    org_id: str = "",
+) -> Dict[str, Any]:
+    """Download a previously-uploaded image's raw bytes from storage-service.
+
+    Used to fetch a chat-attached image server-side (trusted first-party
+    code) so it can be handed to vision_analyze_tool as a local file path,
+    rather than a URL — storage-service is an internal-only service, so a
+    URL pointing at it would be rejected by vision_analyze_tool's SSRF guard
+    (tools/url_safety.py) if the agent tried to fetch it directly as a tool
+    call.
+
+    Returns a dict with keys:
+      - ``data`` (bytes): the raw image bytes
+      - ``content_type`` (str): e.g. "image/png"
+
+    Raises StorageServiceError on config errors, 404s, or other non-2xx responses.
+    """
+    base_url, token = _resolve_config()
+    url = _image_url(base_url, workspace_id, image_id)
+    headers = _build_headers(token, user_id, org_id)
+    del headers["Content-Type"]  # GET; avoid implying a JSON body
+    try:
+        resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+
+    if not resp.ok:
+        reason = "not_found" if resp.status_code == 404 else ""
+        raise StorageServiceError(
+            f"storage-service GET {url} returned {resp.status_code}",
+            reason_code=reason,
+            status=resp.status_code,
+        )
+
+    return {
+        "data": resp.content,
+        "content_type": resp.headers.get("Content-Type", "application/octet-stream"),
+    }
 
 
 def read_document_content(

@@ -31,7 +31,7 @@ class _MockAIAgent:
     def __init__(self, stream_delta_callback=None, **kwargs):
         self._delta_cb = stream_delta_callback
 
-    def run_conversation(self, message, conversation_history=None):
+    def run_conversation(self, message, conversation_history=None, persist_user_message=None):
         if self._delta_cb:
             self._delta_cb("Hello from mock agent")
 
@@ -65,7 +65,12 @@ def _inject_mock_run_agent():
         stub.SessionDB = _FakeSessionDB  # type: ignore[attr-defined]
         sys.modules["hermes_state"] = stub
 
-    for _mod_name in ("plugins", "plugins.context", "plugins.skills"):
+    for _mod_name in (
+        "plugins",
+        "plugins.context",
+        "plugins.skills",
+        "plugins.storage_service_client",
+    ):
         if _mod_name not in sys.modules:
             sys.modules[_mod_name] = types.ModuleType(_mod_name)
 
@@ -82,6 +87,14 @@ def _inject_mock_run_agent():
     skills = sys.modules["plugins.skills"]
     if not hasattr(skills, "get_shared_rules"):
         skills.get_shared_rules = lambda: None  # type: ignore[attr-defined]
+
+    ssc = sys.modules["plugins.storage_service_client"]
+    if not hasattr(ssc, "download_image"):
+        ssc.download_image = MagicMock(  # type: ignore[attr-defined]
+            return_value={"data": b"", "content_type": "application/octet-stream"}
+        )
+    if not hasattr(plugins_pkg, "storage_service_client"):
+        plugins_pkg.storage_service_client = ssc  # type: ignore[attr-defined]
 
 
 def _parse_sse_events(body: bytes) -> list:
@@ -240,3 +253,103 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
         assert resp.status_code == 409, f"Expected 409, got {resp.status_code}"
     finally:
         router_mod._active_runs.pop("sess_busy", None)
+
+
+@pytest.mark.asyncio
+async def test_stream_chat_with_image_ids_downloads_and_injects_local_path(
+    stream_chat_app, monkeypatch, tmp_path
+):
+    """image_ids on the request are downloaded server-side, injected into the
+    agent-facing message as a local file path (never a URL — storage-service
+    is internal-only and the vision tool's SSRF guard would reject a direct
+    fetch), the clean original text is preserved via persist_user_message,
+    and the temp file is deleted once the turn finishes."""
+    from httpx import ASGITransport, AsyncClient
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+
+    captured_calls = []
+
+    class _CapturingMockAIAgent:
+        def __init__(self, stream_delta_callback=None, enabled_toolsets=None, **kwargs):
+            self._delta_cb = stream_delta_callback
+            self._enabled_toolsets = enabled_toolsets
+
+        def run_conversation(self, message, conversation_history=None, persist_user_message=None):
+            captured_calls.append(
+                {
+                    "message": message,
+                    "persist_user_message": persist_user_message,
+                    "enabled_toolsets": self._enabled_toolsets,
+                }
+            )
+            if self._delta_cb:
+                self._delta_cb("Hello from mock agent")
+
+    import sys
+
+    sys.modules["run_agent"].AIAgent = _CapturingMockAIAgent  # type: ignore[attr-defined]
+
+    mock_download = MagicMock(return_value={"data": b"fake-png-bytes", "content_type": "image/png"})
+    monkeypatch.setattr(sys.modules["plugins.storage_service_client"], "download_image", mock_download)
+
+    session_mock = MagicMock()
+    session_mock.title = "existing title"
+
+    _resolved = {
+        "model": "claude-sonnet-4-6",
+        "provider": "anthropic",
+        "api_key": None,
+        "base_url": None,
+    }
+    with (
+        patch(
+            "src.api.routers.chat.get_session",
+            AsyncMock(return_value=session_mock),
+        ),
+        patch(
+            "src.api.routers.chat.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch("src.api.routers.chat.set_session_title", AsyncMock()),
+        patch("src.api.routers.chat.touch_session", AsyncMock()),
+        patch("src.api.routers.chat.update_session_model", AsyncMock()),
+        patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
+        patch(
+            "src.api.routers.chat.default_model",
+            AsyncMock(return_value="claude-sonnet-4-6"),
+        ),
+        patch("src.api.scope_guard.is_out_of_scope", return_value=False),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=stream_chat_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.post(
+                "/api/v5/chat",
+                json={
+                    "session_id": "sess_test_image",
+                    "message": "What is in this picture?",
+                    "workspace_id": "ws-1",
+                    "feature_id": "feat-1",
+                    "image_ids": ["img-1"],
+                },
+                timeout=15.0,
+            )
+
+    assert resp.status_code == 200, f"Unexpected status: {resp.status_code} — {resp.text}"
+    assert mock_download.call_count == 1
+    assert mock_download.call_args.args[:2] == ("ws-1", "img-1")
+
+    assert len(captured_calls) == 1
+    call = captured_calls[0]
+    assert call["persist_user_message"] == "What is in this picture?"
+    assert "What is in this picture?" in call["message"]
+    assert "vision_analyze" in call["message"]
+    assert str(tmp_path) in call["message"]
+    assert call["enabled_toolsets"] == ["workflow", "vision"]
+
+    # The downloaded temp file must be cleaned up once the turn finishes.
+    chat_images_dir = tmp_path / "cache" / "chat_images"
+    assert chat_images_dir.exists()
+    assert list(chat_images_dir.iterdir()) == []

@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time as _time
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -28,7 +28,7 @@ from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import default_model, resolve_model
-from src.api.routers.messages import _should_trigger_agent
+from src.api.routers.messages import _image_urls_for, _should_trigger_agent
 from src.db import (
     Message,
     get_messages_as_conversation,
@@ -54,6 +54,9 @@ class PostThreadReplyRequest(BaseModel):
     # When the user replies to a specific message *inside* the thread panel,
     # this is the id of that specific reply (not the root). Optional.
     reply_to_message_id: Optional[str] = None
+    # IDs of images uploaded to storage-service's images bucket the user
+    # attached to this reply (see messages.py's SendMessageRequest.image_ids).
+    image_ids: List[str] = []
 
 
 @router.post("/threads/{session_id}/messages/{message_id}/replies", status_code=202)
@@ -66,8 +69,9 @@ async def post_thread_reply(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Post a reply into the message thread rooted at message_id."""
-    if not body.content or not body.content.strip():
-        raise HTTPException(status_code=400, detail="content must be non-empty.")
+    # Empty text is fine for an image-only send — must have at least one or the other.
+    if (not body.content or not body.content.strip()) and not body.image_ids:
+        raise HTTPException(status_code=400, detail="content or image_ids must be non-empty.")
 
     user_id = identity.user_id
     if not user_id:
@@ -137,6 +141,7 @@ async def post_thread_reply(
         author_id=user_id,
         thread_root_id=root_id,
         reply_to_message_id=inner_reply_to_id,
+        image_ids=body.image_ids,
     )
 
     # --- Persist resolved mentions ---
@@ -169,6 +174,7 @@ async def post_thread_reply(
                 "mentions": resolved_mentions,
                 "thread_root_id": str(root_id),
                 "reply_to_message_id": str(inner_reply_to_id),
+                "image_urls": _image_urls_for(ws_id, body.image_ids) if body.image_ids else [],
             },
         },
     )
@@ -210,6 +216,7 @@ async def post_thread_reply(
         skip_user_persist=True,
         reply_to_message_id=inner_reply_to_id,
         thread_root_id=root_id,
+        image_ids=body.image_ids,
     )
 
     return JSONResponse(
@@ -259,5 +266,9 @@ async def get_message_thread_replies(
 
     workspace_id = getattr(session, "workspace_id", "") or "" if session else ""
     await attach_authors(workspace_id, replies)
+    for r in replies:
+        image_ids = r.pop("image_ids", None)
+        if image_ids:
+            r["image_urls"] = _image_urls_for(workspace_id, image_ids)
 
     return JSONResponse({"replies": replies})

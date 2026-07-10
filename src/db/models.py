@@ -108,6 +108,11 @@ class Message(Base):
     # m3-agent-cta: CTA suggestions attached to an assistant turn
     cta_suggestions = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
+    # agent-chat-images: storage-service image ids the user attached to this
+    # message (bare ids, not URLs — resolved to a fetchable relative URL by
+    # the reading router, which has the session's workspace_id in scope).
+    image_ids = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+
     # chat-reply-and-thread: message-level reply/thread linkage (nullable;
     # NULL on both = plain message with no reply or thread context).
     reply_to_message_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)

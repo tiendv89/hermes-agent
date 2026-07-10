@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -44,6 +45,13 @@ class StreamChatRequest(BaseModel):
     workspace_id: str = ""
     feature_id: str = ""
     model: str = ""
+    # IDs of images uploaded to storage-service's images bucket (see
+    # storage_service_client.download_image) that the user pasted/attached to
+    # this message. Downloaded server-side and handed to the agent as a local
+    # file path — see agent_dispatch.py's image handling — rather than a URL,
+    # since storage-service is internal-only and the vision tool's SSRF guard
+    # would reject fetching it directly.
+    image_ids: List[str] = []
 
 
 def _derive_title(message: str) -> str:
@@ -132,6 +140,7 @@ async def chat(
             feature_id=body.feature_id,
             user_id=caller_id,
             org_id=identity.org_id,
+            image_ids=body.image_ids,
             model=resolved["model"],
             provider=resolved["provider"],
             api_key=resolved["api_key"],

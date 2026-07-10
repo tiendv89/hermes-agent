@@ -966,3 +966,44 @@ class TestStorageServiceClient:
         import json
         put_body = json.loads(requests_mock.last_request.text)
         assert put_body["content"] == "# Tech Design\n"
+
+    def test_download_image_happy_path(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/images/img-1",
+            content=b"fake-png-bytes",
+            headers={"Content-Type": "image/png"},
+        )
+
+        from plugins.storage_service_client import download_image
+        result = download_image("ws1", "img-1", user_id="user-1", org_id="org-1")
+        assert result["data"] == b"fake-png-bytes"
+        assert result["content_type"] == "image/png"
+
+        req = requests_mock.last_request
+        assert req.headers["Authorization"] == f"Bearer {_STORAGE_TOKEN}"
+        assert req.headers["X-User-Id"] == "user-1"
+        assert req.headers["X-Org-Id"] == "org-1"
+
+    def test_download_image_not_found(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(f"{_STORAGE_URL}/api/workspaces/ws1/images/missing", status_code=404)
+
+        from plugins.storage_service_client import StorageServiceError, download_image
+        with pytest.raises(StorageServiceError) as exc_info:
+            download_image("ws1", "missing")
+        assert exc_info.value.status == 404
+        assert exc_info.value.reason_code == "not_found"
+
+    def test_download_image_missing_config_raises_error(self, monkeypatch):
+        monkeypatch.delenv("STORAGE_SERVICE_URL", raising=False)
+        monkeypatch.delenv("STORAGE_SERVICE_TOKEN", raising=False)
+
+        from plugins.storage_service_client import StorageServiceError, download_image
+        with pytest.raises(StorageServiceError) as exc_info:
+            download_image("ws1", "img-1")
+        assert exc_info.value.reason_code == "missing_config"
