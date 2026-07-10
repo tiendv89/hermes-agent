@@ -422,7 +422,7 @@ async def _resolve_feature_id_by_name(
         org_id=org_id,
     )
     items = data.get("items") or []
-    return items[0]["feature_id"] if items else None
+    return items[0]["id"] if items else None
 
 
 async def get_feature_detail(
