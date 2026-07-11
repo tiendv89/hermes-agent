@@ -7,17 +7,16 @@ import os
 from typing import Any, Dict
 
 from ..mcp_client import call_mcp_tool, coerce_text
-from src.services.workflow_backend_client import resolve_workspace_slug
 
 logger = logging.getLogger(__name__)
 
 SCHEMA: Dict[str, Any] = {
     "description": (
-        "Semantic search over indexed workspace documents — past specs, technical designs, "
-        "task logs, skills, PR descriptions. Call this to recall prior decisions or find "
+        "Semantic search over indexed workspace documents — product specs, technical designs, "
+        "and other docs stored via storage-service. Call this to recall prior decisions or find "
         "'has anything similar been done before' across feature history. Always pass a "
         "non-empty 'query' describing what to recall, e.g. query='auth flow technical design'. "
-        "workspace_id is filled from the current session context automatically."
+        "organization_id/workspace_id are filled from the current session context automatically."
     ),
     "parameters": {
         "type": "object",
@@ -30,6 +29,10 @@ SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": "Workspace identifier. Omit to use the current workspace from context.",
             },
+            "organization_id": {
+                "type": "string",
+                "description": "Organization identifier. Omit to use the current organization from context.",
+            },
             "top_k": {
                 "type": "integer",
                 "default": 5,
@@ -38,9 +41,13 @@ SCHEMA: Dict[str, Any] = {
             "source_types": {
                 "type": "array",
                 "items": {"type": "string"},
+                "description": "Optional filter: product_spec, technical_design, doc.",
+            },
+            "feature_name": {
+                "type": "string",
                 "description": (
-                    "Optional filter: skill, task_log, product_spec, technical_design, readme, "
-                    "claude_md, pr_description."
+                    "Optional human-readable feature slug (e.g. 'checkout-flow') to "
+                    "restrict results to that feature's documents."
                 ),
             },
         },
@@ -58,11 +65,13 @@ def check_available(**_: Any) -> bool:
 async def handle(
     query: str = "",
     workspace_id: str = "",
+    organization_id: str = "",
     top_k: int = 5,
     source_types: Any = None,
+    feature_name: Any = None,
     **_: Any,
 ) -> Dict[str, Any]:
-    from ..context import get_workspace_id
+    from ..context import get_org_id, get_workspace_id
 
     # The model may pass query as a structured object over the MCP path; the RAG
     # server validates it as a string, so coerce before forwarding.
@@ -75,13 +84,30 @@ async def handle(
             "ok": False,
             "error": "workspace_id is required but was not provided and no workspace context is set.",
         }
-    wid = await resolve_workspace_slug(wid)
+    # No slug resolution here (unlike GitNexus): rag-service's Qdrant
+    # collections are keyed by the raw organization_id/workspace_id UUIDs
+    # storage-service uses, not by slug — see read_workspace_file.py for the
+    # same pattern.
+    org_id = coerce_text(organization_id) or get_org_id()
+    if not org_id:
+        return {
+            "ok": False,
+            "error": "organization_id is required but no organization context is set for this session.",
+        }
     url = os.environ.get("RAG_MCP_URL", "").strip()
     if not url:
         return {"ok": False, "error": "RAG_MCP_URL is not configured."}
-    arguments: Dict[str, Any] = {"query": query, "workspace_id": wid, "top_k": top_k}
+    arguments: Dict[str, Any] = {
+        "query": query,
+        "organization_id": org_id,
+        "workspace_id": wid,
+        "top_k": top_k,
+    }
     if source_types:
         arguments["source_types"] = source_types
+    feature_name = coerce_text(feature_name)
+    if feature_name:
+        arguments["feature_name"] = feature_name
     # Record the context-gathering attempt so the design-write gate is satisfied
     # (see artifacts.py). Marking on attempt — not only on hits — is intentional:
     # a query against an empty/unavailable index still discharges the "gather
@@ -90,7 +116,9 @@ async def handle(
 
     mark_context_gathered()
     try:
-        results = await call_mcp_tool(url, "rag_query", arguments, workspace_id=wid)
+        results = await call_mcp_tool(
+            url, "rag_query", arguments, workspace_id=wid, organization_id=org_id
+        )
         return {"ok": True, "results": results}
     except Exception as exc:
         logger.warning("query_rag failed: %s", exc)

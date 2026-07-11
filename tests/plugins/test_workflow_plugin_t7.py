@@ -116,6 +116,22 @@ class TestSseEndpoint:
         assert "/ws/ws1/sse" in result
         assert "token=abc" in result
 
+    def test_organization_id_and_workspace_id_scope_to_two_segment_path(self):
+        from plugins.mcp_client import _sse_endpoint
+
+        result = _sse_endpoint(
+            "https://rag.example.com", workspace_id="my-ws", organization_id="my-org"
+        )
+        assert result == "https://rag.example.com/ws/my-org/my-ws/sse"
+
+    def test_organization_id_without_workspace_id_is_ignored(self):
+        """organization_id alone (no workspace_id) must not scope the path —
+        rag-service's SSE endpoint always requires both segments together."""
+        from plugins.mcp_client import _sse_endpoint
+
+        result = _sse_endpoint("https://rag.example.com", organization_id="my-org")
+        assert result == "https://rag.example.com"
+
 
 # ---------------------------------------------------------------------------
 # call_mcp_tool — passes workspace_id through
@@ -146,7 +162,7 @@ class TestCallMcpToolWorkspaceId:
                 mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
                 await call_mcp_tool("http://host", "rag_query", {"query": "test"})
 
-        mock_ep.assert_called_once_with("http://host", "")
+        mock_ep.assert_called_once_with("http://host", "", "")
 
     @pytest.mark.asyncio
     async def test_workspace_id_forwarded_to_sse_endpoint(self):
@@ -172,7 +188,39 @@ class TestCallMcpToolWorkspaceId:
                 mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
                 await call_mcp_tool("http://host", "list_repos", {}, workspace_id="ws1")
 
-        mock_ep.assert_called_once_with("http://host", "ws1")
+        mock_ep.assert_called_once_with("http://host", "ws1", "")
+
+    @pytest.mark.asyncio
+    async def test_organization_id_forwarded_to_sse_endpoint(self):
+        from plugins.mcp_client import call_mcp_tool
+
+        with (
+            patch(
+                "plugins.mcp_client._sse_endpoint",
+                return_value="http://host/ws/org1/ws1/sse",
+            ) as mock_ep,
+            patch("plugins.mcp_client.sse_client") as mock_sse,
+        ):
+            mock_session = AsyncMock()
+            mock_session.initialize = AsyncMock()
+            mock_session.call_tool = AsyncMock(return_value=MagicMock(content=[]))
+            mock_sse.return_value.__aenter__ = AsyncMock(
+                return_value=(AsyncMock(), AsyncMock())
+            )
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            with patch("plugins.mcp_client.ClientSession") as mock_cs:
+                mock_cs.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+                mock_cs.return_value.__aexit__ = AsyncMock(return_value=False)
+                await call_mcp_tool(
+                    "http://host",
+                    "rag_query",
+                    {},
+                    workspace_id="ws1",
+                    organization_id="org1",
+                )
+
+        mock_ep.assert_called_once_with("http://host", "ws1", "org1")
 
 
 # ---------------------------------------------------------------------------
@@ -460,16 +508,23 @@ class TestResolveWorkspaceSlug:
         assert set(gn_mod._repo_cache.keys()) == {"aliased-workspace"}
 
     @pytest.mark.asyncio
-    async def test_rag_handle_resolves_uuid_to_slug(self, monkeypatch):
-        """rag.handle() also resolves a UUID workspace_id to its canonical slug
-        before forwarding it as the rag_query filter argument."""
+    async def test_rag_handle_does_not_resolve_workspace_to_slug(self, monkeypatch):
+        """rag.handle() must forward the raw workspace_id unchanged — unlike
+        GitNexus, rag-service's Qdrant collections are keyed by the raw
+        organization_id/workspace_id UUIDs storage-service uses, not a slug,
+        so resolving to a slug here would silently mismatch every collection."""
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
 
         import plugins.context as ctx
 
-        ctx.set_context("sess-rag-uuid", "22222222-2222-2222-2222-222222222222", "")
+        ctx.set_context(
+            "sess-rag-uuid",
+            "22222222-2222-2222-2222-222222222222",
+            "",
+            org_id="org-uuid",
+        )
 
         from plugins.tools.rag import handle
 
@@ -487,7 +542,10 @@ class TestResolveWorkspaceSlug:
 
         args, _ = mock_call.call_args
         tool_arguments = args[2] if len(args) > 2 else {}
-        assert tool_arguments.get("workspace_id") == "rag-workspace-slug"
+        assert (
+            tool_arguments.get("workspace_id")
+            == "22222222-2222-2222-2222-222222222222"
+        )
 
     @pytest.mark.asyncio
     async def test_rag_handle_no_workflow_db_passes_raw_value(self, monkeypatch):
@@ -497,7 +555,7 @@ class TestResolveWorkspaceSlug:
 
         import plugins.context as ctx
 
-        ctx.set_context("sess-rag-raw", "raw-workspace", "")
+        ctx.set_context("sess-rag-raw", "raw-workspace", "", org_id="raw-org")
 
         from plugins.tools.rag import handle
 
@@ -510,6 +568,7 @@ class TestResolveWorkspaceSlug:
         args, _ = mock_call.call_args
         tool_arguments = args[2] if len(args) > 2 else {}
         assert tool_arguments.get("workspace_id") == "raw-workspace"
+        assert tool_arguments.get("organization_id") == "raw-org"
 
 
 # ---------------------------------------------------------------------------
@@ -621,14 +680,14 @@ class TestInjectContextGitnexusScoping:
 class TestRagScoping:
     @pytest.mark.asyncio
     async def test_rag_handle_resolves_workspace_from_context(self, monkeypatch):
-        """query_rag resolves workspace_id from session context and scopes the
-        connection (workspace_id kwarg → /ws/<slug>/sse); the explicit argument
-        is also passed so the server can cross-check the scope."""
+        """query_rag resolves organization_id/workspace_id from session context
+        and scopes the connection (kwargs → /ws/<org>/<ws>/sse); the explicit
+        arguments are also passed so the server can cross-check the scope."""
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
 
         import plugins.context as ctx
 
-        ctx.set_context("sess-rag", "rag-workspace", "")
+        ctx.set_context("sess-rag", "rag-workspace", "", org_id="rag-org")
 
         from plugins.tools.rag import handle
 
@@ -642,9 +701,11 @@ class TestRagScoping:
         args, kwargs = mock_call.call_args
         tool_arguments = args[2] if len(args) > 2 else {}
         assert tool_arguments.get("workspace_id") == "rag-workspace"
-        # Connection-scoped: the workspace_id kwarg drives the /ws/<slug>/sse
-        # endpoint selection in call_mcp_tool.
+        assert tool_arguments.get("organization_id") == "rag-org"
+        # Connection-scoped: the kwargs drive the /ws/<org>/<ws>/sse endpoint
+        # selection in call_mcp_tool.
         assert kwargs.get("workspace_id") == "rag-workspace"
+        assert kwargs.get("organization_id") == "rag-org"
 
     @pytest.mark.asyncio
     async def test_rag_handle_explicit_workspace_id_overrides_context(
@@ -655,7 +716,9 @@ class TestRagScoping:
 
         import plugins.context as ctx
 
-        ctx.set_context("sess-rag2", "context-workspace", "")
+        ctx.set_context(
+            "sess-rag2", "context-workspace", "", org_id="context-org"
+        )
 
         from plugins.tools.rag import handle
 
@@ -669,3 +732,26 @@ class TestRagScoping:
         tool_arguments = args[2] if len(args) > 2 else {}
         assert tool_arguments.get("workspace_id") == "explicit-workspace"
         assert kwargs.get("workspace_id") == "explicit-workspace"
+
+    @pytest.mark.asyncio
+    async def test_rag_handle_no_organization_context_returns_error(
+        self, monkeypatch
+    ):
+        """Without an organization_id in session context, rag.handle() returns
+        a clear error instead of querying an unscoped/wrong collection."""
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
+
+        import plugins.context as ctx
+
+        ctx.set_context("sess-rag-noorg", "some-workspace", "", org_id="")
+
+        from plugins.tools.rag import handle
+
+        with patch(
+            "plugins.tools.rag.call_mcp_tool", new_callable=AsyncMock
+        ) as mock_call:
+            result = await handle(query="auth flow")
+
+        assert result["ok"] is False
+        assert "organization_id is required" in result["error"]
+        mock_call.assert_not_called()

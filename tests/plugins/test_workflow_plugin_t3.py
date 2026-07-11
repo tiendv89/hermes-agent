@@ -359,15 +359,24 @@ class TestWorkflowQueryRag:
             from plugins.tools.rag import handle
 
             result = await handle(
-                query="prior auth decisions", workspace_id="ws-1", top_k=3
+                query="prior auth decisions",
+                workspace_id="ws-1",
+                organization_id="org-1",
+                top_k=3,
             )
         assert result["ok"] is True
         assert result["results"] == fake_results
         mock_call.assert_awaited_once_with(
             "http://rag:8003",
             "rag_query",
-            {"query": "prior auth decisions", "workspace_id": "ws-1", "top_k": 3},
+            {
+                "query": "prior auth decisions",
+                "organization_id": "org-1",
+                "workspace_id": "ws-1",
+                "top_k": 3,
+            },
             workspace_id="ws-1",
+            organization_id="org-1",
         )
 
     @pytest.mark.asyncio
@@ -380,7 +389,7 @@ class TestWorkflowQueryRag:
         ) as mock_call:
             from plugins.tools.rag import handle
 
-            await handle(query="q", workspace_id="ws-1")
+            await handle(query="q", workspace_id="ws-1", organization_id="org-1")
         called_args = mock_call.await_args[0]
         assert called_args[2]["top_k"] == 5
 
@@ -394,9 +403,77 @@ class TestWorkflowQueryRag:
         ) as mock_call:
             from plugins.tools.rag import handle
 
-            await handle(query="q", workspace_id="specific-ws")
+            await handle(
+                query="q", workspace_id="specific-ws", organization_id="org-1"
+            )
         called_args = mock_call.await_args[0]
         assert called_args[2]["workspace_id"] == "specific-ws"
+
+    @pytest.mark.asyncio
+    async def test_organization_id_always_forwarded(self, monkeypatch):
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
+        with patch(
+            "plugins.tools.rag.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from plugins.tools.rag import handle
+
+            await handle(
+                query="q", workspace_id="ws-1", organization_id="specific-org"
+            )
+        called_args = mock_call.await_args[0]
+        assert called_args[2]["organization_id"] == "specific-org"
+
+    @pytest.mark.asyncio
+    async def test_feature_name_forwarded_when_provided(self, monkeypatch):
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
+        with patch(
+            "plugins.tools.rag.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from plugins.tools.rag import handle
+
+            await handle(
+                query="q",
+                workspace_id="ws-1",
+                organization_id="org-1",
+                feature_name="checkout-flow",
+            )
+        called_args = mock_call.await_args[0]
+        assert called_args[2]["feature_name"] == "checkout-flow"
+
+    @pytest.mark.asyncio
+    async def test_feature_name_omitted_when_not_provided(self, monkeypatch):
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
+        with patch(
+            "plugins.tools.rag.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from plugins.tools.rag import handle
+
+            await handle(query="q", workspace_id="ws-1", organization_id="org-1")
+        called_args = mock_call.await_args[0]
+        assert "feature_name" not in called_args[2]
+
+    @pytest.mark.asyncio
+    async def test_missing_organization_id_returns_ok_false(self, monkeypatch):
+        """No organization_id argument and no session context set → clear error,
+        no MCP call attempted."""
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
+        with patch(
+            "plugins.tools.rag.call_mcp_tool",
+            new_callable=AsyncMock,
+            return_value=[],
+        ) as mock_call:
+            from plugins.tools.rag import handle
+
+            result = await handle(query="q", workspace_id="ws-1")
+        assert result["ok"] is False
+        assert "organization_id is required" in result["error"]
+        mock_call.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_error_returns_ok_false(self, monkeypatch):
@@ -408,7 +485,9 @@ class TestWorkflowQueryRag:
         ):
             from plugins.tools.rag import handle
 
-            result = await handle(query="q", workspace_id="ws-1")
+            result = await handle(
+                query="q", workspace_id="ws-1", organization_id="org-1"
+            )
         assert result["ok"] is False
         assert "timeout" in result["error"]
 
@@ -845,7 +924,11 @@ class TestMcpArgCoercionAndErrors:
             from plugins.tools.rag import handle
 
             # Model passes query as a structured object (the blocker case).
-            result = await handle(query={"query": "auth flow"}, workspace_id="ws-1")
+            result = await handle(
+                query={"query": "auth flow"},
+                workspace_id="ws-1",
+                organization_id="org-1",
+            )
         assert result["ok"] is True
         # The forwarded argument must be a plain string, not a dict.
         assert mock_call.await_args[0][2]["query"] == "auth flow"

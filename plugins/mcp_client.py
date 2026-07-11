@@ -64,11 +64,14 @@ def _content_to_dict(c: Any) -> dict:
     return {"type": "unknown", "value": str(c)}
 
 
-def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
+def _sse_endpoint(base_url: str, workspace_id: str = "", organization_id: str = "") -> str:
     """Resolve the SSE endpoint URL from a configured base URL.
 
-    When *workspace_id* is provided the endpoint is scoped to that workspace:
-    ``…/ws/<workspace_id>/sse``.
+    When *organization_id* is also provided (rag-service, which is org-scoped)
+    the endpoint is scoped to that org+workspace pair:
+    ``…/ws/<organization_id>/<workspace_id>/sse``. When only *workspace_id* is
+    provided (GitNexus, which is a separate, workspace-only-scoped service)
+    the endpoint is ``…/ws/<workspace_id>/sse``, unchanged from before.
 
     Operators typically configure the bare host
     (e.g. ``https://rag.tempestdev.xyz``).  An existing path in the URL is
@@ -76,7 +79,9 @@ def _sse_endpoint(base_url: str, workspace_id: str = "") -> str:
     in the env var do not silently bypass scoping.
     """
     parsed = urlparse(base_url.strip())
-    if workspace_id:
+    if organization_id and workspace_id:
+        parsed = parsed._replace(path=f"/ws/{organization_id}/{workspace_id}/sse")
+    elif workspace_id:
         parsed = parsed._replace(path=f"/ws/{workspace_id}/sse")
     return urlunparse(parsed)
 
@@ -86,6 +91,7 @@ async def call_mcp_tool(
     tool: str,
     arguments: dict,
     workspace_id: str = "",
+    organization_id: str = "",
 ) -> list[dict]:
     """Connect to an MCP SSE server, run a single tool call, return content as plain dicts.
 
@@ -95,10 +101,14 @@ async def call_mcp_tool(
     When *workspace_id* is supplied the connection targets the workspace-scoped
     endpoint ``…/ws/<workspace_id>/sse`` so all tools on that connection are
     automatically scoped to that workspace — no per-tool argument needed.
+    When *organization_id* is also supplied (rag-service only), the endpoint
+    is further scoped to ``…/ws/<organization_id>/<workspace_id>/sse``.
     Callers must pass workspace_id: the servers only expose workspace-scoped
-    endpoints, and without it the base URL is used verbatim.
+    endpoints, and without it the base URL is used verbatim. organization_id
+    is optional and defaults to "" so existing callers (e.g. GitNexus, which
+    has no concept of organization_id) are unaffected.
     """
-    endpoint = _sse_endpoint(base_url, workspace_id)
+    endpoint = _sse_endpoint(base_url, workspace_id, organization_id)
 
     async def _run() -> list[dict]:
         async with sse_client(endpoint) as (read, write):
