@@ -4,6 +4,11 @@ The Canvas/Artifacts targeted-edit pattern: the agent emits a list of
 {old_string, new_string} replacements; the module reads the current content,
 applies them server-side, and commits. Small agent output, minimal clobber
 surface compared to a full-rewrite.
+
+Owner guard: for go-owned features, document content lives in storage-service
+(not git). In that case, edit_document proxies the read + apply + write to
+storage-service using STORAGE_SERVICE_TOKEN. ts-owned and absent-owner features
+continue to commit to git unchanged.
 """
 
 from __future__ import annotations
@@ -21,6 +26,7 @@ from ..document_repo import (
     read_document,
     write_document,
 )
+from ..storage_service_client import StorageServiceError, read_document_content, write_document_content
 from .artifacts import _resolve_document_branch, _resolve_management_repo
 
 logger = logging.getLogger(__name__)
@@ -28,6 +34,15 @@ logger = logging.getLogger(__name__)
 _DOCUMENT_FILES: Dict[str, str] = {
     "product_spec": "product-spec.md",
     "technical_design": "technical-design.md",
+}
+
+# storage-service document paths for go-owned features — distinct from
+# _DOCUMENT_FILES (git filenames, hyphenated) since storage-service documents
+# are identified by path directly (see storage_service_client.py's contract),
+# matching workflow-backend's provisioning convention (feature_create.go).
+_STORAGE_DOC_PATHS: Dict[str, str] = {
+    "product_spec": "product_spec.md",
+    "technical_design": "tech_design.md",
 }
 
 EDIT_DOCUMENT_SCHEMA: Dict[str, Any] = {
@@ -104,7 +119,10 @@ def handle_edit_document(
     commit_message: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
-    """Apply targeted edits to a document and commit to the feature branch."""
+    """Apply targeted edits to a document and commit to the feature branch.
+
+    For go-owned features, proxies the read + apply + write to storage-service.
+    """
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
@@ -128,6 +146,49 @@ def handle_edit_document(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
+    # Resolve owner + slug to decide which backend to use.
+    owner_value: str = "ts"
+    slug = fid
+    init_pr_url = None
+    try:
+        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
+        slug = detail.get("feature_name") or fid
+        init_pr_url = detail.get("init_pr_url")
+        owner_value = detail.get("owner") or "ts"
+    except Exception as exc:
+        logger.debug("edit_document: could not fetch feature_detail: %s", exc)
+
+    # Owner guard: go-owned features proxy read + apply + write to storage-service.
+    if owner_value == "go":
+        storage_path = _STORAGE_DOC_PATHS.get(document, filename)
+        try:
+            read_result = read_document_content(
+                wid, fid, storage_path,
+                user_id=caller_user_id, org_id=caller_org_id,
+            )
+            current_content = read_result.get("content", "")
+            new_content, warnings = _apply_edits(current_content, edits)
+            write_result = write_document_content(
+                wid, fid, storage_path, new_content,
+                user_id=caller_user_id, org_id=caller_org_id,
+            )
+        except StorageServiceError as exc:
+            logger.warning("edit_document (go): storage-service error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("edit_document (go): unexpected error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        out: Dict[str, Any] = {
+            "ok": True,
+            "pr_url": None,
+            "commit_sha": None,
+            "conflict": False,
+            "version_id": write_result.get("version_id"),
+        }
+        if warnings:
+            out["warnings"] = warnings
+        return out
+
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
@@ -139,17 +200,6 @@ def handle_edit_document(
         return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
 
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-
-    # Resolve the feature slug + init PR. All git artifacts are slug-keyed
-    # (branch feature/{slug}, docs path docs/features/{slug}/...).
-    slug = fid
-    init_pr_url = None
-    try:
-        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
-        slug = detail.get("feature_name") or fid
-        init_pr_url = detail.get("init_pr_url")
-    except Exception as exc:
-        logger.debug("edit_document: could not fetch feature_detail: %s", exc)
 
     target_branch, known_pr_url = _resolve_document_branch(
         owner, repo, fid, slug, init_pr_url, base_branch, github_token

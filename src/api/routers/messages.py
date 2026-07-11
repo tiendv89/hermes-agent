@@ -14,6 +14,7 @@ Decouples human-message persistence from the agent turn:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import time as _time
 
@@ -21,7 +22,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
+from typing import List, Optional
 
 from src.api.agent_dispatch import schedule_agent_turn
 from src.api.deps import get_db
@@ -57,6 +58,47 @@ class SendMessageRequest(BaseModel):
     # When set, reply_to_message_id is stored on the persisted message.
     # thread_root_id remains NULL — the reply stays in the main transcript.
     reply_to_message_id: Optional[str] = None
+    # IDs of images uploaded to storage-service's images bucket (see
+    # storage_service_client.download_image) that the user pasted/attached to
+    # this message. hermes-agent downloads them server-side and hands the
+    # agent a local file path — see agent_dispatch.py's image handling —
+    # rather than a URL, since storage-service is internal-only and the
+    # vision tool's SSRF guard would reject fetching it directly.
+    image_ids: List[str] = []
+
+
+def _image_urls_for(workspace_id: str, image_ids) -> List[str]:
+    """Bare storage-service image ids -> BFF-relative fetch URLs.
+
+    Stored as bare ids (see storage_service_client.download_image, used
+    server-side by the agent's vision tool); resolved to URLs here, where the
+    session's workspace_id is in scope, so the frontend just needs to prefix
+    with the BFF base (see imageSrcUrl in storage-service/images.ts).
+
+    Defensively re-parses a JSON-encoded string: a since-fixed bug in
+    append_message double-encoded the JSONB image_ids column (json.dumps'd a
+    list before assigning it to a column whose dialect already serializes
+    JSON on write), so old rows can still come back as a string like
+    '["<uuid>"]' instead of a real list. Iterating that string directly
+    walks it character-by-character, producing one bogus one-char "image" per
+    character — this guard makes such legacy rows render correctly instead.
+    """
+    if isinstance(image_ids, str):
+        try:
+            image_ids = json.loads(image_ids)
+        except (ValueError, TypeError):
+            image_ids = []
+    if not isinstance(image_ids, list):
+        return []
+    return [f"/api/workspaces/{workspace_id}/images/{image_id}" for image_id in image_ids]
+
+
+def _attach_image_urls(messages: list, workspace_id: str) -> None:
+    """Replace each message's raw `image_ids` with resolved `image_urls`, in place."""
+    for m in messages:
+        image_ids = m.pop("image_ids", None)
+        if image_ids:
+            m["image_urls"] = _image_urls_for(workspace_id, image_ids)
 
 
 def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
@@ -102,6 +144,7 @@ async def get_thread_messages(
     session = await get_session(db, session_id)
     workspace_id = getattr(session, "workspace_id", "") or "" if session else ""
     await attach_authors(workspace_id, messages)
+    _attach_image_urls(messages, workspace_id)
 
     # Attach thread_summary to each top-level message (reply count + recent repliers).
     if messages:
@@ -127,8 +170,9 @@ async def send_message(
 
     Returns 202 immediately; the agent turn (if triggered) runs in the background.
     """
-    if not body.content or not body.content.strip():
-        raise HTTPException(status_code=400, detail="content must be non-empty.")
+    # Empty text is fine for an image-only send — must have at least one or the other.
+    if (not body.content or not body.content.strip()) and not body.image_ids:
+        raise HTTPException(status_code=400, detail="content or image_ids must be non-empty.")
 
     user_id = identity.user_id
     if not user_id:
@@ -177,6 +221,7 @@ async def send_message(
         content=body.content,
         author_id=user_id,
         reply_to_message_id=reply_to_id,
+        image_ids=body.image_ids,
     )
 
     # --- Persist resolved mentions ---
@@ -215,6 +260,7 @@ async def send_message(
                 "mentions": resolved_mentions,
                 "reply_to_message_id": str(reply_to_id) if reply_to_id is not None else None,
                 "thread_root_id": None,
+                "image_urls": _image_urls_for(ws_id, body.image_ids) if body.image_ids else [],
             },
         },
     )
@@ -257,6 +303,7 @@ async def send_message(
         loop=loop,
         author_id=user_id,
         skip_user_persist=True,
+        image_ids=body.image_ids,
     )
 
     return JSONResponse(

@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity, require_service_token
+from src.api.routers.messages import _image_urls_for
 from src.db import (
     create_session,
     delete_session,
@@ -98,6 +99,11 @@ async def get_session_messages_endpoint(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
     messages = await get_session_messages(db, session_id)
+    workspace_id = getattr(session, "workspace_id", "") or ""
+    for m in messages:
+        image_ids = m.pop("image_ids", None)
+        if image_ids:
+            m["image_urls"] = _image_urls_for(workspace_id, image_ids)
     return JSONResponse({"session_id": session_id, "messages": messages})
 
 

@@ -42,7 +42,8 @@ def _clean_modules():
 def _clear_env(monkeypatch):
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     yield
 
 
@@ -490,8 +491,8 @@ class TestResolveWorkspaceSlug:
 
     @pytest.mark.asyncio
     async def test_rag_handle_no_workflow_db_passes_raw_value(self, monkeypatch):
-        """Without WORKFLOW_DATABASE_URL, rag.handle() still forwards the raw value
-        (no regression for deployments without the workflow DB configured)."""
+        """Without the workflow backend configured, rag.handle() still forwards the
+        raw value (no regression for deployments without a workflow backend)."""
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
 
         import plugins.context as ctx
@@ -527,7 +528,6 @@ class TestInjectContextGitnexusScoping:
     ):
         """inject_context() scopes the list_indexed_repos call to the session workspace."""
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         self._set_context("hook-workspace")
 
         captured_workspace_ids = []
@@ -560,7 +560,6 @@ class TestInjectContextGitnexusScoping:
     def test_workspace_a_repos_not_leaked_to_workspace_b_injection(self, monkeypatch):
         """G2: injecting context for workspace B must not surface workspace A's repos."""
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
 
         repos_by_workspace = {
             "workspace-a": ["repo-only-in-a"],

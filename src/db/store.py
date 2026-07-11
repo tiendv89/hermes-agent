@@ -413,6 +413,7 @@ async def append_message(
     author_id: Optional[str] = None,
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
+    image_ids: Optional[List[str]] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -435,6 +436,13 @@ async def append_message(
         author_id=author_id,
         reply_to_message_id=reply_to_message_id,
         thread_root_id=thread_root_id,
+        # image_ids is a JSONB column — SQLAlchemy's dialect serializes a
+        # native Python list on its own. Do NOT json.dumps() this first: that
+        # double-encodes it into a JSON string containing JSON text, so a
+        # later read gets back a plain string (not a list) and any code that
+        # iterates it (e.g. building per-image URLs) walks it character by
+        # character instead of element by element.
+        image_ids=image_ids or [],
     )
     db.add(msg)
 
@@ -543,6 +551,8 @@ async def get_session_messages(
                 entry["tool_calls"] = msg.tool_calls
         if msg.reply_to_message_id is not None:
             entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        if msg.image_ids:
+            entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 
@@ -591,6 +601,8 @@ async def get_messages_since(
             entry["reply_to_message_id"] = str(msg.reply_to_message_id)
         if msg.thread_root_id is not None:
             entry["thread_root_id"] = str(msg.thread_root_id)
+        if msg.image_ids:
+            entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 
@@ -634,6 +646,8 @@ async def get_thread_replies(
             entry["reply_to_message_id"] = str(msg.reply_to_message_id)
         if msg.tool_name:
             entry["tool_name"] = msg.tool_name
+        if msg.image_ids:
+            entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 

@@ -43,7 +43,8 @@ def _clean_modules():
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
     yield
@@ -253,7 +254,6 @@ class TestGetToolsEndpoint:
         return TestClient(app)
 
     def test_returns_tools_json(self, monkeypatch):
-        monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
         monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
         monkeypatch.delenv("RAG_MCP_URL", raising=False)
         # Patch _TOOLS to a known fixture.
@@ -337,9 +337,10 @@ class TestGetToolsEndpoint:
         # Every skill carries a non-empty description for the picker.
         assert all(s["description"] for s in data["skills"])
 
-    def test_request_approval_excluded_when_db_unset(self, monkeypatch):
-        """When WORKFLOW_DATABASE_URL is unset, request_approval is excluded."""
-        monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+    def test_request_approval_excluded_when_backend_unset(self, monkeypatch):
+        """When the workflow backend is not configured, request_approval is excluded."""
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         client = self._build_client(monkeypatch)
         resp = client.get("/api/v1/tools")
         assert resp.status_code == 200

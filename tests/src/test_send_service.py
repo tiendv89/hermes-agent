@@ -315,6 +315,123 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_send_message_forwards_image_ids_to_schedule_agent_turn():
+    """POST /threads/{id}/messages with image_ids forwards them to
+    schedule_agent_turn — this is the real production send path (via
+    sendThreadMessage), unlike the legacy /chat endpoint's image_ids."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.add = MagicMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "thread"
+    session.feature_id = "feat-1"
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=42)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
+        patch("src.api.routers.messages.update_session_model", AsyncMock()),
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_1/messages",
+                json={"content": "what's in this image?", "image_ids": ["img-1", "img-2"]},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    mock_dispatch.assert_called_once()
+    assert mock_dispatch.call_args.kwargs["image_ids"] == ["img-1", "img-2"]
+
+
+@pytest.mark.asyncio
+async def test_send_message_without_image_ids_defaults_to_empty_list():
+    """POST /threads/{id}/messages without image_ids forwards an empty list,
+    not None — schedule_agent_turn's coalescing dict stores it verbatim."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.add = MagicMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "thread"
+    session.feature_id = "feat-1"
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=42)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
+        patch("src.api.routers.messages.update_session_model", AsyncMock()),
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_1/messages",
+                json={"content": "hey @agent"},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    mock_dispatch.assert_called_once()
+    assert mock_dispatch.call_args.kwargs["image_ids"] == []
+
+
+@pytest.mark.asyncio
 async def test_send_message_channel_bare_no_agent():
     """POST /threads/{channel_id}/messages bare message → 202, agent_triggered=False."""
     _inject_stub_modules()

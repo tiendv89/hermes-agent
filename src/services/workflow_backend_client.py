@@ -295,10 +295,7 @@ async def _call(
 
 
 def check_workflow_available() -> bool:
-    """Return True only when WORKFLOW_BACKEND_URL/SERVICE_TOKEN are configured.
-
-    Replaces plugins.db.check_workflow_available's WORKFLOW_DATABASE_URL check.
-    """
+    """Return True only when WORKFLOW_BACKEND_URL/SERVICE_TOKEN are configured."""
     return bool(os.environ.get("WORKFLOW_BACKEND_URL", "").strip()) and bool(
         os.environ.get("WORKFLOW_BACKEND_SERVICE_TOKEN", "").strip()
     )
