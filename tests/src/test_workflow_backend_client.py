@@ -782,7 +782,7 @@ class TestGetFeatureDetailAndTasks:
             _fake_response(404, {"success": False, "error": {}}),
             _fake_response(
                 200,
-                {"success": True, "data": {"items": [{"feature_id": "resolved-uuid"}]}},
+                {"success": True, "data": {"items": [{"id": "resolved-uuid"}]}},
             ),
             _fake_response(
                 200,
@@ -892,6 +892,87 @@ class TestGetFeatureDetailAndTasks:
                 "execution": {},
             }
         ]
+
+
+class TestResolveFeatureIdByName:
+    """Unit tests for _resolve_feature_id_by_name against the new API shape
+    (items[0]["id"] rather than items[0]["feature_id"]).
+    """
+
+    @pytest.mark.asyncio
+    async def test_resolves_id_from_new_api_shape(self, monkeypatch):
+        """Returns items[0]["id"] when the search endpoint returns a match."""
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200,
+            {"success": True, "data": {"items": [{"id": "abc-123", "feature_name": "my-slug"}]}},
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod._resolve_feature_id_by_name(
+                "ws-1", "my-slug", user_id="u", org_id="o"
+            )
+
+        assert result == "abc-123"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_items_empty(self, monkeypatch):
+        """Returns None when the search returns an empty items list."""
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200, {"success": True, "data": {"items": []}}
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session(fake_resp),
+        ):
+            result = await mod._resolve_feature_id_by_name(
+                "ws-1", "no-such-slug", user_id="u", org_id="o"
+            )
+
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_url_encodes_name_with_spaces(self, monkeypatch):
+        """The feature name slug is URL-encoded before being appended to the query string."""
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        fake_resp = _fake_response(
+            200,
+            {"success": True, "data": {"items": [{"id": "xyz-789"}]}},
+        )
+        captured_urls = []
+
+        fake_session = MagicMock()
+
+        def fake_request(method, url, *, headers, json, timeout):
+            captured_urls.append(url)
+            return fake_resp
+
+        fake_session.request = fake_request
+        fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+        fake_session.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=fake_session,
+        ):
+            result = await mod._resolve_feature_id_by_name(
+                "ws-1", "my feature", user_id="u", org_id="o"
+            )
+
+        assert result == "xyz-789"
+        assert "my+feature" in captured_urls[0] or "my%20feature" in captured_urls[0]
 
 
 class TestUpdateFeatureStage:
