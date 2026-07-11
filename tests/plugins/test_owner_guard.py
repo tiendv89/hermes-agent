@@ -84,7 +84,6 @@ def _clean_modules():
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
     monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)

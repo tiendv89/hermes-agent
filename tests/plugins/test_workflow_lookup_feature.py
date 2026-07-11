@@ -11,7 +11,7 @@ Covers:
   - handle: synopsis fetch failure is silent (graceful degradation)
   - check_available: returns True for non-feature sessions with workflow DB
   - check_available: returns False when feature_id is set (feature-scoped session)
-  - check_available: returns False when WORKFLOW_DATABASE_URL is unset
+  - check_available: returns False when the workflow backend is not configured
   - _extract_synopsis: first paragraph extracted; headings skipped; truncation
   - inject_context: workflow_lookup_feature hint injected when feature_id == ''
   - inject_context: no lookup hint when feature_id is set (feature-scoped session)
@@ -70,7 +70,6 @@ def _clean_modules():
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
     monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
     monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)

@@ -51,7 +51,8 @@ def _clean_modules():
 def _clear_env_vars(monkeypatch):
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     yield
 
 
@@ -524,7 +525,6 @@ class TestInjectContextSkills:
         assert "load_skill" not in content
 
     def test_skills_block_called_with_stage(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
         fake_feature = {
             "ok": True,
             "feature": {

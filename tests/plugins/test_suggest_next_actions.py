@@ -334,11 +334,9 @@ class TestSchemaShape:
 class TestToolRegistration:
     def test_suggest_next_actions_in_tools_list(self):
         """suggest_next_actions must appear in plugins._TOOLS."""
-        # Stub the full plugins import chain to avoid psycopg/libpq dependency.
-        stub_db = _make_stub_module(
-            "plugins.db",
-            {"check_workflow_available": lambda **_: False},
-        )
+        # Stub the full plugins import chain to avoid unrelated import-time deps.
+        # check_workflow_available now comes from src.services.workflow_backend_client,
+        # which has no heavy dependencies, so it's fine to import for real here.
         stub_context = _make_stub_module("plugins.context", {})
         stub_hooks = _make_stub_module("plugins.hooks", {"inject_context": lambda **_: None})
         stub_mcp = _make_stub_module("plugins.mcp_client", {})
@@ -354,7 +352,6 @@ class TestToolRegistration:
             )
 
         stub_tools_pkg = _make_stub_module("plugins.tools", {})
-        sys.modules["plugins.db"] = stub_db
         sys.modules["plugins.context"] = stub_context
         sys.modules["plugins.hooks"] = stub_hooks
         sys.modules["plugins.mcp_client"] = stub_mcp

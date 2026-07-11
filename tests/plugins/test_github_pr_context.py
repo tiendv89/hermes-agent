@@ -552,7 +552,8 @@ class TestApiErrorPropagation:
 class TestToolRegistration:
     def test_github_pr_context_registered(self, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
         monkeypatch.delenv("RAG_MCP_URL", raising=False)
 
@@ -563,14 +564,16 @@ class TestToolRegistration:
 
     def test_check_fn_gates_on_github_token(self, monkeypatch):
         monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         import plugins as plugin_module
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_context")
         assert tool["check_fn"]() is False
 
     def test_check_fn_passes_when_token_set(self, monkeypatch):
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
-        monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+        monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         import plugins as plugin_module
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_context")
         assert tool["check_fn"]() is True

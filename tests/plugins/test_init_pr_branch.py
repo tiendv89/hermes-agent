@@ -542,7 +542,6 @@ class TestHandleWriteProductSpecInitPr:
     def test_writes_to_init_branch_when_pr_open(self, monkeypatch, requests_mock):
         """write_product_spec routes to init PR branch when init_pr_url is set + branch exists."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
 
         workspace_ctx = {
             "management_repo": "mgmt",
@@ -596,7 +595,6 @@ class TestHandleWriteProductSpecInitPr:
     def test_writes_to_feature_branch_when_no_init_pr(self, monkeypatch, requests_mock):
         """write_product_spec falls back to feature/<id> when init_pr_url is None."""
         monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
 
         workspace_ctx = {
             "management_repo": "mgmt",

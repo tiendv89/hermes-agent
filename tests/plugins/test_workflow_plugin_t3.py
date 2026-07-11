@@ -62,7 +62,8 @@ def _clear_mcp_urls(monkeypatch):
     """Ensure MCP URL env vars are unset by default so check_available returns False."""
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
+    monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     yield
 
 
@@ -683,8 +684,7 @@ class TestInjectContextT3:
             ],
         }
 
-    def test_task_summary_block_injected(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+    def test_task_summary_block_injected(self):
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
             patch(
@@ -704,8 +704,7 @@ class TestInjectContextT3:
         assert "T1" in content
         assert "T2" in content
 
-    def test_blocked_tasks_block_included_when_blocked(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+    def test_blocked_tasks_block_included_when_blocked(self):
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
             patch(
@@ -726,8 +725,7 @@ class TestInjectContextT3:
         assert "blocked" in content
         assert "db_unreachable" in content
 
-    def test_blocked_tasks_absent_when_none_blocked(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+    def test_blocked_tasks_absent_when_none_blocked(self):
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
             patch(
@@ -774,8 +772,7 @@ class TestInjectContextT3:
             content = self._call_inject(feature_id="")
         assert "query_rag" not in content
 
-    def test_task_summary_lists_all_tasks(self, monkeypatch):
-        monkeypatch.setenv("WORKFLOW_DATABASE_URL", "postgresql://fake")
+    def test_task_summary_lists_all_tasks(self):
         tasks_result = {
             "ok": True,
             "tasks": [

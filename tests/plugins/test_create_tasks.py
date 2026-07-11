@@ -51,7 +51,6 @@ def _clean_modules():
 
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
-    monkeypatch.delenv("WORKFLOW_DATABASE_URL", raising=False)
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
     monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
@@ -166,12 +165,6 @@ def _run_create_tasks_handle(
     ctx_mock.get_feature_id.return_value = context_feature_id
     sys.modules["plugins.context"] = ctx_mock
 
-    # Patch plugins.db
-    db_mock = MagicMock()
-    db_mock.get_workspace_context.return_value = _make_workspace_context()
-    db_mock.get_feature_detail.return_value = _make_feature_detail()
-    sys.modules["plugins.db"] = db_mock
-
     # Patch plugins.document_repo
     doc_repo_mock = MagicMock()
     if read_document_raises:
@@ -200,9 +193,13 @@ def _run_create_tasks_handle(
     artifacts_mock._resolve_management_repo.return_value = (_OWNER, _REPO)
     sys.modules["plugins.tools.artifacts"] = artifacts_mock
 
-    # Patch src.services.workflow_backend_client for WorkflowBackendError
+    # Patch src.services.workflow_backend_client — provides WorkflowBackendError and
+    # the workspace/feature lookups load_feature_tasks_md() runs via run_async().
     wbc_mock = MagicMock()
     wbc_mock.WorkflowBackendError = _WorkflowBackendError
+    wbc_mock.get_workspace_context.return_value = _make_workspace_context()
+    wbc_mock.get_feature_detail.return_value = _make_feature_detail()
+    wbc_mock.run_async.side_effect = lambda coro: coro
     sys.modules["src"] = MagicMock()
     sys.modules["src.services"] = MagicMock()
     sys.modules["src.services.workflow_backend_client"] = wbc_mock
@@ -318,9 +315,13 @@ class TestHandleManagementRepoFailure:
         ctx_mock.get_feature_id.return_value = _FEATURE_ID
         sys.modules["plugins.context"] = ctx_mock
 
-        db_mock = MagicMock()
-        db_mock.get_workspace_context.side_effect = RuntimeError("DB offline")
-        sys.modules["plugins.db"] = db_mock
+        # Only replace the leaf module — plugins.tools.approve (imported for real
+        # below) needs the real src/src.services packages to resolve its own
+        # src.services.approval_notifications import.
+        wbc_mock = MagicMock()
+        wbc_mock.WorkflowBackendError = _WorkflowBackendError
+        wbc_mock.get_workspace_context.side_effect = RuntimeError("workflow-backend offline")
+        sys.modules["src.services.workflow_backend_client"] = wbc_mock
 
         artifacts_mock = MagicMock()
         artifacts_mock._resolve_management_repo.side_effect = ValueError("no repo")
