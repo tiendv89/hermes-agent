@@ -49,13 +49,15 @@ _STORAGE_DOC_PATHS: Dict[str, str] = {
 
 READ_DOCUMENT_SCHEMA: Dict[str, Any] = {
     "description": (
-        "Read a feature document (product_spec, technical_design, or status) straight from the "
-        "management repo's feature branch in git. Use this FIRST when writing or revising a "
+        "Read a feature document straight from the management repo's feature branch in git (or, "
+        "for go-owned features, from storage-service). Use this FIRST when writing or revising a "
         "technical design: call read_document(document='product_spec') to load the approved "
         "product spec and ground the design in its actual scope — do NOT infer the spec from RAG "
         "or the request text. This reads the feature branch directly, so it works even when the "
-        "spec is unmerged and not yet indexed by RAG. Returns the document content and whether it "
-        "exists."
+        "spec is unmerged and not yet indexed by RAG. Pass 'product_spec', 'technical_design', or "
+        "'status' for the three canonical documents, or any other filename (e.g. 'README.md', "
+        "'handoffs/handoff.md') to read an arbitrary file from the feature's document folder. "
+        "Returns the document content and whether it exists."
     ),
     "parameters": {
         "type": "object",
@@ -70,8 +72,12 @@ READ_DOCUMENT_SCHEMA: Dict[str, Any] = {
             },
             "document": {
                 "type": "string",
-                "enum": list(_DOCUMENT_FILES),
-                "description": "Which document to read: 'product_spec', 'technical_design', or 'status'.",
+                "description": (
+                    "Which document to read. Use 'product_spec', 'technical_design', or 'status' "
+                    "for the three canonical documents, or pass any other filename (e.g. "
+                    "'README.md', 'handoffs/handoff.md') to read an arbitrary file from the "
+                    "feature's document folder."
+                ),
             },
         },
         "required": ["document"],
@@ -104,9 +110,15 @@ def handle_read_document(
             "error": "workspace_id and feature_id are required but were not provided and no context is set.",
         }
 
-    filename = _DOCUMENT_FILES.get(document)
-    if filename is None:
-        return {"ok": False, "error": f"Unknown document type: {document!r}. Must be one of {list(_DOCUMENT_FILES)}."}
+    if not document.strip():
+        return {"ok": False, "error": "document is required."}
+
+    # A canonical name (product_spec/technical_design/status) maps to its
+    # known git filename; anything else is treated as a literal filename
+    # (e.g. "README.md", "handoffs/handoff.md") within the feature's document
+    # folder — see _STORAGE_DOC_PATHS below for the equivalent go-owned
+    # fallback.
+    filename = _DOCUMENT_FILES.get(document, document)
 
     try:
         _validate_id(fid, "feature_id")

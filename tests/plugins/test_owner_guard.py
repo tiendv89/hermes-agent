@@ -339,6 +339,35 @@ class TestReadDocumentGoOwner:
         assert result["ok"] is False
         assert "error" in result
 
+    def test_go_owned_arbitrary_filename_proxies_to_storage_service(self):
+        """go-owned feature: an arbitrary filename (not one of the 3 canonical
+        documents, e.g. README.md) is treated as a literal storage-service path
+        instead of being rejected — regression for the old strict enum that
+        made read_document unable to read anything but product_spec/
+        technical_design/status."""
+        read_return = {"content": "# README\n", "version_id": _VERSION_ID}
+        mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_read_return=read_return)
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
+            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
+            patch("plugins.context.get_user_id", return_value="user-1"),
+            patch("plugins.context.get_org_id", return_value="org-1"),
+            patch("plugins.context.mark_context_gathered"),
+        ):
+            result = mod.handle_read_document(
+                document="README.md",
+                workspace_id=_WORKSPACE_ID,
+                feature_id=_FEATURE_ID,
+            )
+
+        assert result["ok"] is True
+        assert result["content"] == "# README\n"
+        fake_ssc.read_document_content.assert_called_once_with(
+            _WORKSPACE_ID, _FEATURE_ID, "README.md",
+            user_id="user-1", org_id="org-1",
+        )
+
 
 # ---------------------------------------------------------------------------
 # read_document — ts-owned / absent-owner (regression: storage-service NOT called)
@@ -419,6 +448,36 @@ class TestReadDocumentTsOwner:
         assert result["ok"] is True
         fake_ssc.read_document_content.assert_not_called()
         read_doc_mock.assert_called_once()
+
+    def test_ts_owned_arbitrary_filename_reads_from_git(self, monkeypatch):
+        """ts-owned feature: an arbitrary filename (e.g. README.md) is used
+        literally as the git path's filename instead of being rejected."""
+        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
+        mod, fake_ssc = self._load_ts(owner="ts")
+
+        read_doc_mock = MagicMock(return_value={"content": "# README\n", "sha": "gitsha"})
+        mod.read_document = read_doc_mock
+        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
+        mod._resolve_document_branch = MagicMock(return_value=(f"feature/{_FEATURE_ID}", None))
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
+            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
+            patch("plugins.context.get_user_id", return_value="user-1"),
+            patch("plugins.context.get_org_id", return_value="org-1"),
+            patch("plugins.context.mark_context_gathered"),
+        ):
+            result = mod.handle_read_document(
+                document="README.md",
+                workspace_id=_WORKSPACE_ID,
+                feature_id=_FEATURE_ID,
+            )
+
+        assert result["ok"] is True
+        fake_ssc.read_document_content.assert_not_called()
+        read_doc_mock.assert_called_once()
+        called_path = read_doc_mock.call_args.args[3]
+        assert called_path == f"docs/features/{_FEATURE_ID}/README.md"
 
 
 # ---------------------------------------------------------------------------
