@@ -751,6 +751,7 @@ class TestGetFeatureDetailAndTasks:
                     "owner": "go",
                     "init_pr_url": None,
                     "tasks": [],
+                    "stages": {"tasks": {"review_status": "pending"}},
                 },
             },
         )
@@ -768,6 +769,7 @@ class TestGetFeatureDetailAndTasks:
             "next_action": "write tasks.md",
             "owner": "go",
             "init_pr_url": None,
+            "stages": {"tasks": {"review_status": "pending"}},
         }
 
     @pytest.mark.asyncio

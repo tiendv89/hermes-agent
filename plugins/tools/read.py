@@ -13,9 +13,11 @@ the resolved feature branch), so the agent can load the actual
 ``product-spec.md`` / ``technical-design.md`` / ``status.yaml`` before drafting.
 
 Owner guard: for go-owned features, document content lives in storage-service
-(not git). In that case, this tool proxies to storage-service's document-content
-endpoint using STORAGE_SERVICE_TOKEN instead of reading from GitHub. ts-owned
-and absent-owner features continue to use the git-backed path unchanged.
+(not git) and status lives in workflow-backend's DB. In that case, this tool
+proxies to storage-service's document-content endpoint (using
+STORAGE_SERVICE_TOKEN) for product_spec/technical_design/tasks, and to
+get_feature_detail for status — no git access at all. ts-owned and
+absent-owner features continue to use the git-backed path unchanged.
 """
 
 from __future__ import annotations
@@ -23,6 +25,8 @@ from __future__ import annotations
 import logging
 import os
 from typing import Any, Dict
+
+import yaml
 
 from ..document_repo import read_document
 from ..storage_service_client import StorageServiceError, read_document_content
@@ -139,36 +143,55 @@ def handle_read_document(
 
     # Owner guard: go-owned features proxy to storage-service; ts/absent use git.
     if owner_value == "go":
-        # status.yaml is not stored in storage-service; fall back to git for it.
         if document == "status":
-            pass  # handled below by the git path
-        else:
-            storage_path = _STORAGE_DOC_PATHS.get(document, document)
-            try:
-                result = read_document_content(
-                    wid, fid, storage_path,
-                    user_id=caller_user_id, org_id=caller_org_id,
-                )
-            except StorageServiceError as exc:
-                logger.warning("read_document (go): storage-service error: %s", exc)
-                return {"ok": False, "error": str(exc)}
-            except Exception as exc:
-                logger.warning("read_document (go): unexpected error: %s", exc)
-                return {"ok": False, "error": str(exc)}
-
-            content = result.get("content", "")
-            exists = bool(content)
-            if exists:
-                mark_context_gathered(fid)
+            # go-owned features track status entirely in workflow-backend's DB —
+            # there is no git status.yaml for them (workflow-backend no longer
+            # creates an init branch/PR at feature creation for go). Synthesize
+            # status.yaml-shaped content from the already-fetched feature detail.
+            status_data = {
+                "feature_status": detail.get("status") or "",
+                "current_stage": detail.get("stage") or "",
+                "next_action": detail.get("next_action") or "",
+                "stages": dict(detail.get("stages") or {}),
+            }
+            content = yaml.dump(status_data, default_flow_style=False, allow_unicode=True)
+            mark_context_gathered(fid)
             return {
                 "ok": True,
-                "exists": exists,
+                "exists": True,
                 "document": document,
-                "path": f"storage-service://{wid}/{fid}/{storage_path}",
+                "path": f"workflow-backend://{wid}/{fid}/status",
                 "branch": None,
                 "content": content,
-                "sha": result.get("version_id"),
+                "sha": None,
             }
+
+        storage_path = _STORAGE_DOC_PATHS.get(document, document)
+        try:
+            result = read_document_content(
+                wid, fid, storage_path,
+                user_id=caller_user_id, org_id=caller_org_id,
+            )
+        except StorageServiceError as exc:
+            logger.warning("read_document (go): storage-service error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("read_document (go): unexpected error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+
+        content = result.get("content", "")
+        exists = bool(content)
+        if exists:
+            mark_context_gathered(fid)
+        return {
+            "ok": True,
+            "exists": exists,
+            "document": document,
+            "path": f"storage-service://{wid}/{fid}/{storage_path}",
+            "branch": None,
+            "content": content,
+            "sha": result.get("version_id"),
+        }
 
     # ts-owned (or absent owner, or status.yaml for go): read from git as before.
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()

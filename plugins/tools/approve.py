@@ -21,6 +21,7 @@ import yaml
 import re as _re
 
 from ..document_repo import StaleBaseError, commit_to_branch, read_document
+from ..storage_service_client import read_document_content
 from ..validation import _validate_id
 from .artifacts import _resolve_management_repo
 from src.services.approval_notifications import notify_stage_approved
@@ -527,24 +528,17 @@ def handle(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not github_token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
-
     actor = os.environ.get("GIT_AUTHOR_EMAIL", os.environ.get("HERMES_ACTOR", "agent"))
 
-    try:
-        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
-        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
-
-    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-
-    # Look up feature name, owner, and init PR URL.
+    # Look up feature name, owner, and init PR URL first so we can branch on
+    # owner before requiring GITHUB_TOKEN or resolving the management repo —
+    # go-owned features need neither (workflow-backend no longer creates an
+    # init branch/PR at feature creation for go, see feature_create.go's early
+    # return for owner == "go").
     feature_name: Optional[str] = None
     init_pr_url: Optional[str] = None
     owner: Optional[str] = None
+    detail: Dict[str, Any] = {}
     try:
         detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
         feature_name = detail.get("feature_name")
@@ -553,28 +547,58 @@ def handle(
     except Exception as exc:
         logger.debug("approve_feature: could not fetch feature_detail: %s", exc)
 
-    branch, path = _resolve_status_branch_and_path(
-        gh_owner, gh_repo, fid, feature_name, init_pr_url, base_branch, github_token
-    )
+    branch: Optional[str] = None
+    path: Optional[str] = None
+    current: Dict[str, Any] = {"sha": None}
+    status_data: dict
+    github_token: str = ""
+    gh_owner: str = ""
+    gh_repo: str = ""
 
-    try:
-        current = read_document(gh_owner, gh_repo, branch, path, github_token)
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not read status.yaml: {exc}"}
-
-    if not current["content"]:
-        return {
-            "ok": False,
-            "error": (
-                f"status.yaml not found on branch {branch!r} at {path!r}. "
-                "Ensure the feature was initialized with the init PR flow."
-            ),
+    if owner == "go":
+        # go-owned features track status entirely in workflow-backend's DB —
+        # there is no git branch/status.yaml for them.
+        status_data = {
+            "feature_status": detail.get("status") or "",
+            "current_stage": detail.get("stage") or "",
+            "next_action": detail.get("next_action") or "",
+            "stages": dict(detail.get("stages") or {}),
         }
+    else:
+        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+        if not github_token:
+            return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
 
-    try:
-        status_data: dict = yaml.safe_load(current["content"])
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not parse status.yaml: {exc}"}
+        try:
+            workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
+            gh_owner, gh_repo = _resolve_management_repo(workspace_context)
+        except Exception as exc:
+            return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
+
+        base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
+
+        branch, path = _resolve_status_branch_and_path(
+            gh_owner, gh_repo, fid, feature_name, init_pr_url, base_branch, github_token
+        )
+
+        try:
+            current = read_document(gh_owner, gh_repo, branch, path, github_token)
+        except Exception as exc:
+            return {"ok": False, "error": f"Could not read status.yaml: {exc}"}
+
+        if not current["content"]:
+            return {
+                "ok": False,
+                "error": (
+                    f"status.yaml not found on branch {branch!r} at {path!r}. "
+                    "Ensure the feature was initialized with the init PR flow."
+                ),
+            }
+
+        try:
+            status_data = yaml.safe_load(current["content"])
+        except Exception as exc:
+            return {"ok": False, "error": f"Could not parse status.yaml: {exc}"}
 
     now = _now_utc()
     stage_block = status_data.setdefault("stages", {}).setdefault(stage, {})
@@ -727,45 +751,11 @@ def handle(
     doc_dir = feature_name or fid
 
     if _is_go_tasks_approve:
-        # NEW: go-tasks-approve resumable pipeline — steps a → b → c → d.
-
-        # Step a: promote (git) — commit updated status.yaml to the feature branch.
-        # Skip if status.yaml already shows the tasks stage as approved (resumable).
-        if not already_approved:
-            new_content = yaml.dump(
-                status_data, default_flow_style=False, allow_unicode=True
-            )
-            try:
-                from .tasks_write import _commit_files as _cf
-
-                commit_sha = _cf(
-                    gh_owner,
-                    gh_repo,
-                    branch,
-                    {path: new_content},
-                    commit_msg,
-                    github_token,
-                )
-            except Exception as exc:
-                return {
-                    "ok": False,
-                    "error": (
-                        f"Step a (promote): git commit failed: {exc}. "
-                        "Re-run approve to retry."
-                    ),
-                    "failed_step": "a",
-                }
-
-        # Step b: ensure docs on base (content-keyed — merged PR is a skip, not an error).
-        step_b_error = _ensure_docs_on_base(
-            gh_owner, gh_repo, branch, base_branch, path, github_token
-        )
-        if step_b_error:
-            return {
-                "ok": False,
-                "error": f"Step b (ensure docs on base): {step_b_error} Re-run approve to retry.",
-                "failed_step": "b",
-            }
+        # go-tasks-approve pipeline — status lives entirely in workflow-backend's
+        # DB and docs live in storage-service, so this collapses to: DB status
+        # update, then create/activate tasks. (Previously also committed
+        # status.yaml to git and merged the init PR — both removed now that
+        # workflow-backend no longer creates a git branch/PR for go features.)
 
         # Step c: DB status update (idempotent set).
         try:
@@ -794,31 +784,28 @@ def handle(
             }
 
         # Step d: create tasks via workflow-backend API.
-        # Read tasks.md from base_branch: step b just merged the docs branch into
-        # base, and GitHub's auto-delete-on-merge rule may have removed the feature
-        # branch — so reading from `branch` would 404. base_branch is the
-        # authoritative post-merge location. Fall back to `branch` only if base has
-        # no content and the branch still exists (e.g. auto-delete disabled and a
-        # content-keyed skip left the merge for a later cycle).
-        tasks_md_path = f"docs/features/{doc_dir}/tasks.md"
-        tasks_md_content = ""
-        for read_branch in (base_branch, branch):
-            try:
-                tasks_md_result = read_document(
-                    gh_owner, gh_repo, read_branch, tasks_md_path, github_token
-                )
-            except Exception:
-                continue
-            tasks_md_content = tasks_md_result.get("content", "")
-            if tasks_md_content:
-                break
+        # tasks.md for go-owned features lives in storage-service, not git (see
+        # provisionStorageDocuments in workflow-backend's feature_create.go).
+        try:
+            tasks_md_result = read_document_content(
+                wid, fid, "tasks.md", user_id=caller_user_id, org_id=caller_org_id
+            )
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": (
+                    f"Step d (create tasks): could not read tasks.md from "
+                    f"storage-service: {exc}. Re-run approve to retry."
+                ),
+                "failed_step": "d",
+            }
+        tasks_md_content = tasks_md_result.get("content", "")
         if not tasks_md_content:
             return {
                 "ok": False,
                 "error": (
-                    f"Step d (create tasks): tasks.md not found at {tasks_md_path} "
-                    f"on {base_branch!r} (nor on {branch!r}). "
-                    "Re-run approve to retry."
+                    f"Step d (create tasks): tasks.md not found in storage-service "
+                    f"for feature {fid!r}. Re-run approve to retry."
                 ),
                 "failed_step": "d",
             }

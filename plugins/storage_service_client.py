@@ -15,6 +15,14 @@ Endpoint contract (storage-service):
   PUT  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/features/{fid}/documents/content?path={path}
   path is the document's relative filename within the feature folder (e.g.
   "product_spec.md", "tech_design.md", "tasks.md").
+
+  GET  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/documents/content?path={path}
+  PUT  {STORAGE_SERVICE_URL}/api/workspaces/{wid}/documents/content?path={path}
+  Same handler, no {fid} segment — for a document with no owning feature (a
+  workspace-root file, e.g. one uploaded outside any feature's folder in the
+  Files browser). Pass feature_id="" to read_document_content/
+  write_document_content to hit this variant; path is then the document's
+  location relative to the workspace root instead of a feature folder.
   Headers:
     Authorization: Bearer <STORAGE_SERVICE_TOKEN>
     X-User-Id: <caller user_id>
@@ -87,6 +95,9 @@ def _build_headers(token: str, user_id: str, org_id: str) -> Dict[str, str]:
 
 
 def _content_url(base_url: str, workspace_id: str, feature_id: str, path: str) -> str:
+    if not feature_id:
+        # Workspace-root document — no owning feature (see module docstring).
+        return f"{base_url}/api/workspaces/{workspace_id}/documents/content?path={quote(path, safe='')}"
     return f"{base_url}/api/workspaces/{workspace_id}/features/{feature_id}/documents/content?path={quote(path, safe='')}"
 
 
@@ -148,6 +159,10 @@ def read_document_content(
     org_id: str = "",
 ) -> Dict[str, Any]:
     """Read a document's content from storage-service.
+
+    Pass feature_id="" to read a workspace-root document (no owning
+    feature) — path is then relative to the workspace root instead of a
+    feature folder; see _content_url.
 
     Returns a dict with keys:
       - ``content`` (str): document markdown content, or ``""`` when not found

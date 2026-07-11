@@ -15,6 +15,7 @@ from .tools import (
     artifacts,
     edit as edit_tool,
     read as read_tool,
+    read_workspace_file as read_workspace_file_tool,
     tasks as tasks_tool,
     gitnexus,
     rag,
@@ -120,6 +121,12 @@ _TOOLS = (
         "name": "edit_document",
         "schema": edit_tool.EDIT_DOCUMENT_SCHEMA,
         "handler": edit_tool.handle_edit_document,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "read_workspace_file",
+        "schema": read_workspace_file_tool.SCHEMA,
+        "handler": read_workspace_file_tool.handle,
         "check_fn": check_workflow_available,
     },
     {

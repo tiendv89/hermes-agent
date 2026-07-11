@@ -463,6 +463,7 @@ async def get_feature_detail(
         "next_action": data.get("next_action"),
         "owner": data.get("owner"),
         "init_pr_url": data.get("init_pr_url"),
+        "stages": data.get("stages") or {},
     }
 
 

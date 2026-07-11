@@ -5,7 +5,7 @@ For ts/git features:
     init branch (or feature branch if init is merged).
 
 For go/postgres features:
-  - Commits tasks.md (narrative only) to the init branch.
+  - Writes tasks.md (narrative only) to storage-service — no git involved.
   - Tasks are created in the DB at tasks-stage approval (not during breakdown).
 
 Task YAML schema matches agent-workflow's canonical format:
@@ -26,6 +26,7 @@ import yaml
 
 from ..document_repo import branch_exists
 from ..skills import get_index
+from ..storage_service_client import StorageServiceError, write_document_content
 from ..validation import _validate_id
 from .artifacts import _resolve_management_repo
 from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
@@ -335,16 +336,13 @@ def handle(
             ),
         }
 
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not github_token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
-
     try:
         _validate_id(fid, "feature_id")
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
-    # Feature detail
+    # Feature detail — look this up first so we can branch on owner before
+    # requiring GITHUB_TOKEN. go-owned features don't need it at all.
     feature_name: Optional[str] = None
     init_pr_url: Optional[str] = None
     owner: Optional[str] = None
@@ -358,6 +356,40 @@ def handle(
         feature_name = fid
         owner = "ts"
 
+    # Owner guard: go-owned features write tasks.md to storage-service, not
+    # git — workflow-backend no longer creates a git branch/PR for go features.
+    if owner == "go":
+        try:
+            result = write_document_content(
+                wid, fid, "tasks.md", tasks_md,
+                user_id=caller_user_id, org_id=caller_org_id,
+            )
+        except StorageServiceError as exc:
+            logger.warning("write_tasks (go): storage-service error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            logger.warning("write_tasks (go): unexpected error: %s", exc)
+            return {"ok": False, "error": str(exc)}
+        return {
+            "ok": True,
+            "owner": owner,
+            "branch": None,
+            "commit_sha": None,
+            "version_id": result.get("version_id"),
+            "tasks_committed": len(tasks),
+            "files_written": [f"storage-service://{wid}/{fid}/tasks.md"],
+            "message": (
+                f"Task breakdown written: {len(tasks)} tasks written to storage-service. "
+                "Tasks will be created in the DB at tasks-stage approval "
+                "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
+                "Call approve_feature(stage='tasks') when ready to activate tasks."
+            ),
+        }
+
+    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
+    if not github_token:
+        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
+
     try:
         workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
         gh_owner, gh_repo = _resolve_management_repo(workspace_context)
@@ -368,17 +400,14 @@ def handle(
         gh_owner, gh_repo, fid, feature_name, init_pr_url, github_token
     )
 
-    # Build files to commit
+    # Build files to commit (ts/git: tasks.md narrative + per-task YAML files)
     files: Dict[str, str] = {
         f"docs/features/{doc_dir}/tasks.md": tasks_md,
     }
-
-    if owner != "go":
-        # ts/git: also write per-task YAML files
-        for task in tasks:
-            tid = task["id"]
-            yaml_content = _task_yaml(task, feature_name or fid)
-            files[f"docs/features/{doc_dir}/tasks/{tid}.yaml"] = yaml_content
+    for task in tasks:
+        tid = task["id"]
+        yaml_content = _task_yaml(task, feature_name or fid)
+        files[f"docs/features/{doc_dir}/tasks/{tid}.yaml"] = yaml_content
 
     commit_msg = commit_message or f"feat({feature_name}): add task breakdown ({len(tasks)} tasks)"
 
@@ -397,12 +426,7 @@ def handle(
         "files_written": list(files.keys()),
         "message": (
             f"Task breakdown written: {len(tasks)} tasks committed to {branch}. "
-            + (
-                "Task YAML files written in tasks/. "
-                if owner != "go"
-                else "Tasks will be created in the DB at tasks-stage approval "
-                     "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
-            )
-            + "Call approve_feature(stage='tasks') when ready to activate tasks."
+            "Task YAML files written in tasks/. "
+            "Call approve_feature(stage='tasks') when ready to activate tasks."
         ),
     }

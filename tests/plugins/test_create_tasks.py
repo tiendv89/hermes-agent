@@ -165,7 +165,8 @@ def _run_create_tasks_handle(
     ctx_mock.get_feature_id.return_value = context_feature_id
     sys.modules["plugins.context"] = ctx_mock
 
-    # Patch plugins.document_repo
+    # Patch plugins.document_repo (git path — unused by the default owner="go"
+    # feature detail below, since tasks.md for go lives in storage-service).
     doc_repo_mock = MagicMock()
     if read_document_raises:
         doc_repo_mock.read_document.side_effect = read_document_raises
@@ -177,6 +178,23 @@ def _run_create_tasks_handle(
         )
         doc_repo_mock.read_document.return_value = {"content": content, "sha": "sha123"}
     sys.modules["plugins.document_repo"] = doc_repo_mock
+
+    # Patch plugins.storage_service_client — go-owned features (the default
+    # here) read tasks.md from storage-service, not git.
+    storage_mock = MagicMock()
+    if read_document_raises:
+        storage_mock.read_document_content.side_effect = read_document_raises
+    else:
+        content = (
+            read_document_content
+            if read_document_content is not None
+            else tasks_content
+        )
+        storage_mock.read_document_content.return_value = {
+            "content": content,
+            "version_id": "v1",
+        }
+    sys.modules["plugins.storage_service_client"] = storage_mock
 
     # Patch plugins.tools.approve — provides _resolve_status_branch_and_path and
     # _run_async_create_tasks

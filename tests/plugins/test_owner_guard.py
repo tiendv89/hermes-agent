@@ -54,7 +54,7 @@ def _make_workspace_context():
     }
 
 
-def _make_feature_detail(owner: str = "ts"):
+def _make_feature_detail(owner: str = "ts", stages: dict | None = None):
     return {
         "feature_name": _FEATURE_ID,
         "title": "My Feature",
@@ -62,6 +62,7 @@ def _make_feature_detail(owner: str = "ts"):
         "status": "in_design",
         "owner": owner,
         "init_pr_url": None,
+        "stages": stages if stages is not None else {},
     }
 
 
@@ -288,15 +289,17 @@ class TestReadDocumentGoOwner:
         assert result["exists"] is False
         assert result["content"] == ""
 
-    def test_go_owned_status_falls_back_to_git(self, monkeypatch):
-        """go-owned feature: status.yaml falls back to git (not in storage-service)."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        mod, fake_ssc = self._load(_make_feature_detail(owner="go"))
+    def test_go_owned_status_reads_from_db_not_git_or_storage(self, monkeypatch):
+        """go-owned feature: status is synthesized from get_feature_detail's DB
+        fields — no git, no storage-service. workflow-backend no longer creates
+        a git branch/PR for go features, so status.yaml doesn't exist for them."""
+        stages = {"product_spec": {"review_status": "draft"}}
+        mod, fake_ssc = self._load(_make_feature_detail(owner="go", stages=stages))
 
-        read_doc_mock = MagicMock(return_value={"content": "feature_id: my-feature\n", "sha": "statussha"})
+        read_doc_mock = MagicMock(
+            side_effect=AssertionError("git must not be touched for go features")
+        )
         mod.read_document = read_doc_mock
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._resolve_document_branch = MagicMock(return_value=(f"feature/{_FEATURE_ID}", None))
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -305,16 +308,22 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            mod.handle_read_document(
+            result = mod.handle_read_document(
                 document="status",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
             )
 
-        # storage-service must NOT have been called
+        assert result["ok"] is True, result.get("error")
+        assert result["exists"] is True
+        assert result["branch"] is None
+        # storage-service must NOT have been called (status isn't stored there either)
         fake_ssc.read_document_content.assert_not_called()
-        # git path must have been used
-        read_doc_mock.assert_called_once()
+        # git path must NOT have been used
+        read_doc_mock.assert_not_called()
+        # content reflects the DB-sourced fields
+        assert "in_design" in result["content"]
+        assert "product_spec" in result["content"]
 
     def test_go_owned_storage_service_error_returns_ok_false(self):
         """go-owned feature: storage-service error → ok=False."""

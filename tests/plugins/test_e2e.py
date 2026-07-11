@@ -4,10 +4,11 @@ Tests simulate multi-call sequences and state transitions across multiple tool i
 distinguishing them from the unit tests in test_approve_t5.py and test_create_tasks_t6.py.
 
 Subtask coverage:
-  1. Full pipeline: spec/design approve → breakdown (tasks.md only, no DB write) →
-     tasks approve (a→b→c→d) → tasks in DB via API.
-  2. Resumable approve: inject failure at b → re-run completes a-skipped + b→c→d;
-     inject failure at d → re-run detects already-on-base + idempotent c + d.
+  1. Full pipeline (go): spec/design approve (DB-only) → breakdown (tasks.md to
+     storage-service) → tasks approve (DB update, then create tasks read from
+     storage-service) → tasks in DB via API. No git anywhere for go.
+  2. Resumable approve: inject failure at the DB update step (formerly "step c")
+     → re-run completes idempotently (DB update + task creation/activation).
   3. Backup /create-tasks: guard reject notification (feature_not_tasks_approved);
      success; tasks-exist no-op.
 """
@@ -183,7 +184,7 @@ def _make_workspace_context():
     }
 
 
-def _make_feature_detail(owner="go", stage="tasks"):
+def _make_feature_detail(owner="go", stage="tasks", stages=None):
     return {
         "feature_name": _FEATURE_ID,
         "title": "E2E Feature",
@@ -192,7 +193,39 @@ def _make_feature_detail(owner="go", stage="tasks"):
         "next_action": "Awaiting approval.",
         "owner": owner,
         "init_pr_url": None,
+        "stages": stages if stages is not None else {},
     }
+
+
+# Per-stage "stages" JSONB for a go feature with tasks stage in draft (before
+# first approve call) — mirrors workflow-backend's workspace_features table.
+_STAGES_TASKS_DRAFT = {
+    "tasks": {
+        "review_status": "draft",
+        "reviewed_by": None,
+        "reviewed_at": None,
+        "review_comment": None,
+        "review_history": [],
+    }
+}
+
+# "stages" for a feature that already shows tasks approved (resume testing).
+_STAGES_TASKS_APPROVED = {
+    "tasks": {
+        "review_status": "approved",
+        "reviewed_by": "agent@e2e.test",
+        "reviewed_at": "2026-07-03T12:00:00+0000",
+        "review_comment": None,
+        "review_history": [
+            {
+                "review_status": "approved",
+                "reviewed_by": "agent@e2e.test",
+                "reviewed_at": "2026-07-03T12:00:00+0000",
+                "comment": None,
+            }
+        ],
+    }
+}
 
 
 def _make_read_document(status_content=_STATUS_YAML_TASKS_DRAFT, tasks_content=_TASKS_MD):
@@ -270,8 +303,19 @@ def _setup_create_tasks_sys_modules(
     sys.modules["plugins.context"] = ctx_mock
 
     doc_repo_mock = MagicMock()
-    doc_repo_mock.read_document.return_value = {"content": tasks_content, "sha": _TASKS_MD_SHA}
+    doc_repo_mock.read_document.side_effect = AssertionError(
+        "git read_document must not be called for go features"
+    )
     sys.modules["plugins.document_repo"] = doc_repo_mock
+
+    # go-owned features (the default here — see _make_feature_detail) read
+    # tasks.md from storage-service, not git.
+    storage_mock = MagicMock()
+    storage_mock.read_document_content.return_value = {
+        "content": tasks_content,
+        "version_id": "v1",
+    }
+    sys.modules["plugins.storage_service_client"] = storage_mock
 
     approve_mock = MagicMock()
     approve_mock._resolve_status_branch_and_path.return_value = (
@@ -311,28 +355,33 @@ class TestE2EFullPipeline:
     runs the full a→b→c→d pipeline and creates tasks via the API.
     """
 
-    def _approve_stage_go(self, monkeypatch, stage, status_content):
-        """Run approve.handle() for a go feature at the given stage with mocked deps."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
+    def _approve_stage_go(self, monkeypatch, stage, stages):
+        """Run approve.handle() for a go feature at the given stage with mocked deps.
+
+        go features never touch git — read_document/commit_to_branch are
+        stubbed to raise if called, so any accidental git touch fails loudly.
+        """
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         update_mock = AsyncMock()
-        commit_to_branch_mock = MagicMock(return_value=_COMMIT_SHA)
 
         mod = _load_approve_mod()
         mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail(stage=stage))
-        mod.update_feature_stage = update_mock
-        mod.read_document = MagicMock(
-            return_value={"content": status_content, "sha": _STATUS_SHA}
+        mod.get_feature_detail = AsyncMock(
+            return_value=_make_feature_detail(stage=stage, stages=stages)
         )
+        mod.update_feature_stage = update_mock
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod.commit_to_branch = commit_to_branch_mock
+        mod.read_document = MagicMock(
+            side_effect=AssertionError("git must not be touched for go features")
+        )
+        mod.commit_to_branch = MagicMock(
+            side_effect=AssertionError("git must not be touched for go features")
+        )
 
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=True),
-            patch("plugins.tools.tasks_write._commit_files", MagicMock()),
+        with patch(
+            "plugins.tools.tasks_write._commit_files",
+            side_effect=AssertionError("git must not be touched for go features"),
         ):
             result = mod.handle(
                 stage=stage,
@@ -341,36 +390,43 @@ class TestE2EFullPipeline:
                 feature_id=_FEATURE_ID,
             )
 
-        return result, update_mock, commit_to_branch_mock
+        return result, update_mock
 
     def test_product_spec_approve_uses_db_only_for_go_feature(self, monkeypatch):
-        """go feature: product_spec approve calls DB update, no a→b→c→d pipeline."""
-        result, update_mock, commit_mock = self._approve_stage_go(
-            monkeypatch, "product_spec", _STATUS_YAML_PRODUCT_SPEC_DRAFT
-        )
-        assert result["ok"] is True
+        """go feature: product_spec approve calls DB update only — no git."""
+        stages = {
+            "product_spec": {
+                "review_status": "draft",
+                "reviewed_by": None,
+                "reviewed_at": None,
+                "review_comment": None,
+                "review_history": [],
+            }
+        }
+        result, update_mock = self._approve_stage_go(monkeypatch, "product_spec", stages)
+        assert result["ok"] is True, result.get("error")
         update_mock.assert_called_once()
-        commit_mock.assert_not_called()
 
     def test_technical_design_approve_uses_db_only_for_go_feature(self, monkeypatch):
-        """go feature: technical_design approve calls DB update, no pipeline."""
-        result, update_mock, commit_mock = self._approve_stage_go(
-            monkeypatch, "technical_design", _STATUS_YAML_TECHNICAL_DESIGN_DRAFT
+        """go feature: technical_design approve calls DB update only — no git."""
+        stages = {
+            "technical_design": {
+                "review_status": "draft",
+                "reviewed_by": None,
+                "reviewed_at": None,
+                "review_comment": None,
+                "review_history": [],
+            }
+        }
+        result, update_mock = self._approve_stage_go(
+            monkeypatch, "technical_design", stages
         )
-        assert result["ok"] is True
+        assert result["ok"] is True, result.get("error")
         update_mock.assert_called_once()
-        commit_mock.assert_not_called()
 
-    def test_write_tasks_go_branch_no_db_insert(self, monkeypatch):
-        """write_tasks for go features commits tasks.md only — no DB write."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-
-        committed_files = {}
-
-        def fake_commit_files(gh_owner, gh_repo, branch, files, commit_msg, github_token):
-            committed_files.update(files)
-            return _COMMIT_SHA
+    def test_write_tasks_go_branch_no_git(self, monkeypatch):
+        """write_tasks for go features writes tasks.md to storage-service — no git."""
+        write_content_mock = MagicMock(return_value={"version_id": "v1"})
 
         with (
             patch("plugins.tools.gitnexus.list_indexed_repos", return_value=None),
@@ -382,23 +438,11 @@ class TestE2EFullPipeline:
                     "owner": "go",
                 },
             ),
-            patch(
-                "plugins.tools.tasks_write.get_workspace_context",
-                return_value=_make_workspace_context(),
-            ),
-            patch(
-                "plugins.tools.artifacts._resolve_management_repo",
-                return_value=(_OWNER, _REPO),
-            ),
-            patch(
-                "plugins.tools.tasks_write.branch_exists",
-                return_value=False,
-            ),
+            patch("plugins.tools.tasks_write.write_document_content", write_content_mock),
             patch(
                 "plugins.tools.tasks_write._commit_files",
-                side_effect=fake_commit_files,
+                side_effect=AssertionError("git must not be touched for go features"),
             ),
-            patch.dict("os.environ", {"GITHUB_TOKEN": _GITHUB_TOKEN}),
         ):
             from plugins.tools.tasks_write import handle as write_tasks_handle
 
@@ -414,41 +458,47 @@ class TestE2EFullPipeline:
             )
 
         assert result.get("ok") is True, result.get("error")
-        assert any("tasks.md" in p for p in committed_files), "tasks.md not committed"
-        yaml_files = [p for p in committed_files if "/tasks/T" in p and p.endswith(".yaml")]
-        assert yaml_files == [], f"go branch must not commit task YAMLs: {yaml_files}"
-        assert result.get("db_tasks_inserted") is None
+        write_content_mock.assert_called_once()
+        call = write_content_mock.call_args
+        assert call.args[0] == _WORKSPACE_ID
+        assert call.args[1] == _FEATURE_ID
+        assert call.args[2] == "tasks.md"
+        assert call.args[3] == _TASKS_MD
+        assert result.get("branch") is None
+        assert result.get("commit_sha") is None
 
-    def test_tasks_stage_approve_runs_full_pipeline_a_b_c_d(self, monkeypatch):
-        """Tasks-stage approve (go) runs all four steps in order and succeeds."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
+    def test_tasks_stage_approve_runs_db_and_task_creation(self, monkeypatch):
+        """Tasks-stage approve (go): DB update, then create/activate tasks — no git."""
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
-        commit_mock = MagicMock(return_value=_COMMIT_SHA)
-        merge_mock = MagicMock()
         update_mock = AsyncMock()
         create_tasks_mock = MagicMock(return_value={"tasks": [{"id": "T1"}, {"id": "T2"}]})
         activate_mock = MagicMock(return_value=["T1"])
-        open_prs = [_make_open_pr(1)]
+        read_content_mock = MagicMock(
+            return_value={"content": _TASKS_MD, "version_id": "v1"}
+        )
 
         mod = _load_approve_mod()
         mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
+        mod.get_feature_detail = AsyncMock(
+            return_value=_make_feature_detail(stages=_STAGES_TASKS_DRAFT)
+        )
         mod.update_feature_stage = update_mock
-        mod.read_document = MagicMock(side_effect=_make_read_document())
+        mod.read_document_content = read_content_mock
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._read_status_yaml_on_branch = MagicMock(return_value=None)
-        mod._find_open_prs = MagicMock(return_value=open_prs)
-        mod._merge_pr = merge_mock
         mod._run_async_create_tasks = create_tasks_mock
         mod._activate_tasks_db = activate_mock
+        mod.read_document = MagicMock(
+            side_effect=AssertionError("git must not be touched for go features")
+        )
+        mod.commit_to_branch = MagicMock(
+            side_effect=AssertionError("git must not be touched for go features")
+        )
 
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=False),
-            patch("plugins.tools.tasks_write._commit_files", commit_mock),
+        with patch(
+            "plugins.tools.tasks_write._commit_files",
+            side_effect=AssertionError("git must not be touched for go features"),
         ):
-            mod.commit_to_branch = MagicMock(return_value=_COMMIT_SHA)
             result = mod.handle(
                 stage="tasks",
                 action="approve",
@@ -457,55 +507,50 @@ class TestE2EFullPipeline:
             )
 
         assert result["ok"] is True, result.get("error")
-        # Step a: commit
-        commit_mock.assert_called_once()
-        # Step b: PR merged
-        merge_mock.assert_called_once_with(_OWNER, _REPO, 1, _GITHUB_TOKEN)
-        # Step c: DB update
+        # tasks.md read from storage-service
+        read_content_mock.assert_called_once()
+        assert read_content_mock.call_args.args[2] == "tasks.md"
+        # DB update
         update_mock.assert_called_once()
         update_call = update_mock.call_args[1]
         assert update_call["stage"] == "tasks"
         assert update_call["review_status"] == "approved"
-        # Step d: tasks created via API — parsed task list (not raw tasks.md)
+        # Tasks created via API — parsed task list (not raw tasks.md)
         create_tasks_mock.assert_called_once()
         d_call = create_tasks_mock.call_args
         assert d_call.args[0] == _WORKSPACE_ID
         assert d_call.args[1] == _FEATURE_ID
         assert [t["name"] for t in d_call.args[2]] == ["T1", "T2"]
+        assert result["commit_sha"] == ""
+        assert result["branch"] is None
 
     def test_tasks_stage_approve_result_includes_activated_tasks(self, monkeypatch):
-        """After the full pipeline, the result reports activated tasks."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
+        """After the pipeline, the result reports activated tasks."""
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         activated = ["T1", "T2"]
 
         mod = _load_approve_mod()
         mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
+        mod.get_feature_detail = AsyncMock(
+            return_value=_make_feature_detail(stages=_STAGES_TASKS_DRAFT)
+        )
         mod.update_feature_stage = AsyncMock()
-        mod.read_document = MagicMock(side_effect=_make_read_document())
+        mod.read_document_content = MagicMock(
+            return_value={"content": _TASKS_MD, "version_id": "v1"}
+        )
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._read_status_yaml_on_branch = MagicMock(return_value=None)
-        mod._find_open_prs = MagicMock(return_value=[_make_open_pr(2)])
-        mod._merge_pr = MagicMock()
         mod._run_async_create_tasks = MagicMock(return_value={"tasks": []})
         mod._activate_tasks_db = MagicMock(return_value=activated)
 
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=False),
-            patch("plugins.tools.tasks_write._commit_files", MagicMock(return_value=_COMMIT_SHA)),
-        ):
-            mod.commit_to_branch = MagicMock(return_value=_COMMIT_SHA)
-            result = mod.handle(
-                stage="tasks",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
+        result = mod.handle(
+            stage="tasks",
+            action="approve",
+            workspace_id=_WORKSPACE_ID,
+            feature_id=_FEATURE_ID,
+        )
 
-        assert result["ok"] is True
+        assert result["ok"] is True, result.get("error")
         assert result.get("activated_tasks") == activated
 
 
@@ -514,164 +559,33 @@ class TestE2EFullPipeline:
 # ---------------------------------------------------------------------------
 
 
-class TestE2EResumableApproveAfterStepBFailure:
-    """Simulate: first call to handle() fails at step b; second call resumes from b."""
+class TestE2EResumableApproveAfterDbUpdateFailure:
+    """Simulate: first call fails at the DB status update; second call resumes
+    and completes without duplication. go features have no git steps to skip
+    on resume — DB update and task creation are both naturally idempotent.
+    """
 
-    def _first_call_fails_at_b(self, monkeypatch):
-        """First approve call fails at step b (zero matching PRs)."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
-        commit_mock = MagicMock(return_value=_COMMIT_SHA)
-        update_mock = AsyncMock()
-        create_mock = MagicMock()
-
-        mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
-        mod.update_feature_stage = update_mock
-        mod.read_document = MagicMock(side_effect=_make_read_document(_STATUS_YAML_TASKS_DRAFT))
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._read_status_yaml_on_branch = MagicMock(return_value=None)
-        mod._find_open_prs = MagicMock(return_value=[])  # zero PRs → halt at b
-        mod._merge_pr = MagicMock()
-        mod._run_async_create_tasks = create_mock
-        mod._activate_tasks_db = MagicMock(return_value=[])
-
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=False),
-            patch("plugins.tools.tasks_write._commit_files", commit_mock),
-        ):
-            mod.commit_to_branch = MagicMock(return_value=_COMMIT_SHA)
-            result = mod.handle(
-                stage="tasks",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        return result, commit_mock, update_mock, create_mock
-
-    def test_first_call_fails_at_b_with_ok_false(self, monkeypatch):
-        result, _, _, _ = self._first_call_fails_at_b(monkeypatch)
-        assert result["ok"] is False
-        assert result.get("failed_step") == "b"
-
-    def test_first_call_commits_step_a_before_b_failure(self, monkeypatch):
-        """Step a (git commit) runs even though step b fails — it runs first."""
-        result, commit_mock, _, _ = self._first_call_fails_at_b(monkeypatch)
-        assert result["failed_step"] == "b"
-        commit_mock.assert_called_once()
-
-    def test_first_call_does_not_call_update_stage_on_b_failure(self, monkeypatch):
-        """Step c (DB update) is never reached when step b fails."""
-        result, _, update_mock, _ = self._first_call_fails_at_b(monkeypatch)
-        assert result["failed_step"] == "b"
-        update_mock.assert_not_called()
-
-    def test_first_call_does_not_create_tasks_on_b_failure(self, monkeypatch):
-        """Step d (create tasks) is never reached when step b fails."""
-        result, _, _, create_mock = self._first_call_fails_at_b(monkeypatch)
-        assert result["failed_step"] == "b"
-        create_mock.assert_not_called()
-
-    def _second_call_after_b_failure(self, monkeypatch, open_prs=None):
-        """Second call with status.yaml already showing approved (step a persisted)."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
-        if open_prs is None:
-            open_prs = [_make_open_pr(10)]
-
-        commit_mock = MagicMock(return_value=_COMMIT_SHA)
-        update_mock = AsyncMock()
-        create_mock = MagicMock(return_value={"tasks": []})
-        merge_mock = MagicMock()
-
-        mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
-        mod.update_feature_stage = update_mock
-        # Status now shows approved (step a committed it in first call)
-        mod.read_document = MagicMock(
-            side_effect=_make_read_document(_STATUS_YAML_TASKS_APPROVED)
-        )
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._read_status_yaml_on_branch = MagicMock(return_value=None)
-        mod._find_open_prs = MagicMock(return_value=open_prs)
-        mod._merge_pr = merge_mock
-        mod._run_async_create_tasks = create_mock
-        mod._activate_tasks_db = MagicMock(return_value=["T1"])
-
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=False),
-            patch("plugins.tools.tasks_write._commit_files", commit_mock),
-        ):
-            mod.commit_to_branch = MagicMock(return_value=_COMMIT_SHA)
-            result = mod.handle(
-                stage="tasks",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        return result, commit_mock, update_mock, merge_mock, create_mock
-
-    def test_second_call_skips_step_a_and_completes(self, monkeypatch):
-        """Re-run with status.yaml already approved: step a skipped, b→c→d complete."""
-        result, commit_mock, update_mock, merge_mock, create_mock = (
-            self._second_call_after_b_failure(monkeypatch)
-        )
-        assert result["ok"] is True, result.get("error")
-        commit_mock.assert_not_called()
-        merge_mock.assert_called_once()
-        update_mock.assert_called_once()
-        create_mock.assert_called_once()
-
-    def test_second_call_result_ok_true_no_failed_step(self, monkeypatch):
-        """Re-run after step b failure: result ok=True and no failed_step."""
-        result, _, _, _, _ = self._second_call_after_b_failure(monkeypatch)
-        assert result["ok"] is True
-        assert "failed_step" not in result
-
-
-class TestE2EResumableApproveAfterStepDFailure:
-    """Simulate: first call fails at step d; second call resumes and completes without duplication."""
-
-    def _second_call_after_d_failure(
-        self, monkeypatch, *, create_tasks_side_effect=None
+    def _run(
+        self,
+        monkeypatch,
+        *,
+        stages=None,
+        update_feature_stage_raises=None,
+        create_tasks_side_effect=None,
     ):
-        """Run approve after d-failure: status approved, docs already on base.
-
-        Patches src.services.workflow_backend_client so that inline
-        ``from src.services.workflow_backend_client import WorkflowBackendError``
-        inside approve.handle() resolves to our _WorkflowBackendError stand-in.
-        This lets callers raise _WorkflowBackendError and have it caught correctly.
+        """Run approve with src.services.workflow_backend_client stubbed so that
+        the inline ``from ... import WorkflowBackendError`` inside
+        approve.handle() resolves to our _WorkflowBackendError stand-in.
         """
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
-        import yaml as _yaml
 
         if create_tasks_side_effect is None:
             create_tasks_side_effect = MagicMock(return_value={"tasks": []})
 
-        commit_mock = MagicMock(return_value=_COMMIT_SHA)
         update_mock = AsyncMock()
-        merge_mock = MagicMock()
+        if update_feature_stage_raises:
+            update_mock.side_effect = update_feature_stage_raises
 
-        # Parse the approved status for the "already on base" check
-        _approved_status = _yaml.safe_load(_STATUS_YAML_TASKS_APPROVED)
-
-        # Inject the workflow_backend_client stub so the inline import inside
-        # approve.handle() gets our _WorkflowBackendError stand-in. run_async
-        # must stay the real bridge (approve.py's module-level `run_async`
-        # name is bound to this stub at reload time, and its own callers
-        # below only override get_workspace_context/get_feature_detail/
-        # update_feature_stage, not run_async itself).
         from src.services.workflow_backend_client import run_async as _real_run_async
 
         wbc_stub = MagicMock()
@@ -681,60 +595,58 @@ class TestE2EResumableApproveAfterStepDFailure:
 
         mod = _load_approve_mod()
         mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail())
+        mod.get_feature_detail = AsyncMock(
+            return_value=_make_feature_detail(stages=stages or _STAGES_TASKS_DRAFT)
+        )
         mod.update_feature_stage = update_mock
-        # Status already approved (step a already done)
-        mod.read_document = MagicMock(
-            side_effect=_make_read_document(_STATUS_YAML_TASKS_APPROVED)
+        mod.read_document_content = MagicMock(
+            return_value={"content": _TASKS_MD, "version_id": "v1"}
         )
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        # Step b: docs already on base → skip (return approved status)
-        mod._read_status_yaml_on_branch = MagicMock(return_value=_approved_status)
-        mod._find_open_prs = MagicMock(return_value=[])
-        mod._merge_pr = merge_mock
         mod._run_async_create_tasks = create_tasks_side_effect
         mod._activate_tasks_db = MagicMock(return_value=[])
 
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=False),
-            patch("plugins.tools.tasks_write._commit_files", commit_mock),
-        ):
-            mod.commit_to_branch = MagicMock(return_value=_COMMIT_SHA)
-            result = mod.handle(
-                stage="tasks",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        return result, commit_mock, update_mock, merge_mock, create_tasks_side_effect
-
-    def test_second_call_skips_step_a(self, monkeypatch):
-        """After d-failure, re-run with approved status: step a (commit) is skipped."""
-        result, commit_mock, _, _, _ = self._second_call_after_d_failure(monkeypatch)
-        commit_mock.assert_not_called()
-
-    def test_second_call_skips_step_b_when_already_on_base(self, monkeypatch):
-        """After d-failure, re-run: step b skips (docs already on base), no PR merge."""
-        _, _, _, merge_mock, _ = self._second_call_after_d_failure(monkeypatch)
-        merge_mock.assert_not_called()
-
-    def test_second_call_runs_step_c(self, monkeypatch):
-        """After d-failure, re-run: step c (DB update) still runs (idempotent)."""
-        _, _, update_mock, _, _ = self._second_call_after_d_failure(monkeypatch)
-        update_mock.assert_called_once()
-
-    def test_second_call_runs_step_d_and_succeeds(self, monkeypatch):
-        """After d-failure, re-run: step d (create tasks) runs and succeeds."""
-        create_mock = MagicMock(return_value={"tasks": [{"id": "T1"}, {"id": "T2"}]})
-        result, _, _, _, _ = self._second_call_after_d_failure(
-            monkeypatch, create_tasks_side_effect=create_mock
+        result = mod.handle(
+            stage="tasks",
+            action="approve",
+            workspace_id=_WORKSPACE_ID,
+            feature_id=_FEATURE_ID,
         )
-        assert result["ok"] is True
+
+        return result, update_mock, create_tasks_side_effect
+
+    def test_first_call_fails_at_db_update(self, monkeypatch):
+        result, _, _ = self._run(
+            monkeypatch, update_feature_stage_raises=Exception("DB connection lost")
+        )
+        assert result["ok"] is False
+        assert result.get("failed_step") == "c"
+
+    def test_first_call_does_not_create_tasks_on_db_failure(self, monkeypatch):
+        create_mock = MagicMock(return_value={"tasks": []})
+        _, _, create_mock = self._run(
+            monkeypatch,
+            update_feature_stage_raises=Exception("DB error"),
+            create_tasks_side_effect=create_mock,
+        )
+        create_mock.assert_not_called()
+
+    def test_second_call_resumes_and_completes(self, monkeypatch):
+        """Re-run after DB failure (stages now show approved): DB update and
+        task creation both run again, idempotently, and succeed."""
+        create_mock = MagicMock(return_value={"tasks": [{"id": "T1"}, {"id": "T2"}]})
+        result, update_mock, _ = self._run(
+            monkeypatch,
+            stages=_STAGES_TASKS_APPROVED,
+            create_tasks_side_effect=create_mock,
+        )
+        assert result["ok"] is True, result.get("error")
+        assert "failed_step" not in result
+        update_mock.assert_called_once()
         create_mock.assert_called_once()
 
     def test_second_call_tasks_already_exist_is_safe_no_op(self, monkeypatch):
-        """After d-failure, if tasks were already created (by another path), it's a safe no-op."""
+        """If tasks were already created (by another path), it's a safe no-op."""
         already_exist = MagicMock(
             side_effect=_WorkflowBackendError(
                 "tasks already exist",
@@ -742,15 +654,16 @@ class TestE2EResumableApproveAfterStepDFailure:
                 status=409,
             )
         )
-        result, _, _, _, _ = self._second_call_after_d_failure(
-            monkeypatch, create_tasks_side_effect=already_exist
+        result, _, _ = self._run(
+            monkeypatch,
+            stages=_STAGES_TASKS_APPROVED,
+            create_tasks_side_effect=already_exist,
         )
-        # tasks_already_exist is treated as ok=True (idempotent)
         assert result["ok"] is True
         assert result.get("failed_step") is None
 
     def test_second_call_no_duplication_when_tasks_exist(self, monkeypatch):
-        """Re-run after d-failure with tasks_already_exist: does not retry creation."""
+        """Re-run with tasks_already_exist: creation is attempted (not retried) once."""
         create_mock = MagicMock(
             side_effect=_WorkflowBackendError(
                 "tasks already exist",
@@ -758,10 +671,11 @@ class TestE2EResumableApproveAfterStepDFailure:
                 status=409,
             )
         )
-        result, _, _, _, _ = self._second_call_after_d_failure(
-            monkeypatch, create_tasks_side_effect=create_mock
+        result, _, _ = self._run(
+            monkeypatch,
+            stages=_STAGES_TASKS_APPROVED,
+            create_tasks_side_effect=create_mock,
         )
-        # Called once (attempted), not zero
         create_mock.assert_called_once()
         assert result["ok"] is True
 

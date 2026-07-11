@@ -1,10 +1,11 @@
-"""Tests for T2 — write_tasks go-branch stops at tasks.md (removes DB insert).
+"""Tests for write_tasks go-branch: writes tasks.md to storage-service, no git.
 
 Covers:
-  - go write_tasks: commits tasks.md only, performs NO DB write, writes no tasks/ YAMLs
+  - go write_tasks: writes tasks.md to storage-service only — no git touched at all,
+    no DB write, no tasks/ YAMLs
   - go write_tasks: return payload has no db_tasks_inserted field
   - go write_tasks: message reflects deferred DB creation (at tasks-stage approval)
-  - ts write_tasks: behavior unchanged — tasks.md + per-task YAMLs committed
+  - ts write_tasks: behavior unchanged — tasks.md + per-task YAMLs committed to git
   - ts write_tasks: message reflects YAML files written
 """
 
@@ -63,14 +64,14 @@ def _invoke_handle(owner: str, tasks=None, tasks_md="# Tasks\n"):
 
 
 class TestGoWriteTasksNoDbInsert:
-    """go write_tasks commits tasks.md only — no DB write, no per-task YAMLs."""
+    """go write_tasks writes tasks.md to storage-service only — no git, no DB write."""
 
-    def _run(self, *, branch_exists_val=False):
-        committed_files = {}
+    def _run(self):
+        write_calls = []
 
-        def fake_commit_files(gh_owner, gh_repo, branch, files, commit_msg, github_token):
-            committed_files.update(files)
-            return "abc123"
+        def fake_write_document_content(workspace_id, feature_id, path, content, **kw):
+            write_calls.append((workspace_id, feature_id, path, content))
+            return {"ok": True, "version_id": "v1"}
 
         with (
             patch("plugins.tools.gitnexus.list_indexed_repos", return_value=None),
@@ -83,41 +84,30 @@ class TestGoWriteTasksNoDbInsert:
                 },
             ),
             patch(
-                "plugins.tools.tasks_write.get_workspace_context",
-                return_value=_make_workspace_context(),
-            ),
-            patch(
-                "plugins.tools.artifacts._resolve_management_repo",
-                return_value=("org", "mgmt"),
-            ),
-            patch(
-                "plugins.tools.tasks_write.branch_exists",
-                return_value=branch_exists_val,
+                "plugins.tools.tasks_write.write_document_content",
+                side_effect=fake_write_document_content,
             ),
             patch(
                 "plugins.tools.tasks_write._commit_files",
-                side_effect=fake_commit_files,
+                side_effect=AssertionError("git must not be touched for go features"),
             ),
-            patch.dict("os.environ", {"GITHUB_TOKEN": "ghp_test"}),
         ):
             result = _invoke_handle("go")
 
-        return result, committed_files
+        return result, write_calls
 
     def test_returns_ok_true(self):
         result, _ = self._run()
-        assert result["ok"] is True
+        assert result["ok"] is True, result.get("error")
 
-    def test_only_tasks_md_committed(self):
-        _, committed_files = self._run()
-        paths = list(committed_files.keys())
-        assert len(paths) == 1
-        assert paths[0].endswith("tasks.md")
-
-    def test_no_task_yaml_files_committed(self):
-        _, committed_files = self._run()
-        yaml_files = [p for p in committed_files if "/tasks/T" in p and p.endswith(".yaml")]
-        assert yaml_files == [], f"Expected no task YAML files, got: {yaml_files}"
+    def test_writes_tasks_md_to_storage_service(self):
+        _, write_calls = self._run()
+        assert len(write_calls) == 1
+        workspace_id, feature_id, path, content = write_calls[0]
+        assert workspace_id == "ws-1"
+        assert feature_id == "feat-1"
+        assert path == "tasks.md"
+        assert content == "# Tasks\n"
 
     def test_no_db_tasks_inserted_field(self):
         result, _ = self._run()
@@ -137,15 +127,18 @@ class TestGoWriteTasksNoDbInsert:
         result, _ = self._run()
         assert result["owner"] == "go"
 
+    def test_branch_and_commit_sha_are_none(self):
+        result, _ = self._run()
+        assert result["branch"] is None
+        assert result["commit_sha"] is None
+
     def test_tasks_committed_count(self):
         result, _ = self._run()
         assert result["tasks_committed"] == 2
 
     def test_files_written_contains_only_tasks_md(self):
         result, _ = self._run()
-        assert all("tasks.md" in f or not f.endswith(".yaml") for f in result["files_written"])
-        yaml_files = [f for f in result["files_written"] if "/tasks/T" in f]
-        assert yaml_files == []
+        assert result["files_written"] == ["storage-service://ws-1/feat-1/tasks.md"]
 
     def test_no_db_insert_called(self):
         """Verify _insert_tasks_to_db does not exist on the module."""

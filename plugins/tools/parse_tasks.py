@@ -190,8 +190,6 @@ def handle(
                 ),
             }
         github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-        if not github_token:
-            return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
 
         loaded = load_feature_tasks_md(wid, fid, github_token)
         if not loaded.get("ok"):
