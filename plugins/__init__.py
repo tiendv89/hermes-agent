@@ -119,6 +119,12 @@ _TOOLS = (
         "check_fn": check_workflow_available,
     },
     {
+        "name": "read_file",
+        "schema": read_tool.READ_DOCUMENT_SCHEMA,
+        "handler": read_tool.handle_read_file,
+        "check_fn": check_workflow_available,
+    },
+    {
         "name": "edit_document",
         "schema": edit_tool.EDIT_DOCUMENT_SCHEMA,
         "handler": edit_tool.handle_edit_document,
