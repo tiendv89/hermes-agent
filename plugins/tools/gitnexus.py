@@ -28,12 +28,12 @@ import time
 from typing import Any, Dict, List, Optional
 
 from ..mcp_client import call_mcp_tool, coerce_text
-from src.services.workflow_backend_client import resolve_workspace_slug
 
 logger = logging.getLogger(__name__)
 
 _REPO_CACHE_TTL = float(os.environ.get("GITNEXUS_REPO_CACHE_TTL", "600"))
-# Keyed by resolved workspace slug.
+# Keyed by workspace_id (workflow-backend's workspaces.id, a UUID — no
+# slug resolution; matches rag-service's convention).
 _repo_cache: Dict[str, Dict[str, Any]] = {}
 
 # Operations exposed by the wrapper, mapped to live GitNexus MCP tools.
@@ -150,14 +150,23 @@ async def handle(
         return {"ok": False, "error": "GITNEXUS_MCP_URL is not configured."}
     # Record the context-gathering attempt so the design-write gate is satisfied
     # (see artifacts.py) — marking on attempt, not only on hits.
-    from ..context import get_workspace_id, mark_context_gathered
+    from ..context import get_org_id, get_workspace_id, mark_context_gathered
 
     mark_context_gathered()
-    workspace_id = await resolve_workspace_slug(get_workspace_id())
+    workspace_id = get_workspace_id()
     if not workspace_id:
         return {
             "ok": False,
             "error": "workspace_id is required but was not provided and no workspace context is set.",
+        }
+    # GitNexus's MCP endpoint is now org+workspace scoped
+    # (/ws/<organization_id>/<workspace_id>/sse, matching rag-service), so
+    # organization_id is required just like workspace_id above.
+    org_id = get_org_id()
+    if not org_id:
+        return {
+            "ok": False,
+            "error": "organization_id is required but no organization context is set for this session.",
         }
     try:
         results = await call_mcp_tool(
@@ -165,6 +174,7 @@ async def handle(
             tool,
             _build_arguments(tool, query, repo, direction),
             workspace_id=workspace_id,
+            organization_id=org_id,
         )
         return {"ok": True, "results": results}
     except Exception as exc:
@@ -224,27 +234,40 @@ def list_indexed_repos(
     use_cache: bool = True,
     timeout: Optional[float] = None,
     workspace_id: str = "",
+    organization_id: str = "",
 ) -> Optional[List[str]]:
     """Best-effort, synchronous list of GitNexus-indexed repo names.
 
     Returns the repo names (e.g. ['voyager-interface', ...]), or ``None`` when
     GitNexus is unconfigured/unreachable so callers can fall back gracefully.
 
-    The request targets the workspace-scoped endpoint
-    (``…/ws/<workspace_slug>/sse``) so only that workspace's repos are
-    returned.  *workspace_id* is resolved to its canonical slug first (it may
-    be a slug or a UUID), and results are cached per resolved slug for
-    ``_REPO_CACHE_TTL`` seconds.  GitNexus only serves workspace-scoped
-    endpoints, so a missing workspace_id returns ``None`` immediately.
+    The request targets the org+workspace-scoped endpoint
+    (``…/ws/<organization_id>/<workspace_id>/sse``, matching rag-service) so
+    only that workspace's repos are returned. Both *workspace_id* and
+    *organization_id* default to the current session context when omitted —
+    no slug resolution, GitNexus is keyed by the raw workspace_id UUID same
+    as organization_id. Results are cached per workspace_id (already
+    globally unique) for ``_REPO_CACHE_TTL`` seconds. A missing workspace_id
+    or organization_id returns ``None`` immediately since GitNexus only
+    serves scoped endpoints.
     """
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return None
-    workspace_id = _run_coro_sync(resolve_workspace_slug(workspace_id))
+    from ..context import get_org_id, get_workspace_id
+
+    workspace_id = workspace_id or get_workspace_id()
     if not workspace_id:
         logger.debug(
             "list_indexed_repos: no workspace_id in context — GitNexus requires "
             "a workspace-scoped endpoint, skipping"
+        )
+        return None
+    organization_id = organization_id or get_org_id()
+    if not organization_id:
+        logger.debug(
+            "list_indexed_repos: no organization_id in context — GitNexus requires "
+            "an org-scoped endpoint, skipping"
         )
         return None
     now = time.time()
@@ -257,7 +280,9 @@ def list_indexed_repos(
         return cache["names"]
 
     async def _go() -> Any:
-        coro = call_mcp_tool(url, "list_repos", {}, workspace_id=workspace_id)
+        coro = call_mcp_tool(
+            url, "list_repos", {}, workspace_id=workspace_id, organization_id=organization_id
+        )
         if timeout:
             return await asyncio.wait_for(coro, timeout)
         return await coro
