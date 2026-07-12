@@ -131,8 +131,48 @@ def _enter_patches(*patches_list) -> ExitStack:
     return stack
 
 
-def _load_file_ops(feature_detail: dict, *, read_return=None, write_return=None, ssc_error=None):
-    fake_ssc = _make_fake_ssc(read_return=read_return, write_return=write_return, error=ssc_error)
+def _setup_fake_edit_module() -> types.ModuleType:
+    """Inject a minimal fake plugins.tools.edit into sys.modules.
+
+    file_ops.py does a lazy ``from .edit import _apply_edits`` inside
+    handle_edit_file. The real edit.py has a heavy dependency chain (document_repo,
+    workflow_backend_client, aiohttp). This fake provides the same pure-logic
+    _apply_edits without triggering those imports, so unit tests remain isolated.
+    """
+    _ensure_plugins_pkg()
+    # Ensure plugins.tools package stub exists.
+    if "plugins.tools" not in sys.modules:
+        tools_pkg = types.ModuleType("plugins.tools")
+        tools_pkg.__path__ = [str(REPO_ROOT / "plugins" / "tools")]
+        tools_pkg.__package__ = "plugins.tools"
+        sys.modules["plugins.tools"] = tools_pkg
+
+    fake_edit = types.ModuleType("plugins.tools.edit")
+    fake_edit.__package__ = "plugins.tools"
+
+    def _apply_edits(content: str, edits: list) -> tuple:
+        warnings = []
+        for edit in edits:
+            old = edit.get("old_string", "")
+            new = edit.get("new_string", "")
+            if old not in content:
+                warnings.append(f"old_string not found: {old[:60]!r}")
+                continue
+            content = content.replace(old, new, 1)
+        return content, warnings
+
+    fake_edit._apply_edits = _apply_edits
+    sys.modules["plugins.tools.edit"] = fake_edit
+    return fake_edit
+
+
+def _load_file_ops(
+    feature_detail: dict, *, read_return=None, write_return=None, ssc_error=None
+):
+    fake_ssc = _make_fake_ssc(
+        read_return=read_return, write_return=write_return, error=ssc_error
+    )
+    _setup_fake_edit_module()
     mod = _load_module_file(
         "plugins.tools.file_ops", REPO_ROOT / "plugins" / "tools" / "file_ops.py"
     )
@@ -170,6 +210,7 @@ class TestValidatePath:
     def _load(self):
         _ensure_plugins_pkg()
         _make_fake_ssc()
+        _setup_fake_edit_module()
         fake_ssc = sys.modules["plugins.storage_service_client"]
         mod = _load_module_file(
             "plugins.tools.file_ops", REPO_ROOT / "plugins" / "tools" / "file_ops.py"
@@ -241,8 +282,12 @@ class TestWriteFileGoOwner:
         assert result["path"] == _NOTES_PATH
         assert result["version_id"] == _VERSION_ID
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, _NOTES_PATH, _NOTES_CONTENT,
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            _NOTES_PATH,
+            _NOTES_CONTENT,
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_nested_path(self):
@@ -268,8 +313,12 @@ class TestWriteFileGoOwner:
         assert result["ok"] is True
         assert result["path"] == _NESTED_PATH
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, _NESTED_PATH, "# Handoff\n",
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            _NESTED_PATH,
+            "# Handoff\n",
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_no_git_write_attempted(self):
@@ -298,9 +347,14 @@ class TestWriteFileGoOwner:
 
     def test_storage_service_error_returns_ok_false(self):
         """go-owned feature: storage-service error → ok=False."""
-        from plugins.storage_service_client import StorageServiceError
-        error = StorageServiceError("connection refused", reason_code="request_error")
-        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"), ssc_error=error)
+        # Use the fake SSC's error class to avoid importing the real package.
+        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+        error = mod.StorageServiceError(
+            "connection refused", reason_code="request_error"
+        )
+        mod, fake_ssc = _load_file_ops(
+            _make_feature_detail(owner="go"), ssc_error=error
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -481,12 +535,19 @@ class TestEditFileGoOwner:
         assert result["path"] == _NOTES_PATH
         assert result["version_id"] == _VERSION_ID
         fake_ssc.read_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, _NOTES_PATH,
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            _NOTES_PATH,
+            user_id="user-1",
+            org_id="org-1",
         )
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, _NOTES_PATH, expected,
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            _NOTES_PATH,
+            expected,
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_reads_fresh_content_before_applying_edits(self):
@@ -506,7 +567,9 @@ class TestEditFileGoOwner:
         ):
             result = mod.handle_edit_file(
                 path=_NOTES_PATH,
-                edits=[{"old_string": "Fresh content to edit.", "new_string": "Updated."}],
+                edits=[
+                    {"old_string": "Fresh content to edit.", "new_string": "Updated."}
+                ],
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
             )
@@ -569,9 +632,14 @@ class TestEditFileGoOwner:
 
     def test_storage_service_error_returns_ok_false(self):
         """go-owned edit_file: storage-service error → ok=False."""
-        from plugins.storage_service_client import StorageServiceError
-        error = StorageServiceError("connection refused", reason_code="request_error")
-        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"), ssc_error=error)
+        # Use the fake SSC's error class to avoid importing the real package.
+        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+        error = mod.StorageServiceError(
+            "connection refused", reason_code="request_error"
+        )
+        mod, fake_ssc = _load_file_ops(
+            _make_feature_detail(owner="go"), ssc_error=error
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),

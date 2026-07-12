@@ -15,8 +15,11 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from ..storage_service_client import StorageServiceError, read_document_content, write_document_content
-from .edit import _apply_edits
+from ..storage_service_client import (
+    StorageServiceError,
+    read_document_content,
+    write_document_content,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -159,7 +162,9 @@ def handle_write_file(
         return {"ok": False, "error": path_error}
 
     try:
-        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
+        detail = run_async(
+            get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
+        )
         owner = detail.get("owner") or "ts"
     except Exception as exc:
         logger.warning("write_file: could not fetch feature_detail: %s", exc)
@@ -174,8 +179,12 @@ def handle_write_file(
 
     try:
         write_result = write_document_content(
-            wid, fid, path, content,
-            user_id=caller_user_id, org_id=caller_org_id,
+            wid,
+            fid,
+            path,
+            content,
+            user_id=caller_user_id,
+            org_id=caller_org_id,
         )
     except StorageServiceError as exc:
         logger.warning("write_file: storage-service error: %s", exc)
@@ -223,7 +232,9 @@ def handle_edit_file(
         return {"ok": False, "error": path_error}
 
     try:
-        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
+        detail = run_async(
+            get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
+        )
         owner = detail.get("owner") or "ts"
     except Exception as exc:
         logger.warning("edit_file: could not fetch feature_detail: %s", exc)
@@ -237,15 +248,26 @@ def handle_edit_file(
         }
 
     try:
+        from .edit import (
+            _apply_edits,
+        )  # lazy import avoids edit.py's heavy dependency chain at module load
+
         read_result = read_document_content(
-            wid, fid, path,
-            user_id=caller_user_id, org_id=caller_org_id,
+            wid,
+            fid,
+            path,
+            user_id=caller_user_id,
+            org_id=caller_org_id,
         )
         current_content = read_result.get("content", "")
         new_content, warnings = _apply_edits(current_content, edits)
         write_result = write_document_content(
-            wid, fid, path, new_content,
-            user_id=caller_user_id, org_id=caller_org_id,
+            wid,
+            fid,
+            path,
+            new_content,
+            user_id=caller_user_id,
+            org_id=caller_org_id,
         )
     except StorageServiceError as exc:
         logger.warning("edit_file: storage-service error: %s", exc)
