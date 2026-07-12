@@ -202,7 +202,7 @@ def handle_edit_document(
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
 
     target_branch, known_pr_url = _resolve_document_branch(
-        owner, repo, fid, slug, init_pr_url, base_branch, github_token
+        owner, repo, fid, init_pr_url, base_branch, github_token
     )
     path = f"docs/features/{slug}/{filename}"
 

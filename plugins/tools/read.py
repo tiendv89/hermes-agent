@@ -193,7 +193,7 @@ def handle_read_document(
             "sha": result.get("version_id"),
         }
 
-    # ts-owned (or absent owner, or status.yaml for go): read from git as before.
+    # Non-go-owned features: read from git.
     github_token = os.environ.get("GITHUB_TOKEN", "").strip()
     if not github_token:
         return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
@@ -207,7 +207,7 @@ def handle_read_document(
     base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
 
     target_branch, _pr_url = _resolve_document_branch(
-        gh_owner, gh_repo, fid, slug, init_pr_url, base_branch, github_token
+        gh_owner, gh_repo, fid, init_pr_url, base_branch, github_token
     )
     path = f"docs/features/{slug}/{filename}"
 
