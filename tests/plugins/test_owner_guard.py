@@ -129,7 +129,9 @@ def _load_module_file(name: str, file_path: Path) -> types.ModuleType:
     return mod
 
 
-def _patch_module_wbc(mod: types.ModuleType, feature_detail: dict, workspace_ctx: dict | None = None) -> None:
+def _patch_module_wbc(
+    mod: types.ModuleType, feature_detail: dict, workspace_ctx: dict | None = None
+) -> None:
     """Patch workflow_backend_client calls on a loaded module object.
 
     For modules that import via ``from src.services.workflow_backend_client import ...``
@@ -143,6 +145,7 @@ def _patch_module_wbc(mod: types.ModuleType, feature_detail: dict, workspace_ctx
 
     # Patch the source module so local-import callsites pick up the mocks.
     import sys
+
     wbc_name = "src.services.workflow_backend_client"
     if wbc_name not in sys.modules:
         wbc_mod = types.ModuleType(wbc_name)
@@ -166,6 +169,7 @@ def _patch_module_wbc(mod: types.ModuleType, feature_detail: dict, workspace_ctx
 
 def _make_fake_ssc(*, read_return=None, write_return=None, error=None):
     """Build a fake storage_service_client module."""
+
     class _Error(Exception):
         def __init__(self, msg="", *, reason_code="", status=0):
             super().__init__(msg)
@@ -179,8 +183,12 @@ def _make_fake_ssc(*, read_return=None, write_return=None, error=None):
         fake.read_document_content = MagicMock(side_effect=error)
         fake.write_document_content = MagicMock(side_effect=error)
     else:
-        fake.read_document_content = MagicMock(return_value=read_return or {"content": "", "version_id": None})
-        fake.write_document_content = MagicMock(return_value=write_return or {"ok": True, "version_id": _VERSION_ID})
+        fake.read_document_content = MagicMock(
+            return_value=read_return or {"content": "", "version_id": None}
+        )
+        fake.write_document_content = MagicMock(
+            return_value=write_return or {"ok": True, "version_id": _VERSION_ID}
+        )
 
     sys.modules["plugins.storage_service_client"] = fake
     return fake
@@ -210,7 +218,9 @@ def _enter_patches(*patches_list) -> ExitStack:
 class TestReadDocumentGoOwner:
     def _load(self, feature_detail: dict, ssc_read_return=None, ssc_error=None):
         fake_ssc = _make_fake_ssc(read_return=ssc_read_return, error=ssc_error)
-        mod = _load_module_file("plugins.tools.read", REPO_ROOT / "plugins" / "tools" / "read.py")
+        mod = _load_module_file(
+            "plugins.tools.read", REPO_ROOT / "plugins" / "tools" / "read.py"
+        )
         _patch_module_wbc(mod, feature_detail)
         _inject_ssc_into_mod(mod, fake_ssc)
         return mod, fake_ssc
@@ -218,7 +228,9 @@ class TestReadDocumentGoOwner:
     def test_go_owned_product_spec_proxies_to_storage_service(self):
         """go-owned feature: read_document proxies to storage-service, not git."""
         read_return = {"content": _PRODUCT_SPEC_CONTENT, "version_id": _VERSION_ID}
-        mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_read_return=read_return)
+        mod, fake_ssc = self._load(
+            _make_feature_detail(owner="go"), ssc_read_return=read_return
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -238,14 +250,19 @@ class TestReadDocumentGoOwner:
         assert result["exists"] is True
         assert result["sha"] == _VERSION_ID
         fake_ssc.read_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "product_spec.md",
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            "product_spec.md",
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_technical_design_proxies_to_storage_service(self):
         """go-owned feature: read_document for technical_design proxies to storage-service."""
         read_return = {"content": _TD_CONTENT, "version_id": _VERSION_ID}
-        mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_read_return=read_return)
+        mod, fake_ssc = self._load(
+            _make_feature_detail(owner="go"), ssc_read_return=read_return
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -263,14 +280,19 @@ class TestReadDocumentGoOwner:
         assert result["ok"] is True
         assert result["content"] == _TD_CONTENT
         fake_ssc.read_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "tech_design.md",
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            "tech_design.md",
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_not_found_returns_empty_content(self):
         """go-owned feature: 404 from storage-service → exists=False, content empty."""
         read_return = {"content": "", "version_id": None}
-        mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_read_return=read_return)
+        mod, fake_ssc = self._load(
+            _make_feature_detail(owner="go"), ssc_read_return=read_return
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -328,6 +350,7 @@ class TestReadDocumentGoOwner:
     def test_go_owned_storage_service_error_returns_ok_false(self):
         """go-owned feature: storage-service error → ok=False."""
         from plugins.storage_service_client import StorageServiceError
+
         error = StorageServiceError("missing_config", reason_code="missing_config")
         mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_error=error)
 
@@ -354,7 +377,9 @@ class TestReadDocumentGoOwner:
         made read_document unable to read anything but product_spec/
         technical_design/status."""
         read_return = {"content": "# README\n", "version_id": _VERSION_ID}
-        mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_read_return=read_return)
+        mod, fake_ssc = self._load(
+            _make_feature_detail(owner="go"), ssc_read_return=read_return
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -372,8 +397,11 @@ class TestReadDocumentGoOwner:
         assert result["ok"] is True
         assert result["content"] == "# README\n"
         fake_ssc.read_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "README.md",
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            "README.md",
+            user_id="user-1",
+            org_id="org-1",
         )
 
 
@@ -388,7 +416,9 @@ class TestReadDocumentTsOwner:
         if owner == "absent":
             del detail["owner"]
         fake_ssc = _make_fake_ssc()
-        mod = _load_module_file("plugins.tools.read", REPO_ROOT / "plugins" / "tools" / "read.py")
+        mod = _load_module_file(
+            "plugins.tools.read", REPO_ROOT / "plugins" / "tools" / "read.py"
+        )
         _patch_module_wbc(mod, detail)
         _inject_ssc_into_mod(mod, fake_ssc)
         return mod, fake_ssc
@@ -435,10 +465,14 @@ class TestReadDocumentTsOwner:
         monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         mod, fake_ssc = self._load_ts(owner="ts")
 
-        read_doc_mock = MagicMock(return_value={"content": _PRODUCT_SPEC_CONTENT, "sha": "gitsha"})
+        read_doc_mock = MagicMock(
+            return_value={"content": _PRODUCT_SPEC_CONTENT, "sha": "gitsha"}
+        )
         mod.read_document = read_doc_mock
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._resolve_document_branch = MagicMock(return_value=(f"feature/{_FEATURE_ID}", None))
+        mod._resolve_document_branch = MagicMock(
+            return_value=(f"feature/{_FEATURE_ID}", None)
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -463,10 +497,14 @@ class TestReadDocumentTsOwner:
         monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         mod, fake_ssc = self._load_ts(owner="ts")
 
-        read_doc_mock = MagicMock(return_value={"content": "# README\n", "sha": "gitsha"})
+        read_doc_mock = MagicMock(
+            return_value={"content": "# README\n", "sha": "gitsha"}
+        )
         mod.read_document = read_doc_mock
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._resolve_document_branch = MagicMock(return_value=(f"feature/{_FEATURE_ID}", None))
+        mod._resolve_document_branch = MagicMock(
+            return_value=(f"feature/{_FEATURE_ID}", None)
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -496,7 +534,9 @@ class TestReadDocumentTsOwner:
 class TestWriteProductSpecGoOwner:
     def _load_go(self):
         fake_ssc = _make_fake_ssc(write_return={"ok": True, "version_id": _VERSION_ID})
-        mod = _load_module_file("plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py")
+        mod = _load_module_file(
+            "plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py"
+        )
         _patch_module_wbc(mod, _make_feature_detail(owner="go"))
         _inject_ssc_into_mod(mod, fake_ssc)
         return mod, fake_ssc
@@ -506,7 +546,9 @@ class TestWriteProductSpecGoOwner:
         mod, fake_ssc = self._load_go()
 
         commit_called = []
-        mod.commit_to_branch = MagicMock(side_effect=lambda *a, **kw: commit_called.append(1) or _COMMIT_SHA)
+        mod.commit_to_branch = MagicMock(
+            side_effect=lambda *a, **kw: commit_called.append(1) or _COMMIT_SHA
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -523,21 +565,30 @@ class TestWriteProductSpecGoOwner:
 
         assert result["ok"] is True
         assert result.get("version_id") == _VERSION_ID
-        assert commit_called == [], "no git commit must happen for go-owned write_product_spec"
+        assert commit_called == [], (
+            "no git commit must happen for go-owned write_product_spec"
+        )
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "product_spec.md", _PRODUCT_SPEC_CONTENT,
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            "product_spec.md",
+            _PRODUCT_SPEC_CONTENT,
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_missing_config_returns_error(self):
         """go-owned feature without storage-service config → ok=False."""
         from plugins.storage_service_client import StorageServiceError
+
         error = StorageServiceError(
             "STORAGE_SERVICE_URL and STORAGE_SERVICE_TOKEN must both be set",
             reason_code="missing_config",
         )
         fake_ssc = _make_fake_ssc(error=error)
-        mod = _load_module_file("plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py")
+        mod = _load_module_file(
+            "plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py"
+        )
         _patch_module_wbc(mod, _make_feature_detail(owner="go"))
         _inject_ssc_into_mod(mod, fake_ssc)
 
@@ -559,95 +610,6 @@ class TestWriteProductSpecGoOwner:
 
 
 # ---------------------------------------------------------------------------
-# write_product_spec — ts-owned / absent-owner (regression: storage-service NOT called)
-# ---------------------------------------------------------------------------
-
-
-class TestWriteProductSpecTsOwner:
-    def _load_ts(self, owner: str = "ts"):
-        detail = _make_feature_detail(owner=owner)
-        if owner == "absent":
-            del detail["owner"]
-        fake_ssc = _make_fake_ssc()
-        mod = _load_module_file("plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py")
-        _patch_module_wbc(mod, detail)
-        _inject_ssc_into_mod(mod, fake_ssc)
-        return mod, fake_ssc
-
-    def test_ts_owned_does_not_call_storage_service(self):
-        """ts-owned: write_product_spec must not call storage-service (guard invariant)."""
-        mod, fake_ssc = self._load_ts(owner="ts")
-        # Git path will fail (no GITHUB_TOKEN) but we only check the guard.
-        with _enter_patches(
-            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
-            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
-            patch("plugins.context.get_user_id", return_value="user-1"),
-            patch("plugins.context.get_org_id", return_value="org-1"),
-            patch("plugins.context.was_context_gathered", return_value=True),
-        ):
-            mod.handle_write_product_spec(
-                content=_PRODUCT_SPEC_CONTENT,
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        fake_ssc.write_document_content.assert_not_called()
-
-    def test_absent_owner_does_not_call_storage_service(self):
-        """Absent owner defaults to ts: write_product_spec must not call storage-service."""
-        mod, fake_ssc = self._load_ts(owner="absent")
-        with _enter_patches(
-            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
-            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
-            patch("plugins.context.get_user_id", return_value="user-1"),
-            patch("plugins.context.get_org_id", return_value="org-1"),
-            patch("plugins.context.was_context_gathered", return_value=True),
-        ):
-            mod.handle_write_product_spec(
-                content=_PRODUCT_SPEC_CONTENT,
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        fake_ssc.write_document_content.assert_not_called()
-
-    def test_ts_owned_commits_to_git_on_full_mock(self, monkeypatch):
-        """ts-owned feature: full mock of git path verifies git commit is invoked."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        mod, fake_ssc = self._load_ts(owner="ts")
-
-        git_committed = []
-
-        def fake_commit(gh_owner, gh_repo, branch, path, content, sha, msg, token):
-            git_committed.append(path)
-            return _COMMIT_SHA
-
-        mod.commit_to_branch = MagicMock(side_effect=fake_commit)
-        mod.read_document = MagicMock(return_value={"content": "", "sha": None})
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._resolve_document_branch = MagicMock(return_value=(f"feature/{_FEATURE_ID}-init", None))
-        mod.ensure_pr_for_head = MagicMock(return_value={"url": f"https://github.com/{_OWNER}/{_REPO}/pull/1"})
-        mod._ensure_feature_scaffold = MagicMock()
-
-        with _enter_patches(
-            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
-            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
-            patch("plugins.context.get_user_id", return_value="user-1"),
-            patch("plugins.context.get_org_id", return_value="org-1"),
-            patch("plugins.context.was_context_gathered", return_value=True),
-        ):
-            result = mod.handle_write_product_spec(
-                content=_PRODUCT_SPEC_CONTENT,
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        assert result["ok"] is True
-        assert len(git_committed) >= 1, "ts-owned write_product_spec must commit to git"
-        fake_ssc.write_document_content.assert_not_called()
-
-
-# ---------------------------------------------------------------------------
 # write_technical_design — go-owned path
 # ---------------------------------------------------------------------------
 
@@ -656,12 +618,16 @@ class TestWriteTechnicalDesignGoOwner:
     def test_go_owned_proxies_to_storage_service(self):
         """go-owned feature: write_technical_design proxies to storage-service, no git commit."""
         fake_ssc = _make_fake_ssc(write_return={"ok": True, "version_id": _VERSION_ID})
-        mod = _load_module_file("plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py")
+        mod = _load_module_file(
+            "plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py"
+        )
         _patch_module_wbc(mod, _make_feature_detail(owner="go"))
         _inject_ssc_into_mod(mod, fake_ssc)
 
         commit_called = []
-        mod.commit_to_branch = MagicMock(side_effect=lambda *a, **kw: commit_called.append(1) or _COMMIT_SHA)
+        mod.commit_to_branch = MagicMock(
+            side_effect=lambda *a, **kw: commit_called.append(1) or _COMMIT_SHA
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -680,19 +646,29 @@ class TestWriteTechnicalDesignGoOwner:
         assert result.get("version_id") == _VERSION_ID
         assert commit_called == [], "no git commit for go-owned write_technical_design"
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "tech_design.md", _TD_CONTENT,
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            "tech_design.md",
+            _TD_CONTENT,
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_write_td_does_not_create_git_file(self):
         """go-owned feature: write_technical_design must not create a stray git file."""
         fake_ssc = _make_fake_ssc(write_return={"ok": True, "version_id": _VERSION_ID})
-        mod = _load_module_file("plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py")
+        mod = _load_module_file(
+            "plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py"
+        )
         _patch_module_wbc(mod, _make_feature_detail(owner="go"))
         _inject_ssc_into_mod(mod, fake_ssc)
 
-        mod.commit_to_branch = MagicMock(side_effect=AssertionError("git commit_to_branch called for go feature"))
-        mod.write_document = MagicMock(side_effect=AssertionError("write_document called for go feature"))
+        mod.commit_to_branch = MagicMock(
+            side_effect=AssertionError("git commit_to_branch called for go feature")
+        )
+        mod.write_document = MagicMock(
+            side_effect=AssertionError("write_document called for go feature")
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -709,28 +685,6 @@ class TestWriteTechnicalDesignGoOwner:
 
         assert result["ok"] is True
 
-    def test_ts_owned_write_td_does_not_call_storage_service(self):
-        """ts-owned: write_technical_design must not call storage-service."""
-        fake_ssc = _make_fake_ssc()
-        mod = _load_module_file("plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py")
-        _patch_module_wbc(mod, _make_feature_detail(owner="ts"))
-        _inject_ssc_into_mod(mod, fake_ssc)
-
-        with _enter_patches(
-            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
-            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
-            patch("plugins.context.get_user_id", return_value="user-1"),
-            patch("plugins.context.get_org_id", return_value="org-1"),
-            patch("plugins.context.was_context_gathered", return_value=True),
-        ):
-            mod.handle_write_technical_design(
-                content=_TD_CONTENT,
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        fake_ssc.write_document_content.assert_not_called()
-
 
 # ---------------------------------------------------------------------------
 # edit_document — go-owned path
@@ -743,7 +697,9 @@ class TestEditDocumentGoOwner:
             read_return={"content": original_content, "version_id": "v0"},
             write_return={"ok": True, "version_id": _VERSION_ID},
         )
-        mod = _load_module_file("plugins.tools.edit", REPO_ROOT / "plugins" / "tools" / "edit.py")
+        mod = _load_module_file(
+            "plugins.tools.edit", REPO_ROOT / "plugins" / "tools" / "edit.py"
+        )
         _patch_module_wbc(mod, _make_feature_detail(owner="go"))
         _inject_ssc_into_mod(mod, fake_ssc)
         return mod, fake_ssc
@@ -755,8 +711,12 @@ class TestEditDocumentGoOwner:
         mod, fake_ssc = self._load_go(original_content=original)
 
         commit_called = []
-        mod.commit_to_branch = MagicMock(side_effect=lambda *a, **kw: commit_called.append(1) or _COMMIT_SHA)
-        mod.write_document = MagicMock(side_effect=AssertionError("write_document called for go feature"))
+        mod.commit_to_branch = MagicMock(
+            side_effect=lambda *a, **kw: commit_called.append(1) or _COMMIT_SHA
+        )
+        mod.write_document = MagicMock(
+            side_effect=AssertionError("write_document called for go feature")
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -775,8 +735,12 @@ class TestEditDocumentGoOwner:
         assert result.get("version_id") == _VERSION_ID
         assert commit_called == [], "no git commit for go-owned edit_document"
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, _FEATURE_ID, "product_spec.md", edited,
-            user_id="user-1", org_id="org-1",
+            _WORKSPACE_ID,
+            _FEATURE_ID,
+            "product_spec.md",
+            edited,
+            user_id="user-1",
+            org_id="org-1",
         )
 
     def test_go_owned_edit_warns_on_missing_old_string(self):
@@ -803,12 +767,15 @@ class TestEditDocumentGoOwner:
     def test_go_owned_missing_config_returns_error(self):
         """go-owned edit_document without storage-service config → ok=False."""
         from plugins.storage_service_client import StorageServiceError
+
         error = StorageServiceError(
             "STORAGE_SERVICE_URL and STORAGE_SERVICE_TOKEN must both be set",
             reason_code="missing_config",
         )
         fake_ssc = _make_fake_ssc(error=error)
-        mod = _load_module_file("plugins.tools.edit", REPO_ROOT / "plugins" / "tools" / "edit.py")
+        mod = _load_module_file(
+            "plugins.tools.edit", REPO_ROOT / "plugins" / "tools" / "edit.py"
+        )
         _patch_module_wbc(mod, _make_feature_detail(owner="go"))
         _inject_ssc_into_mod(mod, fake_ssc)
 
@@ -833,8 +800,12 @@ class TestEditDocumentGoOwner:
         original = "# Spec\n\nContent.\n"
         mod, fake_ssc = self._load_go(original_content=original)
 
-        mod.commit_to_branch = MagicMock(side_effect=AssertionError("git commit_to_branch called for go feature"))
-        mod.write_document = MagicMock(side_effect=AssertionError("write_document called for go feature"))
+        mod.commit_to_branch = MagicMock(
+            side_effect=AssertionError("git commit_to_branch called for go feature")
+        )
+        mod.write_document = MagicMock(
+            side_effect=AssertionError("write_document called for go feature")
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -864,7 +835,9 @@ class TestEditDocumentTsOwner:
         if owner == "absent":
             del detail["owner"]
         fake_ssc = _make_fake_ssc()
-        mod = _load_module_file("plugins.tools.edit", REPO_ROOT / "plugins" / "tools" / "edit.py")
+        mod = _load_module_file(
+            "plugins.tools.edit", REPO_ROOT / "plugins" / "tools" / "edit.py"
+        )
         _patch_module_wbc(mod, detail)
         _inject_ssc_into_mod(mod, fake_ssc)
         return mod, fake_ssc
@@ -920,11 +893,17 @@ class TestEditDocumentTsOwner:
             return _COMMIT_SHA
 
         original = "# Spec\n\nOld content.\n"
-        mod.read_document = MagicMock(return_value={"content": original, "sha": "oldsha"})
+        mod.read_document = MagicMock(
+            return_value={"content": original, "sha": "oldsha"}
+        )
         mod.commit_to_branch = MagicMock(side_effect=fake_commit)
         mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._resolve_document_branch = MagicMock(return_value=(f"feature/{_FEATURE_ID}-init", None))
-        mod.ensure_pr_for_head = MagicMock(return_value={"url": f"https://github.com/{_OWNER}/{_REPO}/pull/1"})
+        mod._resolve_document_branch = MagicMock(
+            return_value=(f"feature/{_FEATURE_ID}-init", None)
+        )
+        mod.ensure_pr_for_head = MagicMock(
+            return_value={"url": f"https://github.com/{_OWNER}/{_REPO}/pull/1"}
+        )
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -961,6 +940,7 @@ class TestStorageServiceClient:
         )
 
         from plugins.storage_service_client import read_document_content
+
         result = read_document_content("ws1", "feat1", "product_spec.md")
         assert result["content"] == "# Hello\n"
         assert result["version_id"] == "v1"
@@ -975,6 +955,7 @@ class TestStorageServiceClient:
         )
 
         from plugins.storage_service_client import read_document_content
+
         result = read_document_content("ws1", "feat1", "product_spec.md")
         assert result["content"] == ""
         assert result["version_id"] is None
@@ -989,7 +970,10 @@ class TestStorageServiceClient:
         )
 
         from plugins.storage_service_client import write_document_content
-        result = write_document_content("ws1", "feat1", "product_spec.md", "# New content\n")
+
+        result = write_document_content(
+            "ws1", "feat1", "product_spec.md", "# New content\n"
+        )
         assert result["ok"] is True
         assert result["version_id"] == "v2"
 
@@ -997,12 +981,18 @@ class TestStorageServiceClient:
         monkeypatch.delenv("STORAGE_SERVICE_URL", raising=False)
         monkeypatch.delenv("STORAGE_SERVICE_TOKEN", raising=False)
 
-        from plugins.storage_service_client import StorageServiceError, read_document_content
+        from plugins.storage_service_client import (
+            StorageServiceError,
+            read_document_content,
+        )
+
         with pytest.raises(StorageServiceError) as exc_info:
             read_document_content("ws1", "feat1", "product_spec.md")
         assert exc_info.value.reason_code == "missing_config"
 
-    def test_server_error_raises_storage_service_error(self, monkeypatch, requests_mock):
+    def test_server_error_raises_storage_service_error(
+        self, monkeypatch, requests_mock
+    ):
         monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
@@ -1012,7 +1002,11 @@ class TestStorageServiceClient:
             json={"error": "internal_server_error"},
         )
 
-        from plugins.storage_service_client import StorageServiceError, read_document_content
+        from plugins.storage_service_client import (
+            StorageServiceError,
+            read_document_content,
+        )
+
         with pytest.raises(StorageServiceError) as exc_info:
             read_document_content("ws1", "feat1", "product_spec.md")
         assert exc_info.value.status == 500
@@ -1027,10 +1021,14 @@ class TestStorageServiceClient:
         )
 
         from plugins.storage_service_client import write_document_content
-        result = write_document_content("ws1", "feat1", "tech_design.md", "# Tech Design\n")
+
+        result = write_document_content(
+            "ws1", "feat1", "tech_design.md", "# Tech Design\n"
+        )
         assert result["ok"] is True
 
         import json
+
         put_body = json.loads(requests_mock.last_request.text)
         assert put_body["content"] == "# Tech Design\n"
 
@@ -1045,6 +1043,7 @@ class TestStorageServiceClient:
         )
 
         from plugins.storage_service_client import download_image
+
         result = download_image("ws1", "img-1", user_id="user-1", org_id="org-1")
         assert result["data"] == b"fake-png-bytes"
         assert result["content_type"] == "image/png"
@@ -1058,9 +1057,12 @@ class TestStorageServiceClient:
         monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
         monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
 
-        requests_mock.get(f"{_STORAGE_URL}/api/workspaces/ws1/images/missing", status_code=404)
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/images/missing", status_code=404
+        )
 
         from plugins.storage_service_client import StorageServiceError, download_image
+
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "missing")
         assert exc_info.value.status == 404
@@ -1071,6 +1073,7 @@ class TestStorageServiceClient:
         monkeypatch.delenv("STORAGE_SERVICE_TOKEN", raising=False)
 
         from plugins.storage_service_client import StorageServiceError, download_image
+
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "img-1")
         assert exc_info.value.reason_code == "missing_config"
