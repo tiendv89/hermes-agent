@@ -90,7 +90,7 @@ READ_DOCUMENT_SCHEMA: Dict[str, Any] = {
 }
 
 
-def handle_read_document(
+def handle_read_file(
     document: str,
     workspace_id: str = "",
     feature_id: str = "",
@@ -232,3 +232,22 @@ def handle_read_document(
         "content": current.get("content", ""),
         "sha": current.get("sha"),
     }
+
+
+def handle_read_document(
+    document: str,
+    workspace_id: str = "",
+    feature_id: str = "",
+    **kwargs: Any,
+) -> Dict[str, Any]:
+    """Deprecated alias for handle_read_file.
+
+    Kept for backward compatibility during the rollout of the read_document →
+    read_file rename. Logs a deprecation warning on every invocation.
+    Use read_file instead.
+    """
+    logger.warning(
+        "read_document is deprecated and will be removed in a future release. "
+        "Use read_file instead."
+    )
+    return handle_read_file(document=document, workspace_id=workspace_id, feature_id=feature_id, **kwargs)
