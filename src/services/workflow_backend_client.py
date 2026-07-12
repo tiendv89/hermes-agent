@@ -539,6 +539,33 @@ async def update_feature_stage(
     )
 
 
+async def create_feature(
+    workspace_id: str,
+    name: str,
+    *,
+    description: str = "",
+    start_stage: str | None = None,
+    user_id: str | None = None,
+    org_id: str | None = None,
+) -> Dict[str, Any]:
+    """Create a new go-owned feature via POST /api/workspaces/:workspaceId/features.
+
+    Always sends owner="go" — the agent entry point is go-only by design.
+    Returns the parsed response body on success.
+    Raises WorkflowBackendError on any non-2xx response.
+    """
+    body: Dict[str, Any] = {"name": name, "description": description, "owner": "go"}
+    if start_stage:
+        body["start_stage"] = start_stage
+    return await _call(
+        "POST",
+        f"/api/workspaces/{workspace_id}/features",
+        user_id=user_id,
+        org_id=org_id,
+        json_body=body,
+    )
+
+
 async def activate_ready_tasks(
     workspace_id: str,
     feature_id: str,
