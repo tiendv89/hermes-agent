@@ -14,6 +14,7 @@ from .tools import (
     feature,
     artifacts,
     edit as edit_tool,
+    file_ops as file_ops_tool,
     read as read_tool,
     read_workspace_file as read_workspace_file_tool,
     tasks as tasks_tool,
@@ -103,6 +104,18 @@ _TOOLS = (
         "name": "get_feature_state",
         "schema": feature.SCHEMA,
         "handler": feature.handle,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "write_file",
+        "schema": file_ops_tool.WRITE_FILE_SCHEMA,
+        "handler": file_ops_tool.handle_write_file,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "edit_file",
+        "schema": file_ops_tool.EDIT_FILE_SCHEMA,
+        "handler": file_ops_tool.handle_edit_file,
         "check_fn": check_workflow_available,
     },
     {
