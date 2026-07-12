@@ -53,12 +53,19 @@ def _mock_db_factory():
 
 @pytest.mark.asyncio
 async def test_backfill_assistant_propagates_thread_context_when_writing():
-    """_backfill_assistant writes with reply_to/thread_root when no assistant exists."""
+    """_backfill_assistant writes with reply_to/thread_root when no assistant exists.
+
+    A threaded call (thread_root_id set) must check for an existing assistant row
+    via get_thread_replies, not the thread-blind get_session_messages (which
+    filters to thread_root_id IS NULL and so can never see a thread reply's own
+    mirrored row — see the regression test below for what happens when it's used
+    incorrectly).
+    """
     from src.api.agent_dispatch import _backfill_assistant
 
     captured = []
 
-    async def mock_get_session_messages(db, session_id):
+    async def mock_get_thread_replies(db, session_id, root_message_id, since=None):
         # One user message, no assistant message → backfill should fire.
         return [{"role": "user", "content": "hey agent"}]
 
@@ -66,7 +73,7 @@ async def test_backfill_assistant_propagates_thread_context_when_writing():
         captured.append(kwargs)
         return 99
 
-    with patch("src.db.get_session_messages", mock_get_session_messages):
+    with patch("src.db.get_thread_replies", mock_get_thread_replies):
         with patch("src.db.store.append_message", mock_append):
             db_factory, _ = _mock_db_factory()
             await _backfill_assistant(
@@ -91,7 +98,7 @@ async def test_backfill_assistant_skips_when_assistant_already_present():
 
     append_calls = []
 
-    async def mock_get_session_messages(db, session_id):
+    async def mock_get_thread_replies(db, session_id, root_message_id, since=None):
         # user + assistant already there — mirror captured the turn.
         return [
             {"role": "user", "content": "hey"},
@@ -102,7 +109,7 @@ async def test_backfill_assistant_skips_when_assistant_already_present():
         append_calls.append(kwargs)
         return 100
 
-    with patch("src.db.get_session_messages", mock_get_session_messages):
+    with patch("src.db.get_thread_replies", mock_get_thread_replies):
         with patch("src.db.store.append_message", mock_append):
             db_factory, _ = _mock_db_factory()
             await _backfill_assistant(
@@ -114,6 +121,50 @@ async def test_backfill_assistant_skips_when_assistant_already_present():
             )
 
     assert append_calls == [], "backfill must not write when mirror already captured it"
+
+
+@pytest.mark.asyncio
+async def test_backfill_assistant_thread_reply_ignores_main_channel_query():
+    """Regression test: a threaded call must not consult get_session_messages at all.
+
+    get_session_messages filters to thread_root_id IS NULL, so it can never see a
+    thread reply's mirrored assistant row. Using it as the existence check for a
+    threaded turn meant the guard always concluded "no assistant row yet" and
+    unconditionally wrote a duplicate — a 100%-reproducible double-persisted
+    assistant message for every single thread reply, not a race.
+    """
+    from src.api.agent_dispatch import _backfill_assistant
+
+    append_calls = []
+
+    async def mock_get_session_messages(db, session_id):
+        # The main-channel view has no idea this thread turn happened.
+        return []
+
+    async def mock_get_thread_replies(db, session_id, root_message_id, since=None):
+        # But the thread itself already has the mirror's assistant row.
+        return [
+            {"role": "user", "content": "hey"},
+            {"role": "assistant", "content": "already here"},
+        ]
+
+    async def mock_append(db, session_id, **kwargs):
+        append_calls.append(kwargs)
+        return 100
+
+    with patch("src.db.get_session_messages", mock_get_session_messages):
+        with patch("src.db.get_thread_replies", mock_get_thread_replies):
+            with patch("src.db.store.append_message", mock_append):
+                db_factory, _ = _mock_db_factory()
+                await _backfill_assistant(
+                    db_factory,
+                    "sess-1",
+                    "new content",
+                    reply_to_message_id=10,
+                    thread_root_id=5,
+                )
+
+    assert append_calls == [], "threaded backfill must consult get_thread_replies, not get_session_messages"
 
 
 @pytest.mark.asyncio

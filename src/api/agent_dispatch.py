@@ -137,12 +137,22 @@ async def _backfill_assistant(
     session_id rotated mid-turn). Writing unconditionally would append a
     concatenated duplicate on top of the per-iteration rows, so the live stream
     (one coalesced bubble) and the reloaded transcript would diverge.
+
+    thread_root_id must be used to scope the existence check: get_session_messages
+    filters to `thread_root_id IS NULL` (it's built for the main-channel transcript),
+    so for a threaded turn it can never see the per-iteration mirror's own thread-
+    scoped assistant row — the guard would then find "no assistant row" on every
+    single threaded turn and unconditionally re-persist a duplicate. This was a
+    100%-reproducible double row for every thread reply, not a race.
     """
-    from src.db import get_session_messages
+    from src.db import get_session_messages, get_thread_replies
     from src.db.store import append_message
 
     async with db_factory() as db:
-        existing = await get_session_messages(db, session_id)
+        if thread_root_id is not None:
+            existing = await get_thread_replies(db, session_id, thread_root_id)
+        else:
+            existing = await get_session_messages(db, session_id)
         # Find the last user message; an assistant row after it means the
         # mirror already captured this turn — nothing to backfill.
         last_user_idx = -1
@@ -273,6 +283,7 @@ async def _run_agent_turn_async(
                 "data": {
                     "session_id": session_id,
                     "message_id": message_id,
+                    "thread_root_id": thread_root_id,
                 },
             },
         )
@@ -720,11 +731,20 @@ async def _schedule_follow_up(
 
         run_id = uuid.uuid4().hex
         follow_translator = BusPublishingSSETranslator(
-            session_id=session_id, model=resolved["model"]
+            session_id=session_id,
+            model=resolved["model"],
+            thread_root_id=pending.get("thread_root_id"),
         )
         cancel_event = threading.Event()
         get_bus().publish(
-            session_id, {"event": "agent.working", "data": {"session_id": session_id}}
+            session_id,
+            {
+                "event": "agent.working",
+                "data": {
+                    "session_id": session_id,
+                    "thread_root_id": pending.get("thread_root_id"),
+                },
+            },
         )
         task = asyncio.ensure_future(
             _run_agent_turn_async(
@@ -819,12 +839,18 @@ async def schedule_agent_turn(
             return False
 
     run_id = uuid.uuid4().hex
-    translator = BusPublishingSSETranslator(session_id=session_id, model=model)
+    translator = BusPublishingSSETranslator(
+        session_id=session_id, model=model, thread_root_id=thread_root_id
+    )
     cancel_event = threading.Event()
 
     # Signal to all stream subscribers that the agent is starting work.
     get_bus().publish(
-        session_id, {"event": "agent.working", "data": {"session_id": session_id}}
+        session_id,
+        {
+            "event": "agent.working",
+            "data": {"session_id": session_id, "thread_root_id": thread_root_id},
+        },
     )
 
     # Create an asyncio Task so the cancel endpoint can call task.cancel().

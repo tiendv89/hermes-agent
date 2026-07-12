@@ -28,13 +28,21 @@ from src.streaming.sse import HermesSSETranslator, artifact_for_tool, coerce_too
 class BusPublishingSSETranslator(HermesSSETranslator):
     """HermesSSETranslator extended to fan out structured events on the bus."""
 
-    def __init__(self, session_id: str, model: str = "hermes") -> None:
+    def __init__(
+        self,
+        session_id: str,
+        model: str = "hermes",
+        thread_root_id: int | None = None,
+    ) -> None:
         super().__init__(model=model)
         self._session_id = session_id
+        self._thread_root_id = thread_root_id
 
     def _bus_publish(self, event: str, data: dict) -> None:
         # Callbacks are invoked from a worker thread (run_in_executor); use
         # call_soon_threadsafe to schedule put_nowait on the event-loop thread.
+        if self._thread_root_id is not None:
+            data = {**data, "thread_root_id": self._thread_root_id}
         bus = get_bus()
         self._loop.call_soon_threadsafe(
             bus.publish, self._session_id, {"event": event, "data": data}
