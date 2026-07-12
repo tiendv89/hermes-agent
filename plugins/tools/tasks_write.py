@@ -1,35 +1,18 @@
 """write_tasks tool — generate task breakdown for a feature.
 
-For ts/git features:
-  - Commits tasks.md (narrative) + tasks/T{n}.yaml (machine state) to the
-    init branch (or feature branch if init is merged).
-
-For go/postgres features:
-  - Writes tasks.md (narrative only) to storage-service — no git involved.
-  - Tasks are created in the DB at tasks-stage approval (not during breakdown).
-
-Task YAML schema matches agent-workflow's canonical format:
-  id, title, repo, status, depends_on, blocked_reason, branch,
-  execution.{actor_type, last_updated_by, last_updated_at},
-  pr.{url, status}, log[]
+Writes tasks.md (narrative only) to storage-service — no git involved.
+Tasks are created in the DB at tasks-stage approval (not during breakdown).
 """
 
 from __future__ import annotations
 
 import logging
-import os
-from typing import Any, Dict, List, Optional
-
 import re
+from typing import Any, Dict, List
 
-import yaml
-
-from ..document_repo import branch_exists
 from ..skills import get_index
 from ..storage_service_client import StorageServiceError, write_document_content
 from ..validation import _validate_id
-from .artifacts import _resolve_management_repo
-from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +25,9 @@ _REQUIRED_SKILLS_SECTION_RE = re.compile(
     r"^###[ \t]*Required skills[ \t]*$\n(.*?)(?=^#{2,3}[ \t]|\Z)",
     re.MULTILINE | re.DOTALL,
 )
-_SKILL_BULLET_RE = re.compile(r"^[ \t]*-[ \t]*`?([a-z0-9][a-z0-9-]*)`?[ \t]*$", re.MULTILINE)
+_SKILL_BULLET_RE = re.compile(
+    r"^[ \t]*-[ \t]*`?([a-z0-9][a-z0-9-]*)`?[ \t]*$", re.MULTILINE
+)
 
 
 def _extract_required_skills(tasks_md: str) -> set[str]:
@@ -52,12 +37,11 @@ def _extract_required_skills(tasks_md: str) -> set[str]:
         skills.update(_SKILL_BULLET_RE.findall(section))
     return skills
 
+
 SCHEMA: Dict[str, Any] = {
     "description": (
-        "Generate the task breakdown for a feature and commit it. "
-        "For ts/git features: commits tasks.md narrative + one tasks/T{n}.yaml per task "
-        "to the feature branch. "
-        "For go/postgres features: commits tasks.md only. Tasks are created in the DB at "
+        "Generate the task breakdown for a feature and write it to storage-service. "
+        "Writes tasks.md only. Tasks are created in the DB at "
         "tasks-stage approval (via approve_feature or the backup /create-tasks command) — "
         "not during breakdown. "
         "REQUIRED FIRST: call read_document(document='technical_design') (and 'product_spec') to "
@@ -83,7 +67,10 @@ SCHEMA: Dict[str, Any] = {
                     "properties": {
                         "id": {"type": "string", "description": "Task ID, e.g. T1"},
                         "title": {"type": "string"},
-                        "repo": {"type": "string", "description": "Repo slug this task targets."},
+                        "repo": {
+                            "type": "string",
+                            "description": "Repo slug this task targets.",
+                        },
                         "depends_on": {
                             "type": "array",
                             "items": {"type": "string"},
@@ -127,138 +114,6 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def _task_yaml(task: Dict[str, Any], feature_slug: str) -> str:
-    """Render a task dict into canonical agent-workflow YAML."""
-    tid = task["id"]
-    doc = {
-        "id": tid,
-        "title": task.get("title", ""),
-        "repo": task.get("repo") or "",
-        "status": "todo",
-        "depends_on": task.get("depends_on") or [],
-        "blocked_reason": None,
-        "blocked_suggestion": None,
-        "blocked_details": None,
-        "blocked_context": None,
-        "branch": f"feature/{feature_slug}",
-        "execution": {
-            "actor_type": task.get("actor_type") or "agent",
-            "last_updated_by": None,
-            "last_updated_at": None,
-            "suggested_next_step": None,
-            "requires_human_review": False,
-        },
-        "execution_handle": None,
-        "pr": {
-            "url": "",
-            "status": "not_created",
-        },
-        "workspace_pr": None,
-        "log": [],
-    }
-    return yaml.dump(doc, default_flow_style=False, allow_unicode=True, sort_keys=False)
-
-
-def _resolve_target_branch(
-    gh_owner: str,
-    gh_repo: str,
-    feature_id: str,
-    feature_name: str,
-    init_pr_url: Optional[str],
-    github_token: str,
-) -> tuple[str, str]:
-    """Return (branch, doc_dir) — the branch to commit to and the feature doc directory.
-
-    All git artifacts are slug-keyed and the init branch (feature/{slug}-init) is
-    the canonical design-phase branch. Prefer it whenever it exists, independent
-    of init_pr_url; fall back to feature/{slug} only when there is no init branch.
-    Docs always live under docs/features/{slug}/.
-    """
-    slug = feature_name or feature_id
-    init_branch = f"feature/{slug}-init"
-    if branch_exists(gh_owner, gh_repo, init_branch, github_token):
-        return init_branch, slug
-    return f"feature/{slug}", slug
-
-
-def _commit_files(
-    gh_owner: str,
-    gh_repo: str,
-    branch: str,
-    files: Dict[str, str],
-    commit_msg: str,
-    github_token: str,
-) -> str:
-    """Commit multiple files to a branch in a single commit using the Git Data API.
-
-    Uses requests (same as document_repo.py) so the certifi CA bundle is used
-    for SSL verification, matching the rest of the hermes-agent GitHub client code.
-    """
-    import base64
-    import requests as _requests
-
-    api = "https://api.github.com"
-    timeout = 30
-    headers = {
-        "Authorization": f"Bearer {github_token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-
-    def _get(url: str) -> Any:
-        r = _requests.get(url, headers=headers, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
-
-    def _post(url: str, body: Any) -> Any:
-        r = _requests.post(url, headers=headers, json=body, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
-
-    def _patch(url: str, body: Any) -> Any:
-        r = _requests.patch(url, headers=headers, json=body, timeout=timeout)
-        r.raise_for_status()
-        return r.json()
-
-    # Get latest commit SHA on branch
-    ref = _get(f"{api}/repos/{gh_owner}/{gh_repo}/git/refs/heads/{branch}")
-    base_sha = ref["object"]["sha"]
-
-    # Get base tree SHA
-    commit_obj = _get(f"{api}/repos/{gh_owner}/{gh_repo}/git/commits/{base_sha}")
-    base_tree = commit_obj["tree"]["sha"]
-
-    # Create blobs for each file
-    tree_entries = []
-    for path, content in files.items():
-        blob = _post(f"{api}/repos/{gh_owner}/{gh_repo}/git/blobs", {
-            "content": base64.b64encode(content.encode("utf-8")).decode("ascii"),
-            "encoding": "base64",
-        })
-        tree_entries.append({"path": path.lstrip("/"), "mode": "100644", "type": "blob", "sha": blob["sha"]})
-
-    # Create tree on top of base
-    tree = _post(f"{api}/repos/{gh_owner}/{gh_repo}/git/trees", {
-        "base_tree": base_tree,
-        "tree": tree_entries,
-    })
-
-    # Create commit
-    commit = _post(f"{api}/repos/{gh_owner}/{gh_repo}/git/commits", {
-        "message": commit_msg,
-        "tree": tree["sha"],
-        "parents": [base_sha],
-    })
-
-    # Advance branch ref
-    _patch(f"{api}/repos/{gh_owner}/{gh_repo}/git/refs/heads/{branch}", {
-        "sha": commit["sha"],
-        "force": False,
-    })
-
-    return commit["sha"]
-
-
 def handle(
     tasks: List[Dict[str, Any]],
     tasks_md: str,
@@ -277,7 +132,10 @@ def handle(
     caller_org_id = get_org_id()
 
     if not wid or not fid:
-        return {"ok": False, "error": "workspace_id and feature_id are required but were not provided and no context is set."}
+        return {
+            "ok": False,
+            "error": "workspace_id and feature_id are required but were not provided and no context is set.",
+        }
 
     if not tasks:
         return {"ok": False, "error": "tasks must be a non-empty list."}
@@ -289,14 +147,16 @@ def handle(
     for t in tasks:
         tid = t.get("id", "")
         if not _TASK_ID_RE.match(tid):
-            return {"ok": False, "error": f"Invalid task id {tid!r}. Must match T<number>, e.g. T1, T2."}
+            return {
+                "ok": False,
+                "error": f"Invalid task id {tid!r}. Must match T<number>, e.g. T1, T2.",
+            }
 
     # Validate each task's repo against GitNexus's indexed repo set — the
     # authoritative repo universe. This is the guardrail behind the "determine
     # repo from GitNexus, not guesswork" rule: reject tasks pointed at a repo
     # that isn't actually indexed. Skipped gracefully when GitNexus is
     # unavailable (list_indexed_repos returns None) so authoring still works.
-    from ..context import get_workspace_id
     from .gitnexus import list_indexed_repos
 
     # GitNexus only serves workspace-scoped endpoints (/ws/<slug>/sse), so the
@@ -305,7 +165,14 @@ def handle(
     indexed_repos = list_indexed_repos(workspace_id=get_workspace_id())
     if indexed_repos:
         indexed_set = set(indexed_repos)
-        unknown = sorted({(t.get("repo") or "").strip() for t in tasks if (t.get("repo") or "").strip()} - indexed_set)
+        unknown = sorted(
+            {
+                (t.get("repo") or "").strip()
+                for t in tasks
+                if (t.get("repo") or "").strip()
+            }
+            - indexed_set
+        )
         if unknown:
             return {
                 "ok": False,
@@ -341,92 +208,33 @@ def handle(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
-    # Feature detail — look this up first so we can branch on owner before
-    # requiring GITHUB_TOKEN. go-owned features don't need it at all.
-    feature_name: Optional[str] = None
-    init_pr_url: Optional[str] = None
-    owner: Optional[str] = None
     try:
-        detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
-        feature_name = detail.get("feature_name") or fid
-        init_pr_url = detail.get("init_pr_url")
-        owner = detail.get("owner") or "ts"
+        result = write_document_content(
+            wid,
+            fid,
+            "tasks.md",
+            tasks_md,
+            user_id=caller_user_id,
+            org_id=caller_org_id,
+        )
+    except StorageServiceError as exc:
+        logger.warning("write_tasks: storage-service error: %s", exc)
+        return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        logger.debug("write_tasks: could not fetch feature_detail: %s", exc)
-        feature_name = fid
-        owner = "ts"
-
-    # Owner guard: go-owned features write tasks.md to storage-service, not
-    # git — workflow-backend no longer creates a git branch/PR for go features.
-    if owner == "go":
-        try:
-            result = write_document_content(
-                wid, fid, "tasks.md", tasks_md,
-                user_id=caller_user_id, org_id=caller_org_id,
-            )
-        except StorageServiceError as exc:
-            logger.warning("write_tasks (go): storage-service error: %s", exc)
-            return {"ok": False, "error": str(exc)}
-        except Exception as exc:
-            logger.warning("write_tasks (go): unexpected error: %s", exc)
-            return {"ok": False, "error": str(exc)}
-        return {
-            "ok": True,
-            "owner": owner,
-            "branch": None,
-            "commit_sha": None,
-            "version_id": result.get("version_id"),
-            "tasks_committed": len(tasks),
-            "files_written": [f"storage-service://{wid}/{fid}/tasks.md"],
-            "message": (
-                f"Task breakdown written: {len(tasks)} tasks written to storage-service. "
-                "Tasks will be created in the DB at tasks-stage approval "
-                "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
-                "Call approve_feature(stage='tasks') when ready to activate tasks."
-            ),
-        }
-
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not github_token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
-
-    try:
-        workspace_context = run_async(get_workspace_context(wid, user_id=caller_user_id, org_id=caller_org_id))
-        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
-
-    branch, doc_dir = _resolve_target_branch(
-        gh_owner, gh_repo, fid, feature_name, init_pr_url, github_token
-    )
-
-    # Build files to commit (ts/git: tasks.md narrative + per-task YAML files)
-    files: Dict[str, str] = {
-        f"docs/features/{doc_dir}/tasks.md": tasks_md,
-    }
-    for task in tasks:
-        tid = task["id"]
-        yaml_content = _task_yaml(task, feature_name or fid)
-        files[f"docs/features/{doc_dir}/tasks/{tid}.yaml"] = yaml_content
-
-    commit_msg = commit_message or f"feat({feature_name}): add task breakdown ({len(tasks)} tasks)"
-
-    try:
-        commit_sha = _commit_files(gh_owner, gh_repo, branch, files, commit_msg, github_token)
-    except Exception as exc:
-        logger.exception("write_tasks: commit failed for feature %s", fid)
-        return {"ok": False, "error": f"Git commit failed: {exc}"}
-
+        logger.warning("write_tasks: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
     return {
         "ok": True,
-        "owner": owner,
-        "branch": branch,
-        "commit_sha": commit_sha,
+        "owner": "go",
+        "branch": None,
+        "commit_sha": None,
+        "version_id": result.get("version_id"),
         "tasks_committed": len(tasks),
-        "files_written": list(files.keys()),
+        "files_written": [f"storage-service://{wid}/{fid}/tasks.md"],
         "message": (
-            f"Task breakdown written: {len(tasks)} tasks committed to {branch}. "
-            "Task YAML files written in tasks/. "
+            f"Task breakdown written: {len(tasks)} tasks written to storage-service. "
+            "Tasks will be created in the DB at tasks-stage approval "
+            "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
             "Call approve_feature(stage='tasks') when ready to activate tasks."
         ),
     }
