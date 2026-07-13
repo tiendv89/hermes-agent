@@ -288,7 +288,7 @@ async def send_message(
     # --- Dispatch gate ---
     if not _should_trigger_agent(session, has_agent_mention):
         return JSONResponse(
-            {"status": "accepted", "message_id": message_id, "agent_triggered": False},
+            {"status": "accepted", "message_id": str(message_id), "agent_triggered": False},
             status_code=202,
         )
 
@@ -334,7 +334,7 @@ async def send_message(
     return JSONResponse(
         {
             "status": "accepted",
-            "message_id": message_id,
+            "message_id": str(message_id),
             "agent_triggered": True,
             "agent_mentions": [
                 m for m in resolved_mentions if m["mentioned_kind"] == "agent"

@@ -15,6 +15,15 @@ Each event is a dict ``{"event": "<name>", "data": {...}}``:
     hermes.artifact.saved   — {"artifact": "<kind>"}
     agent.done              — {"finish_reason": "stop"|"error", "error": "<msg>"}  (error optional)
     agent.working           — {"session_id": "..."}  (published when the turn starts)
+
+Published elsewhere in the turn lifecycle (src/api/agent_dispatch.py), not by
+this translator, but part of the same live-event surface:
+
+    message.thread_updated  — {"session_id": "...", "root_message_id": "<id>",
+                                "thread_summary": {"reply_count": N, "recent_repliers": [...]}}
+                              (published once a threaded reply is persisted —
+                              the live counterpart of the thread_summary a
+                              reload attaches via GET .../messages)
 """
 
 from __future__ import annotations
@@ -42,7 +51,11 @@ class BusPublishingSSETranslator(HermesSSETranslator):
         # Callbacks are invoked from a worker thread (run_in_executor); use
         # call_soon_threadsafe to schedule put_nowait on the event-loop thread.
         if self._thread_root_id is not None:
-            data = {**data, "thread_root_id": self._thread_root_id}
+            # Stringified to match message.created's thread_root_id convention
+            # (src/api/routers/messages.py) — a frontend correlating a live
+            # agent.* event against an existing message by this id would
+            # otherwise compare a raw int here against a string everywhere else.
+            data = {**data, "thread_root_id": str(self._thread_root_id)}
         bus = get_bus()
         self._loop.call_soon_threadsafe(
             bus.publish, self._session_id, {"event": event, "data": data}

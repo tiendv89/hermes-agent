@@ -310,7 +310,7 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
     assert resp.status_code == 202
     body = resp.json()
     assert body["agent_triggered"] is True
-    assert body["message_id"] == 42
+    assert body["message_id"] == "42"
     mock_dispatch.assert_called_once()
 
 
@@ -867,7 +867,7 @@ async def test_send_message_dm_explicit_agent_triggers():
     assert resp.status_code == 202
     body = resp.json()
     assert body["agent_triggered"] is True
-    assert body["message_id"] == 21
+    assert body["message_id"] == "21"
     mock_dispatch.assert_called_once()
 
 
