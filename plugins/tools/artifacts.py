@@ -90,7 +90,10 @@ WRITE_SPEC_SCHEMA: Dict[str, Any] = {
         "query_gitnexus (start with tool='list_repos') before calling this — "
         "ground the spec in real repos/tables/symbols, not assumptions. If both "
         "return nothing, note the unresolved questions in the document rather "
-        "than inventing names."
+        "than inventing names. In a general-chat session (no current feature), "
+        "pass the SAME feature_id to query_rag/query_gitnexus that you pass here "
+        "— otherwise those calls credit no feature and this tool keeps reporting "
+        "needs_context."
     ),
     "parameters": {
         "type": "object",
@@ -133,7 +136,10 @@ WRITE_TD_SCHEMA: Dict[str, Any] = {
         "tool='query'/'context'/'impact' for the symbols the design touches) "
         "before calling this — ground the design in real repos/files/symbols, "
         "not assumptions. If both return nothing, note the unresolved repo/symbol "
-        "questions in the document rather than inventing names."
+        "questions in the document rather than inventing names. In a general-chat "
+        "session (no current feature), pass the SAME feature_id to "
+        "query_rag/query_gitnexus that you pass here — otherwise those calls "
+        "credit no feature and this tool keeps reporting needs_context."
     ),
     "parameters": {
         "type": "object",

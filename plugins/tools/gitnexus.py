@@ -89,6 +89,16 @@ SCHEMA: Dict[str, Any] = {
                     "radius of a change), 'downstream' = what the target depends on."
                 ),
             },
+            "feature_id": {
+                "type": "string",
+                "description": (
+                    "Feature identifier. Omit inside a feature-scoped session (resolved "
+                    "from context automatically). In a general-chat session (no current "
+                    "feature) pass the feature's id explicitly — e.g. from "
+                    "workflow_lookup_feature — so this call counts toward that feature's "
+                    "context-gathering gate for write_product_spec/write_technical_design."
+                ),
+            },
         },
         "required": ["query"],
         "additionalProperties": False,
@@ -132,6 +142,7 @@ async def handle(
     tool: str = "query",
     repo: Any = "",
     direction: str = "upstream",
+    feature_id: Any = "",
     **_: Any,
 ) -> Dict[str, Any]:
     query = coerce_text(query)
@@ -149,10 +160,13 @@ async def handle(
     if not url:
         return {"ok": False, "error": "GITNEXUS_MCP_URL is not configured."}
     # Record the context-gathering attempt so the design-write gate is satisfied
-    # (see artifacts.py) — marking on attempt, not only on hits.
+    # (see artifacts.py) — marking on attempt, not only on hits. Pass the
+    # explicit feature_id through (falls back to the thread-local current
+    # feature when omitted) so this credits the right feature in a
+    # general-chat session, which has no current feature set.
     from ..context import get_org_id, get_workspace_id, mark_context_gathered
 
-    mark_context_gathered()
+    mark_context_gathered(coerce_text(feature_id))
     workspace_id = get_workspace_id()
     if not workspace_id:
         return {
@@ -179,7 +193,14 @@ async def handle(
         return {"ok": True, "results": results}
     except Exception as exc:
         logger.warning("query_gitnexus failed: %s", exc)
-        return {"ok": False, "error": str(exc)}
+        return {
+            "ok": False,
+            "error": (
+                f"{exc} — if this repo/workspace was created recently, GitNexus "
+                "may still be indexing it; retry shortly before concluding the "
+                "repo isn't available."
+            ),
+        }
 
 
 def _loads_leading_json(text: str) -> Any:
@@ -238,8 +259,12 @@ def list_indexed_repos(
 ) -> Optional[List[str]]:
     """Best-effort, synchronous list of GitNexus-indexed repo names.
 
-    Returns the repo names (e.g. ['voyager-interface', ...]), or ``None`` when
-    GitNexus is unconfigured/unreachable so callers can fall back gracefully.
+    Returns the repo names (e.g. ['voyager-interface', ...]); ``None`` when
+    GitNexus is unconfigured/unreachable so callers can fall back gracefully;
+    or ``[]`` when GitNexus responded but reports zero indexed repos (e.g. a
+    repo was just created and hasn't finished indexing yet) — callers can use
+    this distinction to tell "GitNexus is down" apart from "nothing indexed
+    yet" when deciding what to tell the agent/user.
 
     The request targets the org+workspace-scoped endpoint
     (``…/ws/<organization_id>/<workspace_id>/sse``, matching rag-service) so
@@ -293,9 +318,14 @@ def list_indexed_repos(
         logger.debug("list_indexed_repos failed: %s", exc)
         return None
     if not names:
-        # Treat an empty/unparseable result as "unavailable" — don't cache it,
-        # so a transient miss doesn't blind callers for the whole TTL window.
-        return None
+        # A reachable-but-empty result is distinct from "unavailable": GitNexus
+        # answered but reports nothing indexed, which is the expected state for
+        # a workspace whose repo was just created and hasn't finished indexing
+        # yet. Return [] (not None) so callers can tell that apart from a
+        # genuine outage/misconfiguration — see hooks.py and tasks_write.py.
+        # Not cached, so a transient miss doesn't blind callers for the whole
+        # TTL window.
+        return []
     cache["names"] = names
     cache["ts"] = now
     return names

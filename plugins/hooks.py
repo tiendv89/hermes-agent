@@ -216,6 +216,21 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                 ]
                 if repos:
                     parts.append("repos: " + ", ".join(r for r in repo_ids if r))
+                    if indexed_repos is not None:
+                        # GitNexus responded (indexed_repos == []) rather than
+                        # being unreachable/misconfigured (indexed_repos is
+                        # None) — so a workspace that does have repo(s)
+                        # configured but zero indexed is most likely still
+                        # indexing a freshly created/added repo, not a real
+                        # absence. Say so explicitly rather than letting the
+                        # silent fallback read as "everything's fine."
+                        parts.append(
+                            "note: GitNexus reports no indexed repos yet for this "
+                            "workspace's configured repo(s) — if one was just "
+                            "created, indexing may still be in progress; "
+                            "query_gitnexus/query_rag may return nothing until it "
+                            "completes. Don't conclude the repo doesn't exist."
+                        )
 
         if not feature_id:
             # Non-feature session (Channel, Team Chat thread, DM).

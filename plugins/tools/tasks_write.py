@@ -303,6 +303,7 @@ def handle(
     # session workspace must be passed — without it the lookup is skipped and
     # validation degrades gracefully.
     indexed_repos = list_indexed_repos(workspace_id=get_workspace_id())
+    repo_validation_note = ""
     if indexed_repos:
         indexed_set = set(indexed_repos)
         unknown = sorted({(t.get("repo") or "").strip() for t in tasks if (t.get("repo") or "").strip()} - indexed_set)
@@ -317,6 +318,16 @@ def handle(
                     "to confirm. Do not guess the repo from the feature title."
                 ),
             }
+    elif indexed_repos is not None:
+        # GitNexus responded but reported zero indexed repos (as opposed to
+        # None, meaning unreachable/misconfigured) — most likely a freshly
+        # created repo still indexing. Skip validation as with "unavailable",
+        # but flag it in the response so the skip isn't read as a clean pass.
+        repo_validation_note = (
+            " (repo validation skipped: GitNexus reports no indexed repos yet "
+            "for this workspace — if a repo was just created, indexing may "
+            "still be in progress)"
+        )
 
     # Validate every "### Required skills" slug against the live technical_skills
     # index — the same guardrail as the repo check above, but for skills. Without
@@ -383,6 +394,7 @@ def handle(
                 "Tasks will be created in the DB at tasks-stage approval "
                 "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
                 "Call approve_feature(stage='tasks') when ready to activate tasks."
+                + repo_validation_note
             ),
         }
 
@@ -428,5 +440,6 @@ def handle(
             f"Task breakdown written: {len(tasks)} tasks committed to {branch}. "
             "Task YAML files written in tasks/. "
             "Call approve_feature(stage='tasks') when ready to activate tasks."
+            + repo_validation_note
         ),
     }

@@ -202,6 +202,24 @@ def handle_write_file(
                 "message": "write_file is only supported for go-owned features",
             }
 
+        if not slug:
+            # storage-service only assigns the human-readable
+            # docs/features/{slug}/ folder on this path's FIRST write (see
+            # write_document_content docstring) — a later write to the same
+            # path is edit-only and can't correct it. Writing now with an
+            # empty slug would permanently strand this path under a raw-UUID
+            # folder, so refuse instead of silently doing that.
+            return {
+                "ok": False,
+                "error": (
+                    f"Could not resolve a feature_name/slug for feature_id={fid!r} — "
+                    "refusing to create a new document without one, since the first "
+                    "write permanently fixes the folder name (raw feature_id vs. "
+                    "slug) for this path. Retry, or confirm the feature via "
+                    "workflow_lookup_feature first."
+                ),
+            }
+
     try:
         write_result = write_document_content(
             wid,
