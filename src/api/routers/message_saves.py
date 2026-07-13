@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
@@ -60,13 +61,24 @@ async def save_message(
         )
 
     now = time.time()
-    db.add(MessageSave(message_id=message_id, user_id=identity.user_id, saved_at=now))
-    await db.commit()
-
-    return JSONResponse(
-        {"saved": True, "message_id": str(message_id), "saved_at": now},
-        status_code=201,
-    )
+    try:
+        db.add(MessageSave(message_id=message_id, user_id=identity.user_id, saved_at=now))
+        await db.commit()
+        return JSONResponse(
+            {"saved": True, "message_id": str(message_id), "saved_at": now},
+            status_code=201,
+        )
+    except IntegrityError:
+        await db.rollback()
+        existing = await db.get(MessageSave, (message_id, identity.user_id))
+        return JSONResponse(
+            {
+                "saved": True,
+                "message_id": str(message_id),
+                "saved_at": existing.saved_at if existing else now,
+            },
+            status_code=200,
+        )
 
 
 @router.delete("/messages/{message_id}/save", status_code=204)
