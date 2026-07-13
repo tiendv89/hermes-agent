@@ -30,6 +30,8 @@ from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import default_model, resolve_model
 from src.db import (
+    edit_message,
+    get_message,
     get_messages_as_conversation,
     get_messages_since,
     get_session,
@@ -37,6 +39,7 @@ from src.db import (
     is_member,
     persist_mentions,
     set_session_title,
+    soft_delete_message,
     touch_session,
     update_session_model,
 )
@@ -48,6 +51,10 @@ from src.services.workflow_backend_client import get_workspace_organization_id
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+class EditMessageRequest(BaseModel):
+    content: str
 
 
 class SendMessageRequest(BaseModel):
@@ -317,3 +324,79 @@ async def send_message(
         },
         status_code=202,
     )
+
+
+@router.put("/messages/{message_id}")
+async def edit_message_endpoint(
+    message_id: str,
+    body: EditMessageRequest,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Edit a message's content (author only).
+
+    Sets ``edited_at`` to the current time and returns the updated message.
+    Only the original author (X-User-Id == message.author_id) may call this.
+    """
+    if not body.content or not body.content.strip():
+        raise HTTPException(status_code=400, detail="content must be non-empty.")
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    try:
+        msg_id = int(message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="message_id must be numeric.")
+
+    msg = await get_message(db, msg_id)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if msg.author_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the author can edit this message.")
+
+    await edit_message(db, msg_id, body.content)
+    updated = await get_message(db, msg_id)
+    return JSONResponse(
+        {
+            "id": str(updated.id),
+            "session_id": updated.session_id,
+            "content": updated.content,
+            "author_id": updated.author_id,
+            "created_at": updated.created_at,
+            "edited_at": updated.edited_at,
+            "active": updated.active,
+        }
+    )
+
+
+@router.delete("/messages/{message_id}")
+async def delete_message_endpoint(
+    message_id: str,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Soft-delete a message (author only).
+
+    Sets ``active=False`` — the message is not removed from the DB so thread/reply
+    linkage is preserved. The read path renders inactive rows as
+    "This message was deleted" placeholders. Idempotent: calling again on an
+    already-deleted message is a no-op.
+    """
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    try:
+        msg_id = int(message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="message_id must be numeric.")
+
+    msg = await get_message(db, msg_id)
+    if msg is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+    if msg.author_id != user_id:
+        raise HTTPException(status_code=403, detail="Only the author can delete this message.")
+
+    await soft_delete_message(db, msg_id)
+    return JSONResponse({"ok": True, "message_id": message_id})

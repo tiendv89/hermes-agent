@@ -1,5 +1,10 @@
 from src.db.models import Base, Message, MessageMention, Session, SessionMember, SessionRead
 from src.db.store import (
+    get_message,
+    edit_message,
+    soft_delete_message,
+)
+from src.db.store import (
     init_db,
     create_session,
     get_session,
@@ -50,6 +55,9 @@ from src.db.store import (
 )
 
 __all__ = [
+    "get_message",
+    "edit_message",
+    "soft_delete_message",
     "Base",
     "Message",
     "MessageMention",

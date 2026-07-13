@@ -472,6 +472,40 @@ async def append_message(
     return message_id
 
 
+async def get_message(
+    db: AsyncSession,
+    message_id: int,
+) -> Optional[Message]:
+    """Return a single Message row by primary key, or None if not found."""
+    result = await db.execute(select(Message).where(Message.id == message_id))
+    return result.scalar_one_or_none()
+
+
+async def edit_message(
+    db: AsyncSession,
+    message_id: int,
+    content: str,
+) -> None:
+    """Update a message's content and stamp edited_at with the current epoch time."""
+    await db.execute(
+        update(Message)
+        .where(Message.id == message_id)
+        .values(content=content, edited_at=time.time())
+    )
+    await db.commit()
+
+
+async def soft_delete_message(
+    db: AsyncSession,
+    message_id: int,
+) -> None:
+    """Soft-delete a message by setting active=False (idempotent)."""
+    await db.execute(
+        update(Message).where(Message.id == message_id).values(active=False)
+    )
+    await db.commit()
+
+
 async def get_messages_as_conversation(
     db: AsyncSession,
     session_id: str,
@@ -516,43 +550,61 @@ async def get_session_messages(
     db: AsyncSession,
     session_id: str,
 ) -> list[Dict[str, Any]]:
-    """Return active messages for a session in UI-friendly form, oldest-first.
+    """Return messages for a session in UI-friendly form, oldest-first.
 
     Unlike :func:`get_messages_as_conversation` (which builds OpenAI request
     context), this is shaped for rendering a chat transcript: each entry carries
     a stable ``id`` and ``tool_calls`` is parsed back into JSON when present.
+
+    Soft-deleted messages (active=False) are included as placeholder rows rather
+    than omitted, so reply/thread linkage is preserved for ``reply_to_message_id``
+    and ``QuotedParentPreview`` consumers. Their content is replaced with the
+    canonical deleted-message string and a ``deleted: True`` flag is added.
     """
     result = await db.execute(
         select(Message)
         .where(
             Message.session_id == session_id,
-            Message.active == True,  # noqa: E712
             Message.thread_root_id == None,  # noqa: E711
         )
         .order_by(Message.created_at, Message.id)
     )
     messages = []
     for msg in result.scalars().all():
-        entry: Dict[str, Any] = {
-            "id": str(msg.id),
-            "role": msg.role,
-            "content": msg.content or "",
-            "author_id": msg.author_id,
-            "created_at": msg.created_at,
-        }
-        if msg.tool_name:
-            entry["tool_name"] = msg.tool_name
-        if msg.tool_call_id:
-            entry["tool_call_id"] = msg.tool_call_id
-        if msg.tool_calls:
-            try:
-                entry["tool_calls"] = json.loads(msg.tool_calls)
-            except (ValueError, TypeError):
-                entry["tool_calls"] = msg.tool_calls
-        if msg.reply_to_message_id is not None:
-            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
-        if msg.image_ids:
-            entry["image_ids"] = msg.image_ids
+        if not msg.active:
+            entry: Dict[str, Any] = {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": "This message was deleted",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "deleted": True,
+            }
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        else:
+            entry = {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": msg.content or "",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+            }
+            if msg.edited_at is not None:
+                entry["edited_at"] = msg.edited_at
+            if msg.tool_name:
+                entry["tool_name"] = msg.tool_name
+            if msg.tool_call_id:
+                entry["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls:
+                try:
+                    entry["tool_calls"] = json.loads(msg.tool_calls)
+                except (ValueError, TypeError):
+                    entry["tool_calls"] = msg.tool_calls
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.image_ids:
+                entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 
@@ -562,7 +614,7 @@ async def get_messages_since(
     session_id: str,
     since_message_id: int,
 ) -> list[Dict[str, Any]]:
-    """Return active messages with id > since_message_id, oldest-first.
+    """Return messages with id > since_message_id, oldest-first.
 
     Used by the SSE stream endpoint's ``?since=`` replay to catch up a
     reconnecting client without missing events that arrived while the bus queue
@@ -575,34 +627,54 @@ async def get_messages_since(
     transcript, so replaying them here is safe. Without this, an SSE
     reconnect mid-turn silently drops a thread reply from the live view even
     though it's correctly persisted — recoverable only by reloading.
+
+    Soft-deleted messages are included as placeholders (same semantics as
+    :func:`get_session_messages`) so the SSE catch-up path does not diverge
+    from the initial-load path.
     """
     result = await db.execute(
         select(Message)
         .where(
             Message.session_id == session_id,
-            Message.active == True,  # noqa: E712
             Message.id > since_message_id,
         )
         .order_by(Message.created_at, Message.id)
     )
     messages = []
     for msg in result.scalars().all():
-        entry: Dict[str, Any] = {
-            "id": str(msg.id),
-            "session_id": session_id,
-            "role": msg.role,
-            "content": msg.content or "",
-            "author_id": msg.author_id,
-            "created_at": msg.created_at,
-        }
-        if msg.tool_name:
-            entry["tool_name"] = msg.tool_name
-        if msg.reply_to_message_id is not None:
-            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
-        if msg.thread_root_id is not None:
-            entry["thread_root_id"] = str(msg.thread_root_id)
-        if msg.image_ids:
-            entry["image_ids"] = msg.image_ids
+        if not msg.active:
+            entry: Dict[str, Any] = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": "This message was deleted",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "deleted": True,
+            }
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.thread_root_id is not None:
+                entry["thread_root_id"] = str(msg.thread_root_id)
+        else:
+            entry = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": msg.content or "",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+            }
+            if msg.edited_at is not None:
+                entry["edited_at"] = msg.edited_at
+            if msg.tool_name:
+                entry["tool_name"] = msg.tool_name
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.thread_root_id is not None:
+                entry["thread_root_id"] = str(msg.thread_root_id)
+            if msg.image_ids:
+                entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 
@@ -617,11 +689,13 @@ async def get_thread_replies(
 
     Results are ordered oldest-first. When *since* is provided (a message id),
     only replies with id > since are returned (SSE catch-up use-case).
+
+    Soft-deleted replies are included as placeholders (same semantics as
+    :func:`get_session_messages`) so thread UI can show the deleted indicator.
     """
     conditions = [
         Message.session_id == session_id,
         Message.thread_root_id == root_message_id,
-        Message.active == True,  # noqa: E712
     ]
     if since is not None:
         conditions.append(Message.id > since)
@@ -633,21 +707,37 @@ async def get_thread_replies(
     )
     messages = []
     for msg in result.scalars().all():
-        entry: Dict[str, Any] = {
-            "id": str(msg.id),
-            "session_id": session_id,
-            "role": msg.role,
-            "content": msg.content or "",
-            "author_id": msg.author_id,
-            "created_at": msg.created_at,
-            "thread_root_id": str(root_message_id),
-        }
-        if msg.reply_to_message_id is not None:
-            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
-        if msg.tool_name:
-            entry["tool_name"] = msg.tool_name
-        if msg.image_ids:
-            entry["image_ids"] = msg.image_ids
+        if not msg.active:
+            entry: Dict[str, Any] = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": "This message was deleted",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "thread_root_id": str(root_message_id),
+                "deleted": True,
+            }
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        else:
+            entry = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": msg.content or "",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "thread_root_id": str(root_message_id),
+            }
+            if msg.edited_at is not None:
+                entry["edited_at"] = msg.edited_at
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.tool_name:
+                entry["tool_name"] = msg.tool_name
+            if msg.image_ids:
+                entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 
