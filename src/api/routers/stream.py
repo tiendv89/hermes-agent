@@ -10,7 +10,10 @@ Design (§4.3):
   thread topic.  The bus fan-out delivers: ``message.created`` (from the send
   service), agent delta frames + progress events (from BusPublishingSSETranslator),
   ``typing``/``agent.working`` (ephemeral), ``member.changed``,
-  ``channel.deleted``.
+  ``channel.deleted``, ``message.thread_updated`` (a root message's refreshed
+  reply_count/recent_repliers, published by agent_dispatch right after a
+  threaded reply is persisted — the live equivalent of the thread_summary a
+  reload attaches via GET .../messages).
 - ``?since=<message_id>`` replays persisted messages with id > since before
   switching to live tailing; the subscription is registered *before* the DB
   replay to ensure no live events are missed during the catch-up window.

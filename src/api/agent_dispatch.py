@@ -173,6 +173,49 @@ async def _backfill_assistant(
             )
 
 
+async def _publish_thread_summary_update(
+    db_factory: Callable, session_id: str, thread_root_id: int
+) -> None:
+    """Publish the thread-parent's refreshed reply count/repliers live.
+
+    GET /threads/{session_id}/messages (the reload path) attaches a
+    thread_summary to each root message via get_thread_reply_summaries, which
+    is how the UI shows the "N Messages" pill. No bus event ever carried that
+    same data, so a live-connected channel view had no signal that a message
+    just became (or grew) a thread parent — it fell back to rendering the
+    agent's reply as a flat top-level message until the next reload. This
+    closes that gap by publishing the same summary right after a threaded
+    reply is persisted.
+    """
+    from src.db.store import get_thread_reply_summaries
+
+    try:
+        async with db_factory() as db:
+            summaries = await get_thread_reply_summaries(db, session_id, [thread_root_id])
+    except Exception:
+        logger.exception(
+            "agent_dispatch: thread_summary refresh failed for session %s root %s",
+            session_id,
+            thread_root_id,
+        )
+        return
+
+    summary = summaries.get(thread_root_id)
+    if summary is None:
+        return
+    get_bus().publish(
+        session_id,
+        {
+            "event": "message.thread_updated",
+            "data": {
+                "session_id": session_id,
+                "root_message_id": str(thread_root_id),
+                "thread_summary": summary,
+            },
+        },
+    )
+
+
 async def _run_agent_turn_async(
     *,
     run_id: str,
@@ -231,6 +274,10 @@ async def _run_agent_turn_async(
                         thread_root_id=thread_root_id,
                     )
                     message_id = str(mid) if mid is not None else None
+                if thread_root_id is not None:
+                    await _publish_thread_summary_update(
+                        db_factory, session_id, thread_root_id
+                    )
             except Exception:
                 logger.exception(
                     "agent_dispatch: failed to persist stopped message for %s",
@@ -283,7 +330,7 @@ async def _run_agent_turn_async(
                 "data": {
                     "session_id": session_id,
                     "message_id": message_id,
-                    "thread_root_id": thread_root_id,
+                    "thread_root_id": str(thread_root_id) if thread_root_id is not None else None,
                 },
             },
         )
@@ -681,6 +728,18 @@ def _run_agent_turn(
         logger.exception("agent_dispatch: agent turn failed for session %s", session_id)
         translator.on_error(str(exc))
     finally:
+        if thread_root_id is not None:
+            try:
+                fut = asyncio.run_coroutine_threadsafe(
+                    _publish_thread_summary_update(db_factory, session_id, thread_root_id),
+                    loop,
+                )
+                fut.result(timeout=15)
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: thread_summary publish failed for session %s",
+                    session_id,
+                )
         translator.done()
         if workflow_context is not None:
             workflow_context.clear_context(session_id)
@@ -742,7 +801,11 @@ async def _schedule_follow_up(
                 "event": "agent.working",
                 "data": {
                     "session_id": session_id,
-                    "thread_root_id": pending.get("thread_root_id"),
+                    "thread_root_id": (
+                        str(pending["thread_root_id"])
+                        if pending.get("thread_root_id") is not None
+                        else None
+                    ),
                 },
             },
         )
@@ -849,7 +912,10 @@ async def schedule_agent_turn(
         session_id,
         {
             "event": "agent.working",
-            "data": {"session_id": session_id, "thread_root_id": thread_root_id},
+            "data": {
+                "session_id": session_id,
+                "thread_root_id": str(thread_root_id) if thread_root_id is not None else None,
+            },
         },
     )
 
