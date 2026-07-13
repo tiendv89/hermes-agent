@@ -869,3 +869,267 @@ async def test_send_message_dm_explicit_agent_triggers():
     assert body["agent_triggered"] is True
     assert body["message_id"] == 21
     mock_dispatch.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# _agent_reply_thread_context unit tests (T1: auto-thread for channel/DM)
+# ---------------------------------------------------------------------------
+
+
+def _make_msg(msg_id, thread_root_id=None):
+    from types import SimpleNamespace
+    return SimpleNamespace(id=msg_id, thread_root_id=thread_root_id)
+
+
+def test_agent_reply_thread_context_g1_in_thread():
+    """G1: mention inside existing thread → passthrough thread context unchanged."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="channel", feature_id="")
+    msg = _make_msg(msg_id=99, thread_root_id=10)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root == 10
+    assert reply_to == 99
+
+
+def test_agent_reply_thread_context_g2_channel_top_level():
+    """G2: channel top-level mention → auto-open a thread at the triggering message."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="channel", feature_id="")
+    msg = _make_msg(msg_id=42, thread_root_id=None)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root == 42
+    assert reply_to == 42
+
+
+def test_agent_reply_thread_context_g2_dm_top_level():
+    """G2: DM top-level mention → auto-open a thread at the triggering message."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="dm", feature_id="")
+    msg = _make_msg(msg_id=55, thread_root_id=None)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root == 55
+    assert reply_to == 55
+
+
+def test_agent_reply_thread_context_g3_feature_thread_top_level():
+    """G3: feature thread top-level mention → flat reply (thread_root_id=None)."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="thread", feature_id="feat-xyz")
+    msg = _make_msg(msg_id=77, thread_root_id=None)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root is None
+    assert reply_to is None
+
+
+def test_agent_reply_thread_context_g1_feature_thread_in_thread():
+    """G1 applies even in feature thread when mention is inside an existing thread."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="thread", feature_id="feat-xyz")
+    msg = _make_msg(msg_id=88, thread_root_id=20)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root == 20
+    assert reply_to == 88
+
+
+def test_agent_reply_thread_context_g3_adhoc_thread_top_level():
+    """G3: ad-hoc thread (kind='thread', feature_id='') top-level mention → flat reply."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="thread", feature_id="")
+    msg = _make_msg(msg_id=33, thread_root_id=None)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root is None
+    assert reply_to is None
+
+
+# ---------------------------------------------------------------------------
+# send_message thread_root_id propagation tests (HTTP integration)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_message_channel_top_level_agent_mention_opens_thread():
+    """Channel top-level @agent mention → schedule_agent_turn called with
+    thread_root_id=message_id and reply_to_message_id=message_id (G2)."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.add = MagicMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "channel"
+    session.feature_id = ""
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=100)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
+        patch("src.api.routers.messages.update_session_model", AsyncMock()),
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_ch/messages",
+                json={"content": "@agent help me with this"},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    assert resp.json()["agent_triggered"] is True
+    mock_dispatch.assert_called_once()
+    kwargs = mock_dispatch.call_args.kwargs
+    assert kwargs["thread_root_id"] == 100
+    assert kwargs["reply_to_message_id"] == 100
+
+
+@pytest.mark.asyncio
+async def test_send_message_dm_top_level_agent_mention_opens_thread():
+    """DM top-level @agent mention → schedule_agent_turn called with
+    thread_root_id=message_id and reply_to_message_id=message_id (G2)."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.add = MagicMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "dm"
+    session.feature_id = ""
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=200)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
+        patch("src.api.routers.messages.update_session_model", AsyncMock()),
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_dm/messages",
+                json={"content": "@agent what is today's task?"},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    assert resp.json()["agent_triggered"] is True
+    mock_dispatch.assert_called_once()
+    kwargs = mock_dispatch.call_args.kwargs
+    assert kwargs["thread_root_id"] == 200
+    assert kwargs["reply_to_message_id"] == 200
+
+
+@pytest.mark.asyncio
+async def test_send_message_feature_thread_top_level_agent_stays_flat():
+    """Feature thread top-level @agent mention → schedule_agent_turn called with
+    thread_root_id=None and reply_to_message_id=None (G3 — unchanged behavior)."""
+    _inject_stub_modules()
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+    from src.api.routers.messages import router as messages_router
+
+    app = FastAPI()
+    app.include_router(messages_router, prefix="/api/v1")
+
+    mock_db = MagicMock()
+    mock_db.execute = AsyncMock()
+    mock_db.commit = AsyncMock()
+    mock_db.add = MagicMock()
+
+    app.state.db_session = _make_db_session_factory(mock_db)
+
+    session = MagicMock()
+    session.user_id = "user_a"
+    session.kind = "thread"
+    session.feature_id = "feat-abc"
+    session.workspace_id = "ws-1"
+    session.model = None
+
+    _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
+    with (
+        patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
+        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.append_message", AsyncMock(return_value=300)),
+        patch("src.api.routers.messages.persist_mentions", AsyncMock()),
+        patch("src.api.routers.messages.touch_session", AsyncMock()),
+        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
+        patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
+        patch("src.api.routers.messages.update_session_model", AsyncMock()),
+        patch(
+            "src.api.routers.messages.get_messages_as_conversation",
+            AsyncMock(return_value=[]),
+        ),
+        patch(
+            "src.api.routers.messages.schedule_agent_turn", AsyncMock(return_value=True)
+        ) as mock_dispatch,
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as client:
+            resp = await client.post(
+                "/api/v1/threads/sess_ft/messages",
+                json={"content": "@agent update this feature"},
+                headers={"X-User-Id": "user_a"},
+            )
+
+    assert resp.status_code == 202
+    assert resp.json()["agent_triggered"] is True
+    mock_dispatch.assert_called_once()
+    kwargs = mock_dispatch.call_args.kwargs
+    assert kwargs["thread_root_id"] is None
+    assert kwargs["reply_to_message_id"] is None
