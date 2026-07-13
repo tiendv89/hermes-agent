@@ -1,4 +1,4 @@
-from src.db.models import Base, Message, MessageMention, Session, SessionMember, SessionRead
+from src.db.models import Base, Message, MessageMention, MessageReaction, Session, SessionMember, SessionRead
 from src.db.store import (
     get_message,
     edit_message,
@@ -31,6 +31,10 @@ from src.db.store import (
     update_message_cta_suggestions,
 )
 from src.db.store import (
+    toggle_message_reaction,
+    get_reactions_for_messages,
+)
+from src.db.store import (
     add_member,
     remove_member,
     list_members,
@@ -61,9 +65,12 @@ __all__ = [
     "Base",
     "Message",
     "MessageMention",
+    "MessageReaction",
     "Session",
     "SessionMember",
     "SessionRead",
+    "toggle_message_reaction",
+    "get_reactions_for_messages",
     "init_db",
     "create_session",
     "get_session",

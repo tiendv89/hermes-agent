@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, ModelCatalog, Session, SessionMember, SessionRead
+from .models import Message, MessageMention, MessageReaction, ModelCatalog, Session, SessionMember, SessionRead
 from src.services.author_resolver import author_for
 from src.services.notification_client import (
     build_channel_message_payload,
@@ -551,6 +551,7 @@ async def get_messages_as_conversation(
 async def get_session_messages(
     db: AsyncSession,
     session_id: str,
+    user_id: str = "",
 ) -> list[Dict[str, Any]]:
     """Return messages for a session in UI-friendly form, oldest-first.
 
@@ -562,6 +563,9 @@ async def get_session_messages(
     than omitted, so reply/thread linkage is preserved for ``reply_to_message_id``
     and ``QuotedParentPreview`` consumers. Their content is replaced with the
     canonical deleted-message string and a ``deleted: True`` flag is added.
+
+    When ``user_id`` is provided, each message entry includes a ``reactions``
+    list (``[{emoji, count, reactedByMe}]``) fetched in a single batch query.
     """
     result = await db.execute(
         select(Message)
@@ -571,8 +575,14 @@ async def get_session_messages(
         )
         .order_by(Message.created_at, Message.id)
     )
+    raw_msgs = result.scalars().all()
+
+    # Batch-fetch reactions for all messages in one query (avoid N+1).
+    msg_ids = [int(msg.id) for msg in raw_msgs]
+    reactions_by_msg = await get_reactions_for_messages(db, msg_ids, user_id)
+
     messages = []
-    for msg in result.scalars().all():
+    for msg in raw_msgs:
         if not msg.active:
             entry: Dict[str, Any] = {
                 "id": str(msg.id),
@@ -609,6 +619,9 @@ async def get_session_messages(
                 entry["image_ids"] = msg.image_ids
             if msg.forwarded_from_message_id is not None:
                 entry["forwarded_from_message_id"] = str(msg.forwarded_from_message_id)
+        mid = int(msg.id)
+        if mid in reactions_by_msg:
+            entry["reactions"] = reactions_by_msg[mid]
         messages.append(entry)
     return messages
 
@@ -912,6 +925,91 @@ async def update_message_cta_suggestions(
         .values(cta_suggestions=json.dumps(suggestions))
     )
     await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Reaction store (m3-agent-chat-essential-feature T3)
+# ---------------------------------------------------------------------------
+
+
+async def get_reactions_for_messages(
+    db: AsyncSession,
+    message_ids: List[int],
+    user_id: str = "",
+) -> Dict[int, List[Dict[str, Any]]]:
+    """Return aggregated reactions for a set of messages in one query (no N+1).
+
+    Returns a dict keyed by message_id. Each value is a list of
+    ``{emoji, count, reactedByMe}`` dicts ordered by first-reaction time.
+    Messages with no reactions are absent from the dict.
+    """
+    if not message_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            MessageReaction.message_id,
+            MessageReaction.emoji,
+            func.count(MessageReaction.id).label("cnt"),
+            func.bool_or(MessageReaction.user_id == user_id).label("reacted_by_me"),
+        )
+        .where(MessageReaction.message_id.in_(message_ids))
+        .group_by(MessageReaction.message_id, MessageReaction.emoji)
+        .order_by(MessageReaction.message_id, func.min(MessageReaction.created_at))
+    )
+
+    reactions_by_msg: Dict[int, List[Dict[str, Any]]] = {}
+    for row in result.all():
+        mid = int(row.message_id)
+        reactions_by_msg.setdefault(mid, []).append(
+            {
+                "emoji": row.emoji,
+                "count": int(row.cnt),
+                "reactedByMe": bool(row.reacted_by_me),
+            }
+        )
+    return reactions_by_msg
+
+
+async def toggle_message_reaction(
+    db: AsyncSession,
+    message_id: int,
+    user_id: str,
+    emoji: str,
+) -> List[Dict[str, Any]]:
+    """Toggle a per-user emoji reaction on a message.
+
+    Inserts a new ``MessageReaction`` row if one doesn't exist for
+    ``(message_id, user_id, emoji)``; deletes it if one does exist.
+
+    Returns the updated aggregate reaction list for the message:
+    ``[{emoji, count, reactedByMe}]``.
+    """
+    existing = await db.execute(
+        select(MessageReaction).where(
+            MessageReaction.message_id == message_id,
+            MessageReaction.user_id == user_id,
+            MessageReaction.emoji == emoji,
+        )
+    )
+    row = existing.scalar_one_or_none()
+
+    if row is not None:
+        await db.delete(row)
+    else:
+        db.add(
+            MessageReaction(
+                message_id=message_id,
+                user_id=user_id,
+                emoji=emoji,
+                created_at=time.time(),
+            )
+        )
+
+    await db.commit()
+
+    per_msg = await get_reactions_for_messages(db, [message_id], user_id)
+    return per_msg.get(message_id, [])
 
 
 # ===========================================================================

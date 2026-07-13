@@ -91,14 +91,14 @@ async def list_sessions_endpoint(
 @router.get("/sessions/{session_id}/messages")
 async def get_session_messages_endpoint(
     session_id: str,
-    _identity: Identity = Depends(require_identity),
+    identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Return the full transcript for a session, oldest-first."""
     session = await get_session(db, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
-    messages = await get_session_messages(db, session_id)
+    messages = await get_session_messages(db, session_id, user_id=identity.user_id)
     workspace_id = getattr(session, "workspace_id", "") or ""
     for m in messages:
         image_ids = m.pop("image_ids", None)
