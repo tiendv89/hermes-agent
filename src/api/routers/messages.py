@@ -21,6 +21,7 @@ import time as _time
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 
@@ -43,9 +44,11 @@ from src.db import (
     touch_session,
     update_session_model,
 )
+from src.db.models import Message, Session
 from src.db.store import append_message, get_thread_reply_summaries
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
+from src.services.user_service_client import list_users_by_ids
 from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
@@ -72,6 +75,13 @@ class SendMessageRequest(BaseModel):
     # rather than a URL, since storage-service is internal-only and the
     # vision tool's SSRF guard would reject fetching it directly.
     image_ids: List[str] = []
+
+
+class ForwardMessageRequest(BaseModel):
+    destination_session_ids: List[str]
+    # Optional comment prepended to the forwarded content as:
+    # "<comment>\n\n<original content>" in a single message row.
+    comment: Optional[str] = None
 
 
 def _image_urls_for(workspace_id: str, image_ids) -> List[str]:
@@ -152,6 +162,7 @@ async def get_thread_messages(
     workspace_id = getattr(session, "workspace_id", "") or "" if session else ""
     await attach_authors(workspace_id, messages)
     _attach_image_urls(messages, workspace_id)
+    await _attach_forwarded_authors(messages, db)
 
     # Attach thread_summary to each top-level message (reply count + recent repliers).
     if messages:
@@ -326,6 +337,132 @@ async def send_message(
     )
 
 
+async def _attach_forwarded_authors(messages: list, db: AsyncSession) -> None:
+    """Batch-resolve forwarded_from_message_id → original author info.
+
+    For each message with ``forwarded_from_message_id`` set, looks up the
+    original message's ``author_id`` in one batched SQL query, then resolves
+    display info via user-service in a single batched HTTP call.  Results are
+    attached in-place as a ``forwarded_from`` dict:
+    ``{"id": str, "name": str|None, "avatarUrl": str|None}``.
+    """
+    forwarded_ids = [
+        int(m["forwarded_from_message_id"])
+        for m in messages
+        if m.get("forwarded_from_message_id") is not None
+    ]
+    if not forwarded_ids:
+        return
+
+    result = await db.execute(
+        select(Message.id, Message.author_id).where(Message.id.in_(forwarded_ids))
+    )
+    originals: dict = {str(row.id): row.author_id for row in result.all()}
+
+    author_ids = list({aid for aid in originals.values() if aid})
+    if not author_ids:
+        return
+
+    users = await list_users_by_ids(author_ids)
+
+    for m in messages:
+        fwd_id = m.get("forwarded_from_message_id")
+        if fwd_id is None:
+            continue
+        orig_author_id = originals.get(fwd_id)
+        if not orig_author_id:
+            continue
+        info = users.get(orig_author_id) or {}
+        name = (info.get("display_name") or "").strip() or None
+        if not name:
+            email = (info.get("email") or "").strip()
+            name = email.split("@")[0] if email else None
+        m["forwarded_from"] = {
+            "id": orig_author_id,
+            "name": name,
+            "avatarUrl": info.get("avatar_url") or None,
+        }
+
+
+@router.post("/messages/{message_id}/forward", status_code=201)
+async def forward_message(
+    message_id: str,
+    body: ForwardMessageRequest,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Forward a message to one or more destination sessions.
+
+    Creates one new ``Message`` row per destination with
+    ``forwarded_from_message_id`` pointing at the source.  If ``comment`` is
+    provided it is prepended to the forwarded content as
+    ``"<comment>\\n\\n<original content>"`` in a single row — no separate row
+    is created for the comment.  This design keeps the forwarded message atomic
+    and avoids an extra N insert per destination.
+
+    Auth: any identified caller (no ownership check on the source message — any
+    member of a session can forward a message from it, matching the spec's
+    intent).  The caller's ``user_id`` becomes the ``author_id`` of the
+    forwarded copies.
+    """
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    if not body.destination_session_ids:
+        raise HTTPException(status_code=400, detail="destination_session_ids must be non-empty.")
+
+    try:
+        src_id = int(message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="message_id must be numeric.")
+
+    result = await db.execute(
+        select(Message).where(Message.id == src_id, Message.active == True)  # noqa: E712
+    )
+    source_msg = result.scalar_one_or_none()
+    if source_msg is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    forwarded_content = source_msg.content or ""
+    if body.comment:
+        forwarded_content = f"{body.comment.strip()}\n\n{forwarded_content}"
+
+    # Pre-validate all destinations before writing any messages to ensure atomicity.
+    # Use a single IN-query instead of N individual get_session calls to avoid N+1.
+    found_sessions_result = await db.execute(
+        select(Session).where(Session.id.in_(body.destination_session_ids))
+    )
+    found_session_ids = {s.id for s in found_sessions_result.scalars().all()}
+    for dest_session_id in body.destination_session_ids:
+        if dest_session_id not in found_session_ids:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Destination session not found: {dest_session_id}",
+            )
+
+    # All destinations valid — safe to write
+    new_message_ids = []
+    for dest_session_id in body.destination_session_ids:
+        new_id = await append_message(
+            db,
+            session_id=dest_session_id,
+            role="user",
+            content=forwarded_content,
+            author_id=user_id,
+            forwarded_from_message_id=src_id,
+        )
+        new_message_ids.append(new_id)
+
+    return JSONResponse(
+        {
+            "forwarded_message_ids": new_message_ids,
+            "destination_session_ids": body.destination_session_ids,
+        },
+        status_code=201,
+    )
+
+
 @router.put("/messages/{message_id}")
 async def edit_message_endpoint(
     message_id: str,
@@ -340,6 +477,7 @@ async def edit_message_endpoint(
     """
     if not body.content or not body.content.strip():
         raise HTTPException(status_code=400, detail="content must be non-empty.")
+
     user_id = identity.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing caller identity.")
