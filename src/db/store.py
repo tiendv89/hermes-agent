@@ -10,9 +10,10 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, ModelCatalog, Session, SessionMember, SessionRead
+from .models import Message, MessageMention, MessageReaction, ModelCatalog, Session, SessionMember, SessionRead
 from src.services.author_resolver import author_for
 from src.services.notification_client import (
     build_channel_message_payload,
@@ -45,7 +46,11 @@ async def init_db(engine: AsyncEngine) -> None:
         for path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
             if path.name in applied:
                 continue
-            for stmt in path.read_text(encoding="utf-8").split(";"):
+            sql_no_comments = "\n".join(
+                line for line in path.read_text(encoding="utf-8").splitlines()
+                if not line.strip().startswith("--")
+            )
+            for stmt in sql_no_comments.split(";"):
                 stmt = stmt.strip()
                 if stmt:
                     await conn.execute(text(stmt))
@@ -414,6 +419,7 @@ async def append_message(
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
     image_ids: Optional[List[str]] = None,
+    forwarded_from_message_id: Optional[int] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -443,6 +449,7 @@ async def append_message(
         # iterates it (e.g. building per-image URLs) walks it character by
         # character instead of element by element.
         image_ids=image_ids or [],
+        forwarded_from_message_id=forwarded_from_message_id,
     )
     db.add(msg)
 
@@ -470,6 +477,40 @@ async def append_message(
             )
 
     return message_id
+
+
+async def get_message(
+    db: AsyncSession,
+    message_id: int,
+) -> Optional[Message]:
+    """Return a single Message row by primary key, or None if not found."""
+    result = await db.execute(select(Message).where(Message.id == message_id))
+    return result.scalar_one_or_none()
+
+
+async def edit_message(
+    db: AsyncSession,
+    message_id: int,
+    content: str,
+) -> None:
+    """Update a message's content and stamp edited_at with the current epoch time."""
+    await db.execute(
+        update(Message)
+        .where(Message.id == message_id)
+        .values(content=content, edited_at=time.time())
+    )
+    await db.commit()
+
+
+async def soft_delete_message(
+    db: AsyncSession,
+    message_id: int,
+) -> None:
+    """Soft-delete a message by setting active=False (idempotent)."""
+    await db.execute(
+        update(Message).where(Message.id == message_id).values(active=False)
+    )
+    await db.commit()
 
 
 async def get_messages_as_conversation(
@@ -515,44 +556,77 @@ async def get_messages_as_conversation(
 async def get_session_messages(
     db: AsyncSession,
     session_id: str,
+    user_id: str = "",
 ) -> list[Dict[str, Any]]:
-    """Return active messages for a session in UI-friendly form, oldest-first.
+    """Return messages for a session in UI-friendly form, oldest-first.
 
     Unlike :func:`get_messages_as_conversation` (which builds OpenAI request
     context), this is shaped for rendering a chat transcript: each entry carries
     a stable ``id`` and ``tool_calls`` is parsed back into JSON when present.
+
+    Soft-deleted messages (active=False) are included as placeholder rows rather
+    than omitted, so reply/thread linkage is preserved for ``reply_to_message_id``
+    and ``QuotedParentPreview`` consumers. Their content is replaced with the
+    canonical deleted-message string and a ``deleted: True`` flag is added.
+
+    When ``user_id`` is provided, each message entry includes a ``reactions``
+    list (``[{emoji, count, reactedByMe}]``) fetched in a single batch query.
     """
     result = await db.execute(
         select(Message)
         .where(
             Message.session_id == session_id,
-            Message.active == True,  # noqa: E712
             Message.thread_root_id == None,  # noqa: E711
         )
         .order_by(Message.created_at, Message.id)
     )
+    raw_msgs = result.scalars().all()
+
+    # Batch-fetch reactions for all messages in one query (avoid N+1).
+    msg_ids = [int(msg.id) for msg in raw_msgs]
+    reactions_by_msg = await get_reactions_for_messages(db, msg_ids, user_id)
+
     messages = []
-    for msg in result.scalars().all():
-        entry: Dict[str, Any] = {
-            "id": str(msg.id),
-            "role": msg.role,
-            "content": msg.content or "",
-            "author_id": msg.author_id,
-            "created_at": msg.created_at,
-        }
-        if msg.tool_name:
-            entry["tool_name"] = msg.tool_name
-        if msg.tool_call_id:
-            entry["tool_call_id"] = msg.tool_call_id
-        if msg.tool_calls:
-            try:
-                entry["tool_calls"] = json.loads(msg.tool_calls)
-            except (ValueError, TypeError):
-                entry["tool_calls"] = msg.tool_calls
-        if msg.reply_to_message_id is not None:
-            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
-        if msg.image_ids:
-            entry["image_ids"] = msg.image_ids
+    for msg in raw_msgs:
+        if not msg.active:
+            entry: Dict[str, Any] = {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": "This message was deleted",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "deleted": True,
+            }
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        else:
+            entry = {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": msg.content or "",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+            }
+            if msg.edited_at is not None:
+                entry["edited_at"] = msg.edited_at
+            if msg.tool_name:
+                entry["tool_name"] = msg.tool_name
+            if msg.tool_call_id:
+                entry["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls:
+                try:
+                    entry["tool_calls"] = json.loads(msg.tool_calls)
+                except (ValueError, TypeError):
+                    entry["tool_calls"] = msg.tool_calls
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.image_ids:
+                entry["image_ids"] = msg.image_ids
+            if msg.forwarded_from_message_id is not None:
+                entry["forwarded_from_message_id"] = str(msg.forwarded_from_message_id)
+        mid = int(msg.id)
+        if mid in reactions_by_msg:
+            entry["reactions"] = reactions_by_msg[mid]
         messages.append(entry)
     return messages
 
@@ -562,7 +636,7 @@ async def get_messages_since(
     session_id: str,
     since_message_id: int,
 ) -> list[Dict[str, Any]]:
-    """Return active messages with id > since_message_id, oldest-first.
+    """Return messages with id > since_message_id, oldest-first.
 
     Used by the SSE stream endpoint's ``?since=`` replay to catch up a
     reconnecting client without missing events that arrived while the bus queue
@@ -575,34 +649,56 @@ async def get_messages_since(
     transcript, so replaying them here is safe. Without this, an SSE
     reconnect mid-turn silently drops a thread reply from the live view even
     though it's correctly persisted — recoverable only by reloading.
+
+    Soft-deleted messages are included as placeholders (same semantics as
+    :func:`get_session_messages`) so the SSE catch-up path does not diverge
+    from the initial-load path.
     """
     result = await db.execute(
         select(Message)
         .where(
             Message.session_id == session_id,
-            Message.active == True,  # noqa: E712
             Message.id > since_message_id,
         )
         .order_by(Message.created_at, Message.id)
     )
     messages = []
     for msg in result.scalars().all():
-        entry: Dict[str, Any] = {
-            "id": str(msg.id),
-            "session_id": session_id,
-            "role": msg.role,
-            "content": msg.content or "",
-            "author_id": msg.author_id,
-            "created_at": msg.created_at,
-        }
-        if msg.tool_name:
-            entry["tool_name"] = msg.tool_name
-        if msg.reply_to_message_id is not None:
-            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
-        if msg.thread_root_id is not None:
-            entry["thread_root_id"] = str(msg.thread_root_id)
-        if msg.image_ids:
-            entry["image_ids"] = msg.image_ids
+        if not msg.active:
+            entry: Dict[str, Any] = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": "This message was deleted",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "deleted": True,
+            }
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.thread_root_id is not None:
+                entry["thread_root_id"] = str(msg.thread_root_id)
+        else:
+            entry = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": msg.content or "",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+            }
+            if msg.edited_at is not None:
+                entry["edited_at"] = msg.edited_at
+            if msg.tool_name:
+                entry["tool_name"] = msg.tool_name
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.thread_root_id is not None:
+                entry["thread_root_id"] = str(msg.thread_root_id)
+            if msg.image_ids:
+                entry["image_ids"] = msg.image_ids
+            if msg.forwarded_from_message_id is not None:
+                entry["forwarded_from_message_id"] = str(msg.forwarded_from_message_id)
         messages.append(entry)
     return messages
 
@@ -617,11 +713,13 @@ async def get_thread_replies(
 
     Results are ordered oldest-first. When *since* is provided (a message id),
     only replies with id > since are returned (SSE catch-up use-case).
+
+    Soft-deleted replies are included as placeholders (same semantics as
+    :func:`get_session_messages`) so thread UI can show the deleted indicator.
     """
     conditions = [
         Message.session_id == session_id,
         Message.thread_root_id == root_message_id,
-        Message.active == True,  # noqa: E712
     ]
     if since is not None:
         conditions.append(Message.id > since)
@@ -633,21 +731,37 @@ async def get_thread_replies(
     )
     messages = []
     for msg in result.scalars().all():
-        entry: Dict[str, Any] = {
-            "id": str(msg.id),
-            "session_id": session_id,
-            "role": msg.role,
-            "content": msg.content or "",
-            "author_id": msg.author_id,
-            "created_at": msg.created_at,
-            "thread_root_id": str(root_message_id),
-        }
-        if msg.reply_to_message_id is not None:
-            entry["reply_to_message_id"] = str(msg.reply_to_message_id)
-        if msg.tool_name:
-            entry["tool_name"] = msg.tool_name
-        if msg.image_ids:
-            entry["image_ids"] = msg.image_ids
+        if not msg.active:
+            entry: Dict[str, Any] = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": "This message was deleted",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "thread_root_id": str(root_message_id),
+                "deleted": True,
+            }
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+        else:
+            entry = {
+                "id": str(msg.id),
+                "session_id": session_id,
+                "role": msg.role,
+                "content": msg.content or "",
+                "author_id": msg.author_id,
+                "created_at": msg.created_at,
+                "thread_root_id": str(root_message_id),
+            }
+            if msg.edited_at is not None:
+                entry["edited_at"] = msg.edited_at
+            if msg.reply_to_message_id is not None:
+                entry["reply_to_message_id"] = str(msg.reply_to_message_id)
+            if msg.tool_name:
+                entry["tool_name"] = msg.tool_name
+            if msg.image_ids:
+                entry["image_ids"] = msg.image_ids
         messages.append(entry)
     return messages
 
@@ -816,6 +930,96 @@ async def update_message_cta_suggestions(
         .values(cta_suggestions=json.dumps(suggestions))
     )
     await db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Reaction store
+# ---------------------------------------------------------------------------
+
+
+async def get_reactions_for_messages(
+    db: AsyncSession,
+    message_ids: List[int],
+    user_id: str = "",
+) -> Dict[int, List[Dict[str, Any]]]:
+    """Return aggregated reactions for a set of messages in one query (no N+1).
+
+    Returns a dict keyed by message_id. Each value is a list of
+    ``{emoji, count, reactedByMe, userIds}`` dicts ordered by first-reaction time.
+    ``userIds`` is the raw list of reactor user ids — callers resolve display names
+    (e.g. for a "who reacted" tooltip) via user-service and replace it with ``users``.
+    Messages with no reactions are absent from the dict.
+    """
+    if not message_ids:
+        return {}
+
+    result = await db.execute(
+        select(
+            MessageReaction.message_id,
+            MessageReaction.emoji,
+            func.count(MessageReaction.id).label("cnt"),
+            func.bool_or(MessageReaction.user_id == user_id).label("reacted_by_me"),
+            func.array_agg(MessageReaction.user_id).label("user_ids"),
+        )
+        .where(MessageReaction.message_id.in_(message_ids))
+        .group_by(MessageReaction.message_id, MessageReaction.emoji)
+        .order_by(MessageReaction.message_id, func.min(MessageReaction.created_at))
+    )
+
+    reactions_by_msg: Dict[int, List[Dict[str, Any]]] = {}
+    for row in result.all():
+        mid = int(row.message_id)
+        reactions_by_msg.setdefault(mid, []).append(
+            {
+                "emoji": row.emoji,
+                "count": int(row.cnt),
+                "reactedByMe": bool(row.reacted_by_me),
+                "userIds": list(row.user_ids),
+            }
+        )
+    return reactions_by_msg
+
+
+async def toggle_message_reaction(
+    db: AsyncSession,
+    message_id: int,
+    user_id: str,
+    emoji: str,
+) -> List[Dict[str, Any]]:
+    """Toggle a per-user emoji reaction on a message.
+
+    Inserts a new ``MessageReaction`` row if one doesn't exist for
+    ``(message_id, user_id, emoji)``; deletes it if one does exist.
+
+    Returns the updated aggregate reaction list for the message:
+    ``[{emoji, count, reactedByMe}]``.
+    """
+    stmt = (
+        pg_insert(MessageReaction)
+        .values(
+            message_id=message_id,
+            user_id=user_id,
+            emoji=emoji,
+            created_at=time.time(),
+        )
+        .on_conflict_do_nothing(index_elements=["message_id", "user_id", "emoji"])
+    )
+    result = await db.execute(stmt)
+
+    if result.rowcount == 0:
+        # Row already existed — toggle means delete
+        await db.execute(
+            delete(MessageReaction).where(
+                MessageReaction.message_id == message_id,
+                MessageReaction.user_id == user_id,
+                MessageReaction.emoji == emoji,
+            )
+        )
+
+    await db.commit()
+
+    per_msg = await get_reactions_for_messages(db, [message_id], user_id)
+    return per_msg.get(message_id, [])
 
 
 # ===========================================================================
