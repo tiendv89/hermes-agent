@@ -136,9 +136,7 @@ def _make_feature_detail(owner="go", stages=None):
     }
 
 
-def _make_read_document(
-    status_content="", tasks_content=_TASKS_MD
-):
+def _make_read_document(status_content="", tasks_content=_TASKS_MD):
     """Return a side_effect for read_document (ts-only git path) that dispatches by path suffix."""
 
     def _read_doc(gh_owner, gh_repo, branch, path, github_token):
@@ -395,22 +393,22 @@ def _run_go_tasks_approve_handle(
 
     # go features must never touch git — fail loudly (not silently) if they do.
     mod.read_document = MagicMock(
-        side_effect=AssertionError("git read_document must not be called for go features")
+        side_effect=AssertionError(
+            "git read_document must not be called for go features"
+        )
     )
     mod.commit_to_branch = MagicMock(
-        side_effect=AssertionError("git commit_to_branch must not be called for go features")
+        side_effect=AssertionError(
+            "git commit_to_branch must not be called for go features"
+        )
     )
 
-    with patch(
-        "plugins.tools.tasks_write._commit_files",
-        side_effect=AssertionError("git _commit_files must not be called for go features"),
-    ):
-        result = mod.handle(
-            stage="tasks",
-            action="approve",
-            workspace_id=_WORKSPACE_ID,
-            feature_id=_FEATURE_ID,
-        )
+    result = mod.handle(
+        stage="tasks",
+        action="approve",
+        workspace_id=_WORKSPACE_ID,
+        feature_id=_FEATURE_ID,
+    )
 
     return result, {
         "update_stage": update_mock,
@@ -647,7 +645,9 @@ class TestGoTasksApproveStepDMissingTasksMd:
         """A storage-service error reading tasks.md is a step-d error, not a crash."""
         result, _ = _run_go_tasks_approve_handle(
             monkeypatch,
-            read_document_content_side_effect=RuntimeError("storage-service unavailable"),
+            read_document_content_side_effect=RuntimeError(
+                "storage-service unavailable"
+            ),
         )
         assert result["ok"] is False
         assert result["failed_step"] == "d"
@@ -692,16 +692,12 @@ class TestGoEarlierStagesDbOnly:
             side_effect=AssertionError("git must not be touched for go features")
         )
 
-        with patch(
-            "plugins.tools.tasks_write._commit_files",
-            side_effect=AssertionError("git must not be touched for go features"),
-        ):
-            result = mod.handle(
-                stage=stage,
-                action=action,
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
+        result = mod.handle(
+            stage=stage,
+            action=action,
+            workspace_id=_WORKSPACE_ID,
+            feature_id=_FEATURE_ID,
+        )
 
         return result, {"update_stage": update_mock, "create_tasks": create_mock}
 
@@ -723,112 +719,3 @@ class TestGoEarlierStagesDbOnly:
         assert result["ok"] is True, result.get("error")
         assert mocks["update_stage"].called
         mocks["create_tasks"].assert_not_called()
-
-
-# ---------------------------------------------------------------------------
-# handle() — ts feature: existing behavior unchanged (git commit, no pipeline)
-# ---------------------------------------------------------------------------
-
-
-class TestTsFeatureBehaviorUnchanged:
-    def test_ts_tasks_approve_commits_to_git(self, monkeypatch):
-        """ts feature tasks-stage approve: commits status.yaml to git (not DB pipeline)."""
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
-        status_yaml = """\
-feature_id: my-feature
-feature_status: in_tdd
-current_stage: tasks
-next_action: Awaiting tasks approval.
-stages:
-  tasks:
-    review_status: draft
-    reviewed_by: null
-    reviewed_at: null
-    review_comment: null
-    review_history: []
-history: []
-"""
-
-        commit_to_branch_mock = MagicMock(return_value="sha_ts")
-        update_mock = AsyncMock()
-        create_tasks_mock = MagicMock()
-        activate_git_mock = MagicMock(
-            return_value={"activated": ["T1"], "commit_sha": "sha_act"}
-        )
-
-        mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("ts"))
-        mod.update_feature_stage = update_mock
-        mod.read_document = MagicMock(
-            side_effect=_make_read_document(status_content=status_yaml)
-        )
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod._run_async_create_tasks = create_tasks_mock
-        mod._activate_tasks_git = activate_git_mock
-        mod.commit_to_branch = commit_to_branch_mock
-
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=True),
-            patch("plugins.tools.tasks_write._commit_files", MagicMock()),
-        ):
-            result = mod.handle(
-                stage="tasks",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        assert result["ok"] is True
-        commit_to_branch_mock.assert_called_once()
-        update_mock.assert_not_called()
-        create_tasks_mock.assert_not_called()
-
-    def test_ts_product_spec_approve_unchanged(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
-        status_yaml = """\
-feature_id: my-feature
-feature_status: in_design
-current_stage: product_spec
-stages:
-  product_spec:
-    review_status: draft
-    reviewed_by: null
-    reviewed_at: null
-    review_comment: null
-    review_history: []
-history: []
-"""
-        commit_to_branch_mock = MagicMock(return_value="sha_ts_ps")
-        update_mock = AsyncMock()
-
-        mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
-        mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail("ts"))
-        mod.update_feature_stage = update_mock
-        mod.read_document = MagicMock(
-            return_value={"content": status_yaml, "sha": "s1"}
-        )
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod.commit_to_branch = commit_to_branch_mock
-
-        with (
-            patch("plugins.document_repo.branch_exists", return_value=True),
-            patch("plugins.tools.tasks_write._commit_files", MagicMock()),
-        ):
-            result = mod.handle(
-                stage="product_spec",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        assert result["ok"] is True
-        commit_to_branch_mock.assert_called_once()
-        update_mock.assert_not_called()

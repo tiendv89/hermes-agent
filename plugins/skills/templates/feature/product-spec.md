@@ -1,7 +1,7 @@
 # Product Specification
 
 ## Feature
-- Feature ID: `<feature-id>`
+- Feature: `<feature-title>`
 - Title: `<feature-title>`
 
 ## Problem
