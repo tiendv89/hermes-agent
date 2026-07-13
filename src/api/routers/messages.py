@@ -44,7 +44,7 @@ from src.db import (
     touch_session,
     update_session_model,
 )
-from src.db.models import Message
+from src.db.models import Message, Session
 from src.db.store import append_message, get_thread_reply_summaries
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
@@ -429,10 +429,13 @@ async def forward_message(
         forwarded_content = f"{body.comment.strip()}\n\n{forwarded_content}"
 
     # Pre-validate all destinations before writing any messages to ensure atomicity.
-    # append_message commits after each insert, so a 404 mid-loop would leave orphaned rows.
+    # Use a single IN-query instead of N individual get_session calls to avoid N+1.
+    found_sessions_result = await db.execute(
+        select(Session).where(Session.id.in_(body.destination_session_ids))
+    )
+    found_session_ids = {s.id for s in found_sessions_result.scalars().all()}
     for dest_session_id in body.destination_session_ids:
-        dest_session = await get_session(db, dest_session_id)
-        if dest_session is None:
+        if dest_session_id not in found_session_ids:
             raise HTTPException(
                 status_code=404,
                 detail=f"Destination session not found: {dest_session_id}",
