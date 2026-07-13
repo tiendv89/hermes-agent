@@ -129,11 +129,11 @@ def _agent_reply_thread_context(session, message) -> tuple:
     if message.thread_root_id is not None:
         # G1: already inside a message thread — unchanged passthrough.
         return message.thread_root_id, message.id
-    if session.feature_id == "":
+    if getattr(session, "kind", "thread") in ("channel", "dm"):
         # G2: channel/DM, top-level mention — auto-open a thread rooted at
         # the triggering message.
         return message.id, message.id
-    # G3: feature thread, top-level mention — unchanged flat reply.
+    # G3: thread (feature-scoped or ad-hoc), top-level mention — unchanged flat reply.
     return None, None
 
 

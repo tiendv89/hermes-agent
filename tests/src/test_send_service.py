@@ -936,6 +936,17 @@ def test_agent_reply_thread_context_g1_feature_thread_in_thread():
     assert reply_to == 88
 
 
+def test_agent_reply_thread_context_g3_adhoc_thread_top_level():
+    """G3: ad-hoc thread (kind='thread', feature_id='') top-level mention → flat reply."""
+    from src.api.routers.messages import _agent_reply_thread_context
+
+    session = _make_session(kind="thread", feature_id="")
+    msg = _make_msg(msg_id=33, thread_root_id=None)
+    root, reply_to = _agent_reply_thread_context(session, msg)
+    assert root is None
+    assert reply_to is None
+
+
 # ---------------------------------------------------------------------------
 # send_message thread_root_id propagation tests (HTTP integration)
 # ---------------------------------------------------------------------------
