@@ -500,12 +500,21 @@ async def toggle_reaction(
     except ValueError:
         raise HTTPException(status_code=400, detail="message_id must be numeric.")
 
-    # Verify message exists.
+    # Verify message exists and fetch its session for membership check.
     result = await db.execute(
-        select(MessageModel.id).where(MessageModel.id == msg_id)
+        select(MessageModel.id, MessageModel.session_id).where(MessageModel.id == msg_id)
     )
-    if result.scalar_one_or_none() is None:
+    msg_row = result.one_or_none()
+    if msg_row is None:
         raise HTTPException(status_code=404, detail="Message not found.")
+
+    session = await get_session(db, msg_row.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    owner_id = getattr(session, "user_id", None) or ""
+    caller_is_member = (user_id == owner_id) or await is_member(db, msg_row.session_id, user_id)
+    if not caller_is_member:
+        raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     reactions = await toggle_message_reaction(db, msg_id, user_id, body.emoji.strip())
     return JSONResponse({"reactions": reactions})

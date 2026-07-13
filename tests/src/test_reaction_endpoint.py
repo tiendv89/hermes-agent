@@ -135,96 +135,91 @@ async def test_get_reactions_reacted_by_me_false():
 
 @pytest.mark.asyncio
 async def test_toggle_adds_reaction_when_absent():
-    """When the reaction row is absent, a new MessageReaction is added."""
+    """When the reaction row is absent, INSERT ... ON CONFLICT DO NOTHING inserts it."""
     from src.db.store import toggle_message_reaction
 
-    # First execute: query for existing row → not found.
-    # Second execute: batch reaction fetch after toggle.
-    not_found_result = MagicMock()
-    not_found_result.scalar_one_or_none.return_value = None
+    # First execute: pg_insert ... ON CONFLICT DO NOTHING → rowcount=1 (inserted).
+    insert_result = MagicMock()
+    insert_result.rowcount = 1
 
+    # Second execute: aggregate after insert.
     aggregate_result = MagicMock()
     aggregate_result.all.return_value = [_row(1, "👀", 1, True)]
 
     db = _mock_db()
-    db.execute = AsyncMock(side_effect=[not_found_result, aggregate_result])
+    db.execute = AsyncMock(side_effect=[insert_result, aggregate_result])
 
     reactions = await toggle_message_reaction(db, 1, "user-1", "👀")
 
-    # Should have called db.add (insert new row).
-    db.add.assert_called_once()
-    added = db.add.call_args[0][0]
-    from src.db.models import MessageReaction
-    assert isinstance(added, MessageReaction)
-    assert added.message_id == 1
-    assert added.user_id == "user-1"
-    assert added.emoji == "👀"
-
+    # INSERT path: no db.add, two execute calls (insert + aggregate).
+    db.add.assert_not_called()
+    assert db.execute.call_count == 2
     db.commit.assert_called()
     assert reactions == [{"emoji": "👀", "count": 1, "reactedByMe": True}]
 
 
 @pytest.mark.asyncio
 async def test_toggle_removes_reaction_when_present():
-    """When the reaction row is present, it is deleted."""
+    """When the reaction row exists, INSERT conflicts (rowcount=0) and a DELETE is issued."""
     from src.db.store import toggle_message_reaction
-    from src.db.models import MessageReaction
 
-    existing_row = MagicMock(spec=MessageReaction)
-    existing_row.message_id = 1
-    existing_row.user_id = "user-1"
-    existing_row.emoji = "✅"
+    # First execute: INSERT conflicts → rowcount=0 (row already existed).
+    insert_result = MagicMock()
+    insert_result.rowcount = 0
 
-    found_result = MagicMock()
-    found_result.scalar_one_or_none.return_value = existing_row
+    # Second execute: DELETE the existing row via execute(delete(...).where(...)).
+    delete_result = MagicMock()
 
-    # After delete, no reactions remain.
+    # Third execute: aggregate after delete — no reactions remain.
     aggregate_result = MagicMock()
     aggregate_result.all.return_value = []
 
     db = _mock_db()
-    db.execute = AsyncMock(side_effect=[found_result, aggregate_result])
+    db.execute = AsyncMock(side_effect=[insert_result, delete_result, aggregate_result])
 
     reactions = await toggle_message_reaction(db, 1, "user-1", "✅")
 
-    db.delete.assert_called_once_with(existing_row)
+    # DELETE path: no db.delete(obj), three execute calls (insert, delete, aggregate).
+    db.delete.assert_not_called()
+    assert db.execute.call_count == 3
     db.commit.assert_called()
     assert reactions == []
 
 
 @pytest.mark.asyncio
 async def test_toggle_twice_adds_then_removes():
-    """Toggling the same emoji twice: first call inserts, second deletes."""
+    """Toggling the same emoji twice: first call inserts (rowcount=1), second deletes (rowcount=0)."""
     from src.db.store import toggle_message_reaction
 
-    # First toggle: row absent → insert.
-    not_found = MagicMock()
-    not_found.scalar_one_or_none.return_value = None
+    # First toggle: INSERT → rowcount=1 (no conflict, row created).
+    insert_result_1 = MagicMock()
+    insert_result_1.rowcount = 1
     agg_after_add = MagicMock()
     agg_after_add.all.return_value = [_row(7, "🙌", 1, True)]
 
     db_add = _mock_db()
-    db_add.execute = AsyncMock(side_effect=[not_found, agg_after_add])
+    db_add.execute = AsyncMock(side_effect=[insert_result_1, agg_after_add])
 
     r1 = await toggle_message_reaction(db_add, 7, "user-a", "🙌")
     assert len(r1) == 1
     assert r1[0]["count"] == 1
-    db_add.add.assert_called_once()
+    db_add.add.assert_not_called()
+    assert db_add.execute.call_count == 2
 
-    # Second toggle: row present → delete.
-    from src.db.models import MessageReaction
-    existing = MagicMock(spec=MessageReaction)
-    found = MagicMock()
-    found.scalar_one_or_none.return_value = existing
+    # Second toggle: INSERT → rowcount=0 (conflict) → DELETE.
+    insert_result_2 = MagicMock()
+    insert_result_2.rowcount = 0
+    delete_result = MagicMock()
     agg_after_del = MagicMock()
     agg_after_del.all.return_value = []
 
     db_del = _mock_db()
-    db_del.execute = AsyncMock(side_effect=[found, agg_after_del])
+    db_del.execute = AsyncMock(side_effect=[insert_result_2, delete_result, agg_after_del])
 
     r2 = await toggle_message_reaction(db_del, 7, "user-a", "🙌")
     assert r2 == []
-    db_del.delete.assert_called_once_with(existing)
+    db_del.delete.assert_not_called()
+    assert db_del.execute.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -439,19 +434,27 @@ async def test_toggle_reaction_success():
 
     app, mock_db = _make_app()
 
-    # Message exists check.
+    # 1st execute: message existence + session_id lookup.
+    msg_row = MagicMock()
+    msg_row.session_id = "sess-99"
     msg_exists = MagicMock()
-    msg_exists.scalar_one_or_none.return_value = 99  # non-None → exists
+    msg_exists.one_or_none.return_value = msg_row
 
-    # toggle_message_reaction internals:
-    #   1st execute: check existing reaction (absent).
-    #   2nd execute: aggregate after insert.
-    not_found = MagicMock()
-    not_found.scalar_one_or_none.return_value = None
+    # 2nd execute: get_session query → session owned by caller (no is_member call).
+    session_mock = MagicMock()
+    session_mock.user_id = "user-1"
+    session_result = MagicMock()
+    session_result.scalar_one_or_none.return_value = session_mock
+
+    # 3rd execute: toggle INSERT → rowcount=1 (inserted).
+    insert_result = MagicMock()
+    insert_result.rowcount = 1
+
+    # 4th execute: aggregate after insert.
     agg = MagicMock()
     agg.all.return_value = [_row(99, "👀", 1, True)]
 
-    mock_db.execute = AsyncMock(side_effect=[msg_exists, not_found, agg])
+    mock_db.execute = AsyncMock(side_effect=[msg_exists, session_result, insert_result, agg])
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -476,7 +479,7 @@ async def test_toggle_reaction_message_not_found():
     app, mock_db = _make_app()
 
     msg_missing = MagicMock()
-    msg_missing.scalar_one_or_none.return_value = None
+    msg_missing.one_or_none.return_value = None
 
     mock_db.execute = AsyncMock(return_value=msg_missing)
 
