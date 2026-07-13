@@ -414,6 +414,7 @@ async def append_message(
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
     image_ids: Optional[List[str]] = None,
+    forwarded_from_message_id: Optional[int] = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -443,6 +444,7 @@ async def append_message(
         # iterates it (e.g. building per-image URLs) walks it character by
         # character instead of element by element.
         image_ids=image_ids or [],
+        forwarded_from_message_id=forwarded_from_message_id,
     )
     db.add(msg)
 
@@ -605,6 +607,8 @@ async def get_session_messages(
                 entry["reply_to_message_id"] = str(msg.reply_to_message_id)
             if msg.image_ids:
                 entry["image_ids"] = msg.image_ids
+            if msg.forwarded_from_message_id is not None:
+                entry["forwarded_from_message_id"] = str(msg.forwarded_from_message_id)
         messages.append(entry)
     return messages
 
@@ -675,6 +679,8 @@ async def get_messages_since(
                 entry["thread_root_id"] = str(msg.thread_root_id)
             if msg.image_ids:
                 entry["image_ids"] = msg.image_ids
+            if msg.forwarded_from_message_id is not None:
+                entry["forwarded_from_message_id"] = str(msg.forwarded_from_message_id)
         messages.append(entry)
     return messages
 
