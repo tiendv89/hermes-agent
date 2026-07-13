@@ -191,6 +191,108 @@ class TestHermesSSETranslator:
         events = [f.get("_event") for f in frames]
         assert "hermes.artifact.saved" not in events
 
+    # -- write_file / edit_file artifact-saved tests (T4: m3-agent-edit-file) -----
+
+    def test_write_file_ok_emits_artifact_saved(self):
+        """write_file with ok=True emits hermes.artifact.saved with artifact=generic_file."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_tool_complete(
+                "cid-wf1", "write_file", {"path": "notes.md", "content": "..."}, {"ok": True, "path": "notes.md", "version_id": "v1"}
+            )
+            t.done()
+
+        frames = self._collect(streaming, do)
+        events = [f.get("_event") for f in frames]
+        assert "hermes.artifact.saved" in events
+        artifact = next(f for f in frames if f.get("_event") == "hermes.artifact.saved")
+        assert artifact["artifact"] == "generic_file"
+
+    def test_write_file_ok_json_string_output_emits_artifact_saved(self):
+        """write_file with JSON-string result (as emitted by plugin wrapper) emits artifact saved."""
+        import json
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_tool_complete(
+                "cid-wf2", "write_file", {"path": "notes.md"},
+                json.dumps({"ok": True, "path": "notes.md", "version_id": "v1"}),
+            )
+            t.done()
+
+        frames = self._collect(streaming, do)
+        events = [f.get("_event") for f in frames]
+        assert "hermes.artifact.saved" in events
+        artifact = next(f for f in frames if f.get("_event") == "hermes.artifact.saved")
+        assert artifact["artifact"] == "generic_file"
+
+    def test_write_file_not_ok_no_artifact_saved(self):
+        """write_file with ok=False must NOT emit hermes.artifact.saved."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_tool_complete(
+                "cid-wf3", "write_file", {"path": "notes.md"},
+                {"ok": False, "error": "unsupported_owner"},
+            )
+            t.done()
+
+        frames = self._collect(streaming, do)
+        events = [f.get("_event") for f in frames]
+        assert "hermes.artifact.saved" not in events
+
+    def test_edit_file_ok_emits_artifact_saved(self):
+        """edit_file with ok=True emits hermes.artifact.saved with artifact=generic_file."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_tool_complete(
+                "cid-ef1", "edit_file",
+                {"path": "notes.md", "edits": [{"old_string": "a", "new_string": "b"}]},
+                {"ok": True, "path": "notes.md", "version_id": "v2"},
+            )
+            t.done()
+
+        frames = self._collect(streaming, do)
+        events = [f.get("_event") for f in frames]
+        assert "hermes.artifact.saved" in events
+        artifact = next(f for f in frames if f.get("_event") == "hermes.artifact.saved")
+        assert artifact["artifact"] == "generic_file"
+
+    def test_edit_file_ok_json_string_output_emits_artifact_saved(self):
+        """edit_file with JSON-string result (as emitted by plugin wrapper) emits artifact saved."""
+        import json
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_tool_complete(
+                "cid-ef2", "edit_file", {"path": "notes.md"},
+                json.dumps({"ok": True, "path": "notes.md", "version_id": "v2"}),
+            )
+            t.done()
+
+        frames = self._collect(streaming, do)
+        events = [f.get("_event") for f in frames]
+        assert "hermes.artifact.saved" in events
+        artifact = next(f for f in frames if f.get("_event") == "hermes.artifact.saved")
+        assert artifact["artifact"] == "generic_file"
+
+    def test_edit_file_not_ok_no_artifact_saved(self):
+        """edit_file with ok=False must NOT emit hermes.artifact.saved."""
+        streaming = _load_streaming()
+
+        def do(t):
+            t.on_tool_complete(
+                "cid-ef3", "edit_file", {"path": "notes.md"},
+                {"ok": False, "error": "unsupported_owner"},
+            )
+            t.done()
+
+        frames = self._collect(streaming, do)
+        events = [f.get("_event") for f in frames]
+        assert "hermes.artifact.saved" not in events
+
     def test_finish_chunk_carries_usage(self):
         streaming = _load_streaming()
 

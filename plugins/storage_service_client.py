@@ -23,6 +23,16 @@ Endpoint contract (storage-service):
   Files browser). Pass feature_id="" to read_document_content/
   write_document_content to hit this variant; path is then the document's
   location relative to the workspace root instead of a feature folder.
+
+  The content PUT is edit-only: it 404s ("document not found") for any path
+  that doesn't already have a document row — only the three canonical docs
+  are pre-created (at feature-creation time, by workflow-backend). There is
+  no create-on-missing/upsert behavior in the PUT itself.
+  write_document_content handles this transparently: on a 404 it calls
+  POST {STORAGE_SERVICE_URL}/api/documents ({"workspace_id", "feature_id",
+  "path"}, feature_id="" for workspace-root) to create the (empty) row, then
+  retries the PUT once.
+
   Headers:
     Authorization: Bearer <STORAGE_SERVICE_TOKEN>
     X-User-Id: <caller user_id>
@@ -103,6 +113,46 @@ def _content_url(base_url: str, workspace_id: str, feature_id: str, path: str) -
 
 def _image_url(base_url: str, workspace_id: str, image_id: str) -> str:
     return f"{base_url}/api/workspaces/{workspace_id}/images/{quote(image_id, safe='')}"
+
+
+def _create_document(
+    base_url: str,
+    headers: Dict[str, str],
+    workspace_id: str,
+    feature_id: str,
+    path: str,
+) -> None:
+    """Create an empty document row via POST /api/documents.
+
+    storage-service's content PUT is edit-only — it 404s ("document not
+    found") for any path that has never been created, feature-scoped or
+    workspace-root alike (only the three canonical docs are pre-created at
+    feature-creation time). This creates the (empty) row so a follow-up PUT
+    to the same path can then succeed. feature_id="" creates it at the
+    workspace root, matching PutDocumentContent's own no-feature variant.
+
+    Raises StorageServiceError on a non-2xx response (including "already
+    exists" races, which the caller's retried PUT will simply overwrite).
+    """
+    url = f"{base_url}/api/documents"
+    payload = {"workspace_id": workspace_id, "feature_id": feature_id, "path": path}
+    try:
+        resp = requests.post(url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+
+    if not resp.ok:
+        body: Any = {}
+        try:
+            body = resp.json()
+        except Exception:
+            pass
+        reason = body.get("error") or body.get("reason_code") or ""
+        raise StorageServiceError(
+            f"storage-service POST {url} returned {resp.status_code}: {body}",
+            reason_code=reason,
+            status=resp.status_code,
+        )
 
 
 def download_image(
@@ -212,6 +262,12 @@ def write_document_content(
 ) -> Dict[str, Any]:
     """Write a document's content to storage-service.
 
+    The content PUT is edit-only (see module docstring / _create_document) —
+    a 404 on the first attempt means the document row doesn't exist yet, so
+    this creates it via POST /api/documents and retries the PUT once. This
+    covers any non-canonical path (feature-scoped or workspace-root) on its
+    first write, not just the three pre-provisioned canonical documents.
+
     Returns a dict with keys:
       - ``ok`` (bool): True on success
       - ``version_id`` (str | None): new version id
@@ -222,10 +278,17 @@ def write_document_content(
     url = _content_url(base_url, workspace_id, feature_id, path)
     headers = _build_headers(token, user_id, org_id)
     payload = {"content": content}
-    try:
-        resp = requests.put(url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT)
-    except requests.RequestException as exc:
-        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+
+    def _put() -> requests.Response:
+        try:
+            return requests.put(url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT)
+        except requests.RequestException as exc:
+            raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+
+    resp = _put()
+    if resp.status_code == 404:
+        _create_document(base_url, headers, workspace_id, feature_id, path)
+        resp = _put()
 
     if not resp.ok:
         body: Any = {}

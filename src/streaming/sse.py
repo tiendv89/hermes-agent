@@ -39,6 +39,8 @@ ARTIFACT_BY_WRITE_TOOL: Dict[str, str] = {
     "write_product_spec": "product_spec",
     "write_technical_design": "technical_design",
     "write_tasks": "tasks",
+    "write_file": "generic_file",
+    "edit_file": "generic_file",
 }
 
 
