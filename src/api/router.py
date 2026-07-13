@@ -42,6 +42,7 @@ from src.api.routers import (
     dms,
     documents,
     members,
+    message_saves,
     message_threads,
     messages,
     models,
@@ -58,6 +59,7 @@ router.include_router(models.router)
 router.include_router(admin_models.router)
 router.include_router(chat.router)
 router.include_router(messages.router)
+router.include_router(message_saves.router)
 router.include_router(message_threads.router)
 router.include_router(stream.router)
 router.include_router(documents.router)
