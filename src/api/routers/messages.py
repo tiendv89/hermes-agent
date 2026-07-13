@@ -26,6 +26,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
 
+from src.db.models import Message as MessageModel
+
 from src.api.agent_dispatch import schedule_agent_turn
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
@@ -42,6 +44,7 @@ from src.db import (
     persist_mentions,
     set_session_title,
     soft_delete_message,
+    toggle_message_reaction,
     touch_session,
     update_session_model,
 )
@@ -174,7 +177,7 @@ async def get_thread_messages(
             since_id = 0
         messages = await get_messages_since(db, session_id, since_id)
     else:
-        messages = await get_session_messages(db, session_id)
+        messages = await get_session_messages(db, session_id, user_id=_identity.user_id)
 
     # Enrich author display info (name/avatar) from user-service so the channel
     # transcript shows real names rather than raw ids.
@@ -486,6 +489,60 @@ async def forward_message(
         },
         status_code=201,
     )
+
+
+# ---------------------------------------------------------------------------
+# Reaction endpoint
+# ---------------------------------------------------------------------------
+
+
+class ToggleReactionRequest(BaseModel):
+    emoji: str
+
+
+@router.post("/messages/{message_id}/reactions")
+async def toggle_reaction(
+    message_id: str,
+    body: ToggleReactionRequest,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Toggle an emoji reaction on a message.
+
+    Adds the reaction if the calling user hasn't reacted with this emoji yet;
+    removes it if they have. Returns the updated aggregate reaction list for
+    the message: ``[{emoji, count, reactedByMe}]``.
+    """
+    if not body.emoji or not body.emoji.strip():
+        raise HTTPException(status_code=400, detail="emoji must be non-empty.")
+
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    try:
+        msg_id = int(message_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="message_id must be numeric.")
+
+    # Verify message exists and fetch its session for membership check.
+    result = await db.execute(
+        select(MessageModel.id, MessageModel.session_id).where(MessageModel.id == msg_id)
+    )
+    msg_row = result.one_or_none()
+    if msg_row is None:
+        raise HTTPException(status_code=404, detail="Message not found.")
+
+    session = await get_session(db, msg_row.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    owner_id = getattr(session, "user_id", None) or ""
+    caller_is_member = (user_id == owner_id) or await is_member(db, msg_row.session_id, user_id)
+    if not caller_is_member:
+        raise HTTPException(status_code=403, detail="Not a member of this thread.")
+
+    reactions = await toggle_message_reaction(db, msg_id, user_id, body.emoji.strip())
+    return JSONResponse({"reactions": reactions})
 
 
 @router.put("/messages/{message_id}")

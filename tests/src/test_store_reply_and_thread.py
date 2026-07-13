@@ -229,7 +229,8 @@ async def test_get_session_messages_excludes_thread_replies():
 
     top_level = _msg(id=1, thread_root_id=None, content="top")
     db = _mock_db()
-    db.execute.return_value = _scalars_result([top_level])
+    # First call: message query; second call: reactions batch query (no reactions).
+    db.execute = AsyncMock(side_effect=[_scalars_result([top_level]), _rows_result([])])
 
     result = await get_session_messages(db, "sess-1")
 
@@ -237,9 +238,8 @@ async def test_get_session_messages_excludes_thread_replies():
     assert result[0]["id"] == "1"
     assert result[0]["content"] == "top"
 
-    # Verify the query was built with a thread_root_id IS NULL condition
-    # (executed via db.execute once, no second call for thread replies)
-    db.execute.assert_called_once()
+    # Two db.execute calls: message query + reaction batch query.
+    assert db.execute.call_count == 2
 
 
 @pytest.mark.asyncio
