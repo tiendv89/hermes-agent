@@ -46,7 +46,11 @@ async def init_db(engine: AsyncEngine) -> None:
         for path in sorted(_MIGRATIONS_DIR.glob("*.sql")):
             if path.name in applied:
                 continue
-            for stmt in path.read_text(encoding="utf-8").split(";"):
+            sql_no_comments = "\n".join(
+                line for line in path.read_text(encoding="utf-8").splitlines()
+                if not line.strip().startswith("--")
+            )
+            for stmt in sql_no_comments.split(";"):
                 stmt = stmt.strip()
                 if stmt:
                     await conn.execute(text(stmt))
@@ -941,7 +945,9 @@ async def get_reactions_for_messages(
     """Return aggregated reactions for a set of messages in one query (no N+1).
 
     Returns a dict keyed by message_id. Each value is a list of
-    ``{emoji, count, reactedByMe}`` dicts ordered by first-reaction time.
+    ``{emoji, count, reactedByMe, userIds}`` dicts ordered by first-reaction time.
+    ``userIds`` is the raw list of reactor user ids — callers resolve display names
+    (e.g. for a "who reacted" tooltip) via user-service and replace it with ``users``.
     Messages with no reactions are absent from the dict.
     """
     if not message_ids:
@@ -953,6 +959,7 @@ async def get_reactions_for_messages(
             MessageReaction.emoji,
             func.count(MessageReaction.id).label("cnt"),
             func.bool_or(MessageReaction.user_id == user_id).label("reacted_by_me"),
+            func.array_agg(MessageReaction.user_id).label("user_ids"),
         )
         .where(MessageReaction.message_id.in_(message_ids))
         .group_by(MessageReaction.message_id, MessageReaction.emoji)
@@ -967,6 +974,7 @@ async def get_reactions_for_messages(
                 "emoji": row.emoji,
                 "count": int(row.cnt),
                 "reactedByMe": bool(row.reacted_by_me),
+                "userIds": list(row.user_ids),
             }
         )
     return reactions_by_msg

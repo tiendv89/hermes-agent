@@ -155,7 +155,7 @@ async def test_toggle_adds_reaction_when_absent():
     db.add.assert_not_called()
     assert db.execute.call_count == 2
     db.commit.assert_called()
-    assert reactions == [{"emoji": "👀", "count": 1, "reactedByMe": True}]
+    assert reactions == [{"emoji": "👀", "count": 1, "reactedByMe": True, "userIds": []}]
 
 
 @pytest.mark.asyncio
@@ -291,7 +291,7 @@ async def test_get_session_messages_embeds_reactions():
 
     assert len(messages) == 1
     assert "reactions" in messages[0]
-    assert messages[0]["reactions"] == [{"emoji": "👀", "count": 2, "reactedByMe": True}]
+    assert messages[0]["reactions"] == [{"emoji": "👀", "count": 2, "reactedByMe": True, "userIds": []}]
 
 
 @pytest.mark.asyncio
@@ -468,7 +468,7 @@ async def test_toggle_reaction_success():
     assert resp.status_code == 200
     data = resp.json()
     assert "reactions" in data
-    assert data["reactions"] == [{"emoji": "👀", "count": 1, "reactedByMe": True}]
+    assert data["reactions"] == [{"emoji": "👀", "count": 1, "reactedByMe": True, "users": []}]
 
 
 @pytest.mark.asyncio

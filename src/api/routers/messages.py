@@ -186,6 +186,7 @@ async def get_thread_messages(
     await attach_authors(workspace_id, messages)
     _attach_image_urls(messages, workspace_id)
     await _attach_forwarded_authors(messages, db)
+    await _attach_reaction_users([m["reactions"] for m in messages if m.get("reactions")])
 
     # Attach thread_summary to each top-level message (reply count + recent repliers).
     if messages:
@@ -412,6 +413,31 @@ async def _attach_forwarded_authors(messages: list, db: AsyncSession) -> None:
         }
 
 
+async def _attach_reaction_users(reaction_lists: list) -> None:
+    """Batch-resolve each reaction group's ``userIds`` to display names.
+
+    ``reaction_lists`` is a list of a message's ``reactions`` arrays (each entry has
+    ``userIds`` from :func:`get_reactions_for_messages` / :func:`toggle_message_reaction`).
+    Replaces ``userIds`` with a resolved ``users: [{id, name}]`` list in place, powering
+    a "Name1, Name2 reacted with :emoji:" hover tooltip client-side.
+    """
+    all_ids = {uid for reactions in reaction_lists for r in reactions for uid in r.get("userIds", [])}
+    users = await list_users_by_ids(list(all_ids)) if all_ids else {}
+
+    def _name_for(uid: str) -> str:
+        info = users.get(uid) or {}
+        name = (info.get("display_name") or "").strip()
+        if not name:
+            email = (info.get("email") or "").strip()
+            name = email.split("@")[0] if email else uid
+        return name
+
+    for reactions in reaction_lists:
+        for r in reactions:
+            uids = r.pop("userIds", [])
+            r["users"] = [{"id": uid, "name": _name_for(uid)} for uid in uids]
+
+
 @router.post("/messages/{message_id}/forward", status_code=201)
 async def forward_message(
     message_id: str,
@@ -461,13 +487,17 @@ async def forward_message(
     found_sessions_result = await db.execute(
         select(Session).where(Session.id.in_(body.destination_session_ids))
     )
-    found_session_ids = {s.id for s in found_sessions_result.scalars().all()}
+    sessions_by_id = {s.id: s for s in found_sessions_result.scalars().all()}
     for dest_session_id in body.destination_session_ids:
-        if dest_session_id not in found_session_ids:
+        if dest_session_id not in sessions_by_id:
             raise HTTPException(
                 status_code=404,
                 detail=f"Destination session not found: {dest_session_id}",
             )
+
+    # Resolve display info once — same for every destination — for the SSE fan-out below.
+    forwarder_author = await author_for("", user_id)
+    original_author = await author_for("", source_msg.author_id) if source_msg.author_id else None
 
     # All destinations valid — safe to write
     new_message_ids = []
@@ -481,6 +511,26 @@ async def forward_message(
             forwarded_from_message_id=src_id,
         )
         new_message_ids.append(new_id)
+
+        # Live fan-out so other subscribers (and the sender, on other tabs) see the
+        # forwarded message land without needing a reload — mirrors send_message's publish.
+        get_bus().publish(
+            dest_session_id,
+            {
+                "event": "message.created",
+                "data": {
+                    "id": str(new_id),
+                    "session_id": dest_session_id,
+                    "role": "user",
+                    "content": forwarded_content,
+                    "author_id": user_id,
+                    "author": forwarder_author,
+                    "created_at": _time.time(),
+                    "forwarded_from_message_id": str(src_id),
+                    "forwarded_from": original_author,
+                },
+            },
+        )
 
     return JSONResponse(
         {
@@ -542,6 +592,19 @@ async def toggle_reaction(
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     reactions = await toggle_message_reaction(db, msg_id, user_id, body.emoji.strip())
+    await _attach_reaction_users([reactions])
+
+    # Live fan-out so every other subscriber sees the updated reaction list without a
+    # reload. `reactedByMe` here reflects the toggling caller — other viewers re-derive
+    # their own reactedByMe client-side from each group's `users` list.
+    get_bus().publish(
+        msg_row.session_id,
+        {
+            "event": "message.reactions_updated",
+            "data": {"message_id": message_id, "reactions": reactions},
+        },
+    )
+
     return JSONResponse({"reactions": reactions})
 
 
@@ -577,6 +640,15 @@ async def edit_message_endpoint(
 
     await edit_message(db, msg_id, body.content)
     updated = await get_message(db, msg_id)
+
+    get_bus().publish(
+        updated.session_id,
+        {
+            "event": "message.edited",
+            "data": {"message_id": str(updated.id), "content": updated.content, "edited_at": updated.edited_at},
+        },
+    )
+
     return JSONResponse(
         {
             "id": str(updated.id),
@@ -619,4 +691,10 @@ async def delete_message_endpoint(
         raise HTTPException(status_code=403, detail="Only the author can delete this message.")
 
     await soft_delete_message(db, msg_id)
+
+    get_bus().publish(
+        msg.session_id,
+        {"event": "message.deleted", "data": {"message_id": message_id}},
+    )
+
     return JSONResponse({"ok": True, "message_id": message_id})
