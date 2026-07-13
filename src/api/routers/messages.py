@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import time as _time
+from types import SimpleNamespace
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -115,6 +116,25 @@ def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
         return True
     kind = getattr(session, "kind", "thread") or "thread"
     return kind == "thread"
+
+
+def _agent_reply_thread_context(session, message) -> tuple:
+    """Return (thread_root_id, reply_to_message_id) to pass to schedule_agent_turn.
+
+    Determines where the agent's reply should be persisted given the triggering message:
+    - G1: mention inside an existing thread → passthrough the thread context unchanged.
+    - G2: channel/DM top-level mention → auto-open a thread rooted at the triggering message.
+    - G3: feature thread top-level mention → flat reply (unchanged behavior).
+    """
+    if message.thread_root_id is not None:
+        # G1: already inside a message thread — unchanged passthrough.
+        return message.thread_root_id, message.id
+    if session.feature_id == "":
+        # G2: channel/DM, top-level mention — auto-open a thread rooted at
+        # the triggering message.
+        return message.id, message.id
+    # G3: feature thread, top-level mention — unchanged flat reply.
+    return None, None
 
 
 @router.get("/threads/{session_id}/messages")
@@ -287,6 +307,9 @@ async def send_message(
     workspace_id = ws_id
     feature_id = getattr(session, "feature_id", "") or ""
 
+    _trigger_msg = SimpleNamespace(id=message_id, thread_root_id=None)
+    thread_root_id, agent_reply_to_id = _agent_reply_thread_context(session, _trigger_msg)
+
     await schedule_agent_turn(
         session_id=session_id,
         message=body.content,
@@ -304,6 +327,8 @@ async def send_message(
         author_id=user_id,
         skip_user_persist=True,
         image_ids=body.image_ids,
+        reply_to_message_id=agent_reply_to_id,
+        thread_root_id=thread_root_id,
     )
 
     return JSONResponse(
