@@ -433,6 +433,80 @@ class TestWriteFileGoOwner:
 
 
 # ---------------------------------------------------------------------------
+# handle_write_file — no feature_id (workspace-root write)
+# ---------------------------------------------------------------------------
+
+
+class TestWriteFileNoFeatureId:
+    def test_writes_directly_to_workspace_root_when_no_feature_id(self):
+        """No feature_id (explicit or context) → writes via the workspace-root
+        endpoint (feature_id="") without any go-owner check, path untouched."""
+        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
+            patch("plugins.context.get_feature_id", return_value=""),
+            patch("plugins.context.get_user_id", return_value="user-1"),
+            patch("plugins.context.get_org_id", return_value="org-1"),
+        ):
+            result = mod.handle_write_file(
+                path="api.txt",
+                content="hello",
+                workspace_id=_WORKSPACE_ID,
+            )
+
+        assert result["ok"] is True
+        assert result["path"] == "api.txt"
+        fake_ssc.write_document_content.assert_called_once_with(
+            _WORKSPACE_ID,
+            "",
+            "api.txt",
+            "hello",
+            user_id="user-1",
+            org_id="org-1",
+        )
+
+    def test_no_feature_id_skips_owner_check(self):
+        """No feature_id → get_feature_detail must not be called."""
+        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+        wbc_mod = sys.modules["src.services.workflow_backend_client"]
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
+            patch("plugins.context.get_feature_id", return_value=""),
+            patch("plugins.context.get_user_id", return_value="user-1"),
+            patch("plugins.context.get_org_id", return_value="org-1"),
+        ):
+            result = mod.handle_write_file(
+                path="api.txt",
+                content="hello",
+                workspace_id=_WORKSPACE_ID,
+            )
+
+        assert result["ok"] is True
+        wbc_mod.get_feature_detail.assert_not_called()
+
+    def test_missing_workspace_id_still_returns_error(self):
+        """No workspace_id at all (explicit or context) → ok=False, even with no feature_id."""
+        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=""),
+            patch("plugins.context.get_feature_id", return_value=""),
+            patch("plugins.context.get_user_id", return_value=""),
+            patch("plugins.context.get_org_id", return_value=""),
+        ):
+            result = mod.handle_write_file(
+                path="api.txt",
+                content="hello",
+            )
+
+        assert result["ok"] is False
+        assert "required" in result["error"]
+        fake_ssc.write_document_content.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # handle_write_file — ts-owned / absent-owner
 # ---------------------------------------------------------------------------
 
@@ -696,6 +770,65 @@ class TestEditFileGoOwner:
             )
 
         assert result["ok"] is False
+        fake_ssc.read_document_content.assert_not_called()
+        fake_ssc.write_document_content.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# handle_edit_file — no feature_id (workspace-root write)
+# ---------------------------------------------------------------------------
+
+
+class TestEditFileNoFeatureId:
+    def test_edits_directly_at_workspace_root_when_no_feature_id(self):
+        """No feature_id (explicit or context) → read/write via the
+        workspace-root endpoint (feature_id="") without any go-owner check."""
+        mod, fake_ssc = _load_file_ops(
+            _make_feature_detail(owner="go"),
+            read_return={"content": "old", "version_id": "v0"},
+            write_return={"ok": True, "version_id": _VERSION_ID},
+        )
+        wbc_mod = sys.modules["src.services.workflow_backend_client"]
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
+            patch("plugins.context.get_feature_id", return_value=""),
+            patch("plugins.context.get_user_id", return_value="user-1"),
+            patch("plugins.context.get_org_id", return_value="org-1"),
+        ):
+            result = mod.handle_edit_file(
+                path="api.txt",
+                edits=[{"old_string": "old", "new_string": "new"}],
+                workspace_id=_WORKSPACE_ID,
+            )
+
+        assert result["ok"] is True
+        assert result["path"] == "api.txt"
+        wbc_mod.get_feature_detail.assert_not_called()
+        fake_ssc.read_document_content.assert_called_once_with(
+            _WORKSPACE_ID, "", "api.txt", user_id="user-1", org_id="org-1"
+        )
+        fake_ssc.write_document_content.assert_called_once_with(
+            _WORKSPACE_ID, "", "api.txt", "new", user_id="user-1", org_id="org-1"
+        )
+
+    def test_missing_workspace_id_still_returns_error(self):
+        """No workspace_id at all (explicit or context) → ok=False, even with no feature_id."""
+        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=""),
+            patch("plugins.context.get_feature_id", return_value=""),
+            patch("plugins.context.get_user_id", return_value=""),
+            patch("plugins.context.get_org_id", return_value=""),
+        ):
+            result = mod.handle_edit_file(
+                path="api.txt",
+                edits=[{"old_string": "old", "new_string": "new"}],
+            )
+
+        assert result["ok"] is False
+        assert "required" in result["error"]
         fake_ssc.read_document_content.assert_not_called()
         fake_ssc.write_document_content.assert_not_called()
 

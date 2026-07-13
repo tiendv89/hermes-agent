@@ -114,6 +114,13 @@ async def chat(
             await set_session_title(db, session_id, _derive_title(body.message))
 
         await touch_session(db, session_id)
+
+        # Fall back to the session's stored workspace/feature when the request
+        # body doesn't supply them — mirrors messages.py's send_message, so a
+        # session created with a workspace (POST /session) doesn't need every
+        # /chat call to repeat it.
+        ws_id = body.workspace_id or getattr(session, "workspace_id", "") or ""
+        fid = body.feature_id or getattr(session, "feature_id", "") or ""
     except Exception:
         with _active_runs_lock:
             run = _active_runs.get(session_id)
@@ -136,8 +143,8 @@ async def chat(
             triggered_by=caller_id,
             message=body.message,
             history=history,
-            workspace_id=body.workspace_id,
-            feature_id=body.feature_id,
+            workspace_id=ws_id,
+            feature_id=fid,
             user_id=caller_id,
             org_id=identity.org_id,
             image_ids=body.image_ids,

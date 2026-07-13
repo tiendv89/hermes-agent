@@ -1,11 +1,15 @@
-"""write_file / edit_file — generic arbitrary-filename write/edit tools for go-owned features.
+"""write_file / edit_file — generic arbitrary-filename write/edit tools.
 
 These tools mirror how read_document already accepts an arbitrary filename beyond
-the two canonical documents (product_spec / technical_design). Both tools are
-go-owner-only: they write through storage_service_client.py, the same client
-used by write_product_spec / write_technical_design. The ts/git-backed path
-(document_repo.py) is deliberately NOT extended here — ts ownership is being
-retired.
+the two canonical documents (product_spec / technical_design). They write through
+storage_service_client.py, the same client used by write_product_spec /
+write_technical_design. The ts/git-backed path (document_repo.py) is deliberately
+NOT extended here — ts ownership is being retired.
+
+feature_id is optional. When one is given (explicitly or via context), the file
+is written to that feature's document folder — go-owned features only. With no
+feature_id, the file is written directly under the workspace root instead (no
+owning feature, no go-owner check).
 
 See technical-design.md §Chosen Design for the full rationale (Option B).
 """
@@ -44,11 +48,12 @@ def _validate_path(path: str) -> str | None:
 
 WRITE_FILE_SCHEMA: Dict[str, Any] = {
     "description": (
-        "Create or overwrite an arbitrary named file within the current feature's "
-        "document folder in storage-service. Use for any filename that is not one of "
-        "the canonical documents (product-spec.md, technical-design.md) — e.g. "
-        "'notes.md', 'handoffs/handoff.md', 'research-notes.md'. "
-        "Supported for go-owned features only."
+        "Create or overwrite an arbitrary named file in storage-service — within a "
+        "go-owned feature's document folder if a feature_id is given (explicitly or "
+        "via context), or directly under the workspace root otherwise. Use for any "
+        "filename that is not one of the canonical documents (product-spec.md, "
+        "technical-design.md) — e.g. 'notes.md', 'handoffs/handoff.md', "
+        "'research-notes.md'. No feature_id is required."
     ),
     "parameters": {
         "type": "object",
@@ -59,14 +64,21 @@ WRITE_FILE_SCHEMA: Dict[str, Any] = {
             },
             "feature_id": {
                 "type": "string",
-                "description": "Feature identifier. Omit to use the current feature from context.",
+                "description": (
+                    "Feature identifier. Omit to use the current feature from context. "
+                    "Not required — if there is no current feature in context either, "
+                    "the file is written directly under the workspace root instead of "
+                    "a feature's document folder."
+                ),
             },
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative path of the file within the feature's document folder "
-                    "(e.g. 'notes.md', 'handoffs/handoff.md'). Must not start with '/' "
-                    "and must not contain '..' segments."
+                    "Relative path of the file within the feature's document folder, or "
+                    "the workspace root if no feature_id applies (e.g. 'notes.md', "
+                    "'handoffs/handoff.md'). Must not start with '/' and must not contain "
+                    "'..' segments. A brand-new path is created automatically — no need to "
+                    "ask the user for one first."
                 ),
             },
             "content": {
@@ -81,10 +93,11 @@ WRITE_FILE_SCHEMA: Dict[str, Any] = {
 
 EDIT_FILE_SCHEMA: Dict[str, Any] = {
     "description": (
-        "Make targeted find-and-replace edits to an arbitrary named file within the "
-        "current feature's document folder in storage-service. Reads the current "
-        "content first (read-before-write), applies the ordered list of edits, then "
-        "writes back. Supported for go-owned features only."
+        "Make targeted find-and-replace edits to an arbitrary named file in "
+        "storage-service — within a go-owned feature's document folder if a "
+        "feature_id is given (explicitly or via context), or directly under the "
+        "workspace root otherwise. Reads the current content first (read-before-write), "
+        "applies the ordered list of edits, then writes back. No feature_id is required."
     ),
     "parameters": {
         "type": "object",
@@ -95,14 +108,21 @@ EDIT_FILE_SCHEMA: Dict[str, Any] = {
             },
             "feature_id": {
                 "type": "string",
-                "description": "Feature identifier. Omit to use the current feature from context.",
+                "description": (
+                    "Feature identifier. Omit to use the current feature from context. "
+                    "Not required — if there is no current feature in context either, "
+                    "the file is written directly under the workspace root instead of "
+                    "a feature's document folder."
+                ),
             },
             "path": {
                 "type": "string",
                 "description": (
-                    "Relative path of the file within the feature's document folder "
-                    "(e.g. 'notes.md', 'handoffs/handoff.md'). Must not start with '/' "
-                    "and must not contain '..' segments."
+                    "Relative path of the file within the feature's document folder, or "
+                    "the workspace root if no feature_id applies (e.g. 'notes.md', "
+                    "'handoffs/handoff.md'). Must not start with '/' and must not contain "
+                    "'..' segments. A brand-new path is created automatically — no need to "
+                    "ask the user for one first."
                 ),
             },
             "edits": {
@@ -139,9 +159,11 @@ def handle_write_file(
     feature_id: str = "",
     **_: Any,
 ) -> Dict[str, Any]:
-    """Create or overwrite an arbitrary file in the feature's document folder.
+    """Create or overwrite an arbitrary file in storage-service.
 
-    go-owned features only. Returns {ok, path, version_id} on success.
+    Writes to the given (or context) feature's document folder — go-owned
+    features only — or, when no feature_id is available, directly under the
+    workspace root. Returns {ok, path, version_id} on success.
     """
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
     from src.services.workflow_backend_client import get_feature_detail, run_async
@@ -151,31 +173,32 @@ def handle_write_file(
     caller_user_id = get_user_id()
     caller_org_id = get_org_id()
 
-    if not wid or not fid:
+    if not wid:
         return {
             "ok": False,
-            "error": "workspace_id and feature_id are required but were not provided and no context is set.",
+            "error": "workspace_id is required but was not provided and no context is set.",
         }
 
     path_error = _validate_path(path)
     if path_error:
         return {"ok": False, "error": path_error}
 
-    try:
-        detail = run_async(
-            get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
-        )
-        owner = detail.get("owner") or "ts"
-    except Exception as exc:
-        logger.warning("write_file: could not fetch feature_detail: %s", exc)
-        return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
+    if fid:
+        try:
+            detail = run_async(
+                get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
+            )
+            owner = detail.get("owner") or "ts"
+        except Exception as exc:
+            logger.warning("write_file: could not fetch feature_detail: %s", exc)
+            return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
 
-    if owner != "go":
-        return {
-            "ok": False,
-            "error": "unsupported_owner",
-            "message": "write_file is only supported for go-owned features",
-        }
+        if owner != "go":
+            return {
+                "ok": False,
+                "error": "unsupported_owner",
+                "message": "write_file is only supported for go-owned features",
+            }
 
     try:
         write_result = write_document_content(
@@ -210,7 +233,9 @@ def handle_edit_file(
     """Apply targeted find-and-replace edits to an arbitrary file.
 
     Reads current content first (read-before-write), applies edits via
-    _apply_edits, then writes back. go-owned features only.
+    _apply_edits, then writes back. Targets the given (or context) feature's
+    document folder — go-owned features only — or, when no feature_id is
+    available, directly under the workspace root.
     Returns {ok, path, version_id} on success.
     """
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
@@ -221,31 +246,32 @@ def handle_edit_file(
     caller_user_id = get_user_id()
     caller_org_id = get_org_id()
 
-    if not wid or not fid:
+    if not wid:
         return {
             "ok": False,
-            "error": "workspace_id and feature_id are required but were not provided and no context is set.",
+            "error": "workspace_id is required but was not provided and no context is set.",
         }
 
     path_error = _validate_path(path)
     if path_error:
         return {"ok": False, "error": path_error}
 
-    try:
-        detail = run_async(
-            get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
-        )
-        owner = detail.get("owner") or "ts"
-    except Exception as exc:
-        logger.warning("edit_file: could not fetch feature_detail: %s", exc)
-        return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
+    if fid:
+        try:
+            detail = run_async(
+                get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
+            )
+            owner = detail.get("owner") or "ts"
+        except Exception as exc:
+            logger.warning("edit_file: could not fetch feature_detail: %s", exc)
+            return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
 
-    if owner != "go":
-        return {
-            "ok": False,
-            "error": "unsupported_owner",
-            "message": "edit_file is only supported for go-owned features",
-        }
+        if owner != "go":
+            return {
+                "ok": False,
+                "error": "unsupported_owner",
+                "message": "edit_file is only supported for go-owned features",
+            }
 
     try:
         from .edit import (
@@ -261,6 +287,14 @@ def handle_edit_file(
         )
         current_content = read_result.get("content", "")
         new_content, warnings = _apply_edits(current_content, edits)
+    except StorageServiceError as exc:
+        logger.warning("edit_file: storage-service error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+    except Exception as exc:
+        logger.warning("edit_file: unexpected error: %s", exc)
+        return {"ok": False, "error": str(exc)}
+
+    try:
         write_result = write_document_content(
             wid,
             fid,
