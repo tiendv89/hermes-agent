@@ -476,8 +476,13 @@ async def test_forward_creates_one_message_per_destination():
     source = _make_message(id=42, content="original", author_id="orig_author")
     dest_sessions = ["sess_dest_1", "sess_dest_2", "sess_dest_3"]
 
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalar_one_or_none.return_value = source
+    source_exec_result = MagicMock()
+    source_exec_result.scalar_one_or_none.return_value = source
+
+    sessions_exec_result = MagicMock()
+    sessions_exec_result.scalars.return_value.all.return_value = [
+        _make_session(session_id=sid) for sid in dest_sessions
+    ]
 
     created_ids = []
     call_count = [0]
@@ -493,18 +498,17 @@ async def test_forward_creates_one_message_per_destination():
 
     async def _db():
         db = _mock_db()
-        db.execute = AsyncMock(return_value=mock_execute_result)
+        db.execute = AsyncMock(side_effect=[source_exec_result, sessions_exec_result])
         yield db
 
     app.dependency_overrides[get_db] = _db
 
-    with patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=_make_session())):
-        with patch("src.api.routers.messages.append_message", new=_fake_append_message):
-            client = TestClient(app)
-            resp = client.post(
-                "/api/v1/messages/42/forward",
-                json={"destination_session_ids": dest_sessions},
-            )
+    with patch("src.api.routers.messages.append_message", new=_fake_append_message):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/messages/42/forward",
+            json={"destination_session_ids": dest_sessions},
+        )
 
     assert resp.status_code == 201
     data = resp.json()
@@ -519,14 +523,20 @@ async def test_forward_sets_forwarded_from_message_id_on_each_copy():
     from fastapi.testclient import TestClient
 
     source = _make_message(id=7, content="orig content", author_id="orig_user")
+    dest_session_ids = ["sess_a", "sess_b"]
 
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalar_one_or_none.return_value = source
+    source_exec_result = MagicMock()
+    source_exec_result.scalar_one_or_none.return_value = source
+
+    sessions_exec_result = MagicMock()
+    sessions_exec_result.scalars.return_value.all.return_value = [
+        _make_session(session_id=sid) for sid in dest_session_ids
+    ]
 
     captured = []
 
     async def _fake_append_message(db, session_id, role, content, author_id, forwarded_from_message_id=None, **kwargs):
-        captured.append({"session_id": session_id, "forwarded_from_message_id": forwarded_from_message_id, "content": content})
+        captured.append({"session_id": session_id, "forwarded_from_message_id": forwarded_from_message_id, "content": content, "author_id": author_id})
         return len(captured)
 
     app = _make_app(identity_user_id="forwarder_user")
@@ -534,27 +544,24 @@ async def test_forward_sets_forwarded_from_message_id_on_each_copy():
 
     async def _db():
         db = _mock_db()
-        db.execute = AsyncMock(return_value=mock_execute_result)
+        db.execute = AsyncMock(side_effect=[source_exec_result, sessions_exec_result])
         yield db
 
     app.dependency_overrides[get_db] = _db
 
-    with patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=_make_session())):
-        with patch("src.api.routers.messages.append_message", new=_fake_append_message):
-            client = TestClient(app)
-            resp = client.post(
-                "/api/v1/messages/7/forward",
-                json={"destination_session_ids": ["sess_a", "sess_b"]},
-            )
+    with patch("src.api.routers.messages.append_message", new=_fake_append_message):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/messages/7/forward",
+            json={"destination_session_ids": dest_session_ids},
+        )
 
     assert resp.status_code == 201
     # Both copies have forwarded_from_message_id = 7 (the source)
     for c in captured:
         assert c["forwarded_from_message_id"] == 7
     # Forwarder is the author_id of copies, not the original author
-    assert all(
-        True for c in captured
-    )  # author_id is checked via the fake's kwargs — it is "forwarder_user"
+    assert all(c["author_id"] == "forwarder_user" for c in captured)
 
 
 @pytest.mark.asyncio
@@ -564,8 +571,11 @@ async def test_forward_with_comment_prepends_to_content():
 
     source = _make_message(id=5, content="original message text")
 
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalar_one_or_none.return_value = source
+    source_exec_result = MagicMock()
+    source_exec_result.scalar_one_or_none.return_value = source
+
+    sessions_exec_result = MagicMock()
+    sessions_exec_result.scalars.return_value.all.return_value = [_make_session(session_id="sess_a")]
 
     captured_content = []
 
@@ -578,18 +588,17 @@ async def test_forward_with_comment_prepends_to_content():
 
     async def _db():
         db = _mock_db()
-        db.execute = AsyncMock(return_value=mock_execute_result)
+        db.execute = AsyncMock(side_effect=[source_exec_result, sessions_exec_result])
         yield db
 
     app.dependency_overrides[get_db] = _db
 
-    with patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=_make_session())):
-        with patch("src.api.routers.messages.append_message", new=_fake_append_message):
-            client = TestClient(app)
-            resp = client.post(
-                "/api/v1/messages/5/forward",
-                json={"destination_session_ids": ["sess_a"], "comment": "Check this out"},
-            )
+    with patch("src.api.routers.messages.append_message", new=_fake_append_message):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/messages/5/forward",
+            json={"destination_session_ids": ["sess_a"], "comment": "Check this out"},
+        )
 
     assert resp.status_code == 201
     assert len(captured_content) == 1
@@ -603,8 +612,11 @@ async def test_forward_without_comment_copies_content_verbatim():
 
     source = _make_message(id=6, content="exact content to copy")
 
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalar_one_or_none.return_value = source
+    source_exec_result = MagicMock()
+    source_exec_result.scalar_one_or_none.return_value = source
+
+    sessions_exec_result = MagicMock()
+    sessions_exec_result.scalars.return_value.all.return_value = [_make_session(session_id="sess_a")]
 
     captured_content = []
 
@@ -617,18 +629,17 @@ async def test_forward_without_comment_copies_content_verbatim():
 
     async def _db():
         db = _mock_db()
-        db.execute = AsyncMock(return_value=mock_execute_result)
+        db.execute = AsyncMock(side_effect=[source_exec_result, sessions_exec_result])
         yield db
 
     app.dependency_overrides[get_db] = _db
 
-    with patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=_make_session())):
-        with patch("src.api.routers.messages.append_message", new=_fake_append_message):
-            client = TestClient(app)
-            resp = client.post(
-                "/api/v1/messages/6/forward",
-                json={"destination_session_ids": ["sess_a"]},
-            )
+    with patch("src.api.routers.messages.append_message", new=_fake_append_message):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/messages/6/forward",
+            json={"destination_session_ids": ["sess_a"]},
+        )
 
     assert resp.status_code == 201
     assert captured_content[0] == "exact content to copy"
@@ -645,8 +656,11 @@ async def test_forward_forwarded_message_points_at_immediate_source():
     # The new copies should point at 20 (immediate source), not 10.
     source = _make_message(id=20, content="forwarded content", forwarded_from_message_id=10)
 
-    mock_execute_result = MagicMock()
-    mock_execute_result.scalar_one_or_none.return_value = source
+    source_exec_result = MagicMock()
+    source_exec_result.scalar_one_or_none.return_value = source
+
+    sessions_exec_result = MagicMock()
+    sessions_exec_result.scalars.return_value.all.return_value = [_make_session(session_id="sess_a")]
 
     captured = []
 
@@ -659,18 +673,17 @@ async def test_forward_forwarded_message_points_at_immediate_source():
 
     async def _db():
         db = _mock_db()
-        db.execute = AsyncMock(return_value=mock_execute_result)
+        db.execute = AsyncMock(side_effect=[source_exec_result, sessions_exec_result])
         yield db
 
     app.dependency_overrides[get_db] = _db
 
-    with patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=_make_session())):
-        with patch("src.api.routers.messages.append_message", new=_fake_append_message):
-            client = TestClient(app)
-            resp = client.post(
-                "/api/v1/messages/20/forward",
-                json={"destination_session_ids": ["sess_a"]},
-            )
+    with patch("src.api.routers.messages.append_message", new=_fake_append_message):
+        client = TestClient(app)
+        resp = client.post(
+            "/api/v1/messages/20/forward",
+            json={"destination_session_ids": ["sess_a"]},
+        )
 
     assert resp.status_code == 201
     # forwarded_from_message_id on the new copy must be 20 (immediate source)
