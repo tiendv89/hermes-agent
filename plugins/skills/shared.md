@@ -663,6 +663,8 @@ Every document folder — a feature's `docs/features/<feature_id>/` folder and w
 
 **Walking the document folder tree.** Use `list_documents` to browse a workspace's or feature's document folder the way you would a local filesystem — call it with no `path` to see the workspace root's immediate folders/files, then call again with a returned folder path to descend, e.g. `path="docs/features/my-feature"`. This is go-owned/storage-service scoped only: ts-owned feature documents live in git and won't appear in this listing — use `read_document` directly for those, there is no folder-listing tool for the git-backed path yet.
 
+**"Workspace context" requests need documents too, not just repos.** `get_workspace_context` only returns the management repo and registered implementation repos (from `workspace.yaml`) — it has no visibility into uploaded documents. When the user asks about "workspace context" or "what's in this workspace," don't answer from `get_workspace_context` alone: also call `list_documents` (no `path`, for the workspace root) to surface uploaded workspace-root files and feature document folders, and use `query_rag` when the user's question points at specific content rather than just a listing. Present both the repo/management info and the document listing together.
+
 ## status.yaml — feature-branch fields
 
 The `status.yaml` file in each feature directory tracks both stage-level review state and

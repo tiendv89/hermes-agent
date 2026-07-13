@@ -241,6 +241,30 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                 "a feature's title, stage, and synopsis without entering its scope."
             )
 
+            try:
+                from .tools.list_documents import handle as list_workspace_documents
+
+                docs = list_workspace_documents(workspace_id=workspace_id)
+                if docs.get("ok"):
+                    files = docs.get("files", [])
+                    folders = docs.get("folders", [])
+                    if files or folders:
+                        doc_lines = ["## Workspace files (uploaded at the workspace root)"]
+                        if folders:
+                            doc_lines.append("folders: " + ", ".join(folders))
+                        if files:
+                            doc_lines.append(
+                                "files:\n"
+                                + "\n".join(f"  {f['path']}" for f in files)
+                            )
+                        doc_lines.append(
+                            "Use read_workspace_file(path=...) to read a file's content, or "
+                            "list_documents(path=<folder>) to descend into a subfolder."
+                        )
+                        parts.append("\n".join(doc_lines))
+            except Exception as _exc:
+                logger.debug("inject_context: list_workspace_documents failed: %s", _exc)
+
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
             if feat.get("ok"):
