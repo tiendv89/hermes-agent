@@ -118,6 +118,15 @@ class Message(Base):
     reply_to_message_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
     thread_root_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
 
+    # m3-agent-chat-essential-feature: edit/forward support.
+    # edited_at: None = never edited; set to epoch seconds on content edit.
+    edited_at = Column(Double, nullable=True)
+    # forwarded_from_message_id: None = original; non-None = forwarded copy pointing
+    # at the immediate source message.
+    forwarded_from_message_id = Column(
+        BigInteger, ForeignKey("messages.id"), nullable=True
+    )
+
     __table_args__ = (
         Index("idx_messages_session", "session_id", "created_at"),
         Index("idx_messages_session_active", "session_id", "active", "created_at"),
@@ -208,3 +217,56 @@ class ModelCatalog(Base):
         server_default=sql_func.now(),
         onupdate=sql_func.now(),
     )
+
+
+class MessageReaction(Base):
+    """Per-user emoji reaction on a message (m3-agent-chat-essential-feature).
+
+    Toggle semantics: one row per (message_id, user_id, emoji) triple.
+    The unique index enforces at-most-one row, enabling INSERT ... ON CONFLICT DO NOTHING
+    for idempotent add and a plain DELETE for remove.
+    """
+
+    __tablename__ = "message_reactions"
+
+    id = Column(BigInteger, primary_key=True, autoincrement=True)
+    message_id = Column(
+        BigInteger,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    user_id = Column(String, nullable=False)
+    emoji = Column(String, nullable=False)
+    created_at = Column(Double, nullable=False)
+
+    __table_args__ = (
+        Index("idx_message_reactions_message", "message_id"),
+        Index(
+            "uq_message_reactions_user_emoji",
+            "message_id",
+            "user_id",
+            "emoji",
+            unique=True,
+        ),
+    )
+
+
+class MessageSave(Base):
+    """Per-user bookmark on a message (m3-agent-chat-essential-feature).
+
+    Composite PK (message_id, user_id) makes save idempotent and unsave a cheap
+    PK-lookup DELETE.
+    """
+
+    __tablename__ = "message_saves"
+
+    message_id = Column(
+        BigInteger,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        nullable=False,
+        primary_key=True,
+    )
+    user_id = Column(String, nullable=False, primary_key=True)
+    saved_at = Column(Double, nullable=False)
+
+    __table_args__ = (Index("idx_message_saves_user", "user_id", "saved_at"),)
