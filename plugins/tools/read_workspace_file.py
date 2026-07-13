@@ -2,7 +2,7 @@
 
 Digital Factory's Files browser lets a user upload a file directly at the
 workspace root (e.g. a shared asset), not owned by any feature. Those
-documents aren't reachable through read_document (which always requires a
+documents aren't reachable through read_file (which always requires a
 feature_id) or through GitNexus/RAG (which only index git-tracked feature
 docs and explicitly-embedded content respectively) — this tool is the only
 path to their content. See storage_service_client.py's module docstring for
@@ -23,7 +23,7 @@ SCHEMA: Dict[str, Any] = {
     "description": (
         "Read a workspace-root file's content — a file uploaded directly at the workspace level "
         "in the Files browser, not owned by any feature (e.g. a shared asset or doc dropped outside "
-        "a feature's folder). Not reachable via read_document (which requires a feature_id) or via "
+        "a feature's folder). Not reachable via read_file (which requires a feature_id) or via "
         "query_gitnexus/query_rag (which only cover git-tracked feature docs and indexed content). "
         "Pass the file's path relative to the workspace root, exactly as shown in the Files browser "
         "or a #_workspace/{path} chat mention (e.g. 'tests/api.go')."

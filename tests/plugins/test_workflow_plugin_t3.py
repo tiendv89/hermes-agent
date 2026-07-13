@@ -545,7 +545,7 @@ class TestRegisterT3:
         "get_workspace_context",
         "get_feature_state",
         "write_product_spec",
-        "read_document",
+        "read_file",
         "edit_document",
         "write_technical_design",
         "get_tasks",

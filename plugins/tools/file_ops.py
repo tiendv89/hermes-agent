@@ -1,6 +1,6 @@
 """write_file / edit_file — generic arbitrary-filename write/edit tools.
 
-These tools mirror how read_document already accepts an arbitrary filename beyond
+These tools mirror how read_file already accepts an arbitrary filename beyond
 the two canonical documents (product_spec / technical_design). They write through
 storage_service_client.py, the same client used by write_product_spec /
 write_technical_design. The ts/git-backed path (document_repo.py) is deliberately

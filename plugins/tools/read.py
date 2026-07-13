@@ -1,4 +1,4 @@
-"""read_document — read a feature document from the management repo via git.
+"""read_file — read a feature document from the management repo via git.
 
 The design/spec authoring loop writes documents to the feature branch
 (``feature/{slug}`` or ``feature/{slug}-init``) in the management repo. Those
@@ -51,11 +51,11 @@ _STORAGE_DOC_PATHS: Dict[str, str] = {
     "technical_design": "tech_design.md",
 }
 
-READ_DOCUMENT_SCHEMA: Dict[str, Any] = {
+READ_FILE_SCHEMA: Dict[str, Any] = {
     "description": (
         "Read a feature document straight from the management repo's feature branch in git (or, "
         "for go-owned features, from storage-service). Use this FIRST when writing or revising a "
-        "technical design: call read_document(document='product_spec') to load the approved "
+        "technical design: call read_file(document='product_spec') to load the approved "
         "product spec and ground the design in its actual scope — do NOT infer the spec from RAG "
         "or the request text. This reads the feature branch directly, so it works even when the "
         "spec is unmerged and not yet indexed by RAG. Pass 'product_spec', 'technical_design', or "
@@ -232,22 +232,3 @@ def handle_read_file(
         "content": current.get("content", ""),
         "sha": current.get("sha"),
     }
-
-
-def handle_read_document(
-    document: str,
-    workspace_id: str = "",
-    feature_id: str = "",
-    **kwargs: Any,
-) -> Dict[str, Any]:
-    """Deprecated alias for handle_read_file.
-
-    Kept for backward compatibility during the rollout of the read_document →
-    read_file rename. Logs a deprecation warning on every invocation.
-    Use read_file instead.
-    """
-    logger.warning(
-        "read_document is deprecated and will be removed in a future release. "
-        "Use read_file instead."
-    )
-    return handle_read_file(document=document, workspace_id=workspace_id, feature_id=feature_id, **kwargs)

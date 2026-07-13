@@ -111,7 +111,7 @@ WRITE_TD_SCHEMA: Dict[str, Any] = {
         "storage-service. Use when authoring or "
         "revising the technical design. The content must follow the "
         "technical-design template (see the content field); pass the complete "
-        "document, not a diff. REQUIRED FIRST: call read_document(document='product_spec') "
+        "document, not a diff. REQUIRED FIRST: call read_file(document='product_spec') "
         "to load the approved spec from the feature branch and ground the design in its "
         "actual scope (it works even when the spec is unmerged/unindexed) — never infer "
         "scope from RAG or the request text. Then gather repository context with "

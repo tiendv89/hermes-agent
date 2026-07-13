@@ -1,9 +1,9 @@
 """Tests for the owner guard on the four document tools (T15).
 
 Covers:
-  - read_document: go-owned → proxies to storage-service (mocked)
-  - read_document: ts-owned / absent owner → unchanged git-backed read (storage-service NOT called)
-  - read_document: go-owned status.yaml → falls back to git (status lives in git)
+  - read_file: go-owned → proxies to storage-service (mocked)
+  - read_file: ts-owned / absent owner → unchanged git-backed read (storage-service NOT called)
+  - read_file: go-owned status.yaml → falls back to git (status lives in git)
   - write_product_spec: go-owned → proxies to storage-service; no git commit
   - write_product_spec: ts-owned / absent owner → storage-service NOT called
   - write_technical_design: go-owned → proxies to storage-service; no git commit
@@ -211,7 +211,7 @@ def _enter_patches(*patches_list) -> ExitStack:
 
 
 # ---------------------------------------------------------------------------
-# read_document — go-owned path
+# read_file — go-owned path
 # ---------------------------------------------------------------------------
 
 
@@ -226,7 +226,7 @@ class TestReadDocumentGoOwner:
         return mod, fake_ssc
 
     def test_go_owned_product_spec_proxies_to_storage_service(self):
-        """go-owned feature: read_document proxies to storage-service, not git."""
+        """go-owned feature: read_file proxies to storage-service, not git."""
         read_return = {"content": _PRODUCT_SPEC_CONTENT, "version_id": _VERSION_ID}
         mod, fake_ssc = self._load(
             _make_feature_detail(owner="go"), ssc_read_return=read_return
@@ -239,7 +239,7 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="product_spec",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -258,7 +258,7 @@ class TestReadDocumentGoOwner:
         )
 
     def test_go_owned_technical_design_proxies_to_storage_service(self):
-        """go-owned feature: read_document for technical_design proxies to storage-service."""
+        """go-owned feature: read_file for technical_design proxies to storage-service."""
         read_return = {"content": _TD_CONTENT, "version_id": _VERSION_ID}
         mod, fake_ssc = self._load(
             _make_feature_detail(owner="go"), ssc_read_return=read_return
@@ -271,7 +271,7 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="technical_design",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -301,7 +301,7 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="product_spec",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -330,7 +330,7 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="status",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -361,7 +361,7 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="product_spec",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -374,7 +374,7 @@ class TestReadDocumentGoOwner:
         """go-owned feature: an arbitrary filename (not one of the 3 canonical
         documents, e.g. README.md) is treated as a literal storage-service path
         instead of being rejected — regression for the old strict enum that
-        made read_document unable to read anything but product_spec/
+        made read_file unable to read anything but product_spec/
         technical_design/status."""
         read_return = {"content": "# README\n", "version_id": _VERSION_ID}
         mod, fake_ssc = self._load(
@@ -388,7 +388,7 @@ class TestReadDocumentGoOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="README.md",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -406,7 +406,7 @@ class TestReadDocumentGoOwner:
 
 
 # ---------------------------------------------------------------------------
-# read_document — ts-owned / absent-owner (regression: storage-service NOT called)
+# read_file — ts-owned / absent-owner (regression: storage-service NOT called)
 # ---------------------------------------------------------------------------
 
 
@@ -424,7 +424,7 @@ class TestReadDocumentTsOwner:
         return mod, fake_ssc
 
     def test_ts_owned_does_not_call_storage_service(self):
-        """ts-owned feature: read_document must not call storage-service (guard invariant)."""
+        """ts-owned feature: read_file must not call storage-service (guard invariant)."""
         mod, fake_ssc = self._load_ts(owner="ts")
         # Git path will fail (no GITHUB_TOKEN) but we only check the guard.
         with _enter_patches(
@@ -434,7 +434,7 @@ class TestReadDocumentTsOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            mod.handle_read_document(
+            mod.handle_read_file(
                 document="product_spec",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -452,7 +452,7 @@ class TestReadDocumentTsOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            mod.handle_read_document(
+            mod.handle_read_file(
                 document="product_spec",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -481,7 +481,7 @@ class TestReadDocumentTsOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="product_spec",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,
@@ -513,7 +513,7 @@ class TestReadDocumentTsOwner:
             patch("plugins.context.get_org_id", return_value="org-1"),
             patch("plugins.context.mark_context_gathered"),
         ):
-            result = mod.handle_read_document(
+            result = mod.handle_read_file(
                 document="README.md",
                 workspace_id=_WORKSPACE_ID,
                 feature_id=_FEATURE_ID,

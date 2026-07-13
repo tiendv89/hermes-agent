@@ -1,17 +1,14 @@
-"""Tests for read_document → read_file rename/alias (T2).
+"""Tests for read_file (formerly read_document, now fully renamed/removed — T2 complete).
 
 Covers:
-  - read_file: delegates to the same logic as read_document (alias equivalence)
-  - read_document: logs a deprecation warning on invocation
-  - read_file: does NOT log a deprecation warning
-  - Both tools return identical results for go-owned features
+  - read_file: basic read behavior for go-owned features
+  - plugins/__init__.py: only read_file is registered; read_document is gone
 """
 
 from __future__ import annotations
 
 import importlib
 import importlib.util
-import logging
 import sys
 import types
 from contextlib import ExitStack
@@ -162,9 +159,7 @@ def _ctx_patches():
     ]
 
 
-class TestReadFileAliasEquivalence:
-    """read_file and read_document resolve to the same logic and return identical results."""
-
+class TestReadFile:
     def _load(self):
         fake_ssc = _make_fake_ssc(
             read_return={"content": _PRODUCT_SPEC_CONTENT, "version_id": _VERSION_ID}
@@ -179,15 +174,12 @@ class TestReadFileAliasEquivalence:
         assert hasattr(mod, "handle_read_file"), "handle_read_file must be defined in read.py"
         assert callable(mod.handle_read_file)
 
-    def test_handle_read_document_function_exists(self):
+    def test_handle_read_document_no_longer_exists(self):
+        """read_document has been fully removed — read_file is the only entry point."""
         mod, _ = self._load()
-        assert hasattr(mod, "handle_read_document"), "handle_read_document must remain in read.py"
-        assert callable(mod.handle_read_document)
-
-    def test_handle_read_file_is_not_handle_read_document(self):
-        """They should be different objects (wrapper vs implementation)."""
-        mod, _ = self._load()
-        assert mod.handle_read_file is not mod.handle_read_document
+        assert not hasattr(mod, "handle_read_document"), (
+            "handle_read_document should be removed from read.py"
+        )
 
     def test_read_file_returns_correct_result(self):
         mod, fake_ssc = self._load()
@@ -207,139 +199,28 @@ class TestReadFileAliasEquivalence:
             user_id="user-1", org_id="org-1",
         )
 
-    def test_read_file_and_read_document_return_same_result(self):
-        """Both handlers produce identical results given the same inputs."""
-        fake_ssc = _make_fake_ssc(
-            read_return={"content": _PRODUCT_SPEC_CONTENT, "version_id": _VERSION_ID}
-        )
-        mod = _load_module_file("plugins.tools.read", REPO_ROOT / "plugins" / "tools" / "read.py")
-        _patch_module_wbc(mod, _make_feature_detail(owner="go"))
-        _inject_ssc(mod, fake_ssc)
-
-        with _enter_patches(*_ctx_patches()):
-            result_file = mod.handle_read_file(
-                document="product_spec",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        # Reset mock call count and reload to ensure independent runs
-        fake_ssc.read_document_content.reset_mock()
-
-        with _enter_patches(*_ctx_patches()):
-            result_doc = mod.handle_read_document(
-                document="product_spec",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
-
-        assert result_file["ok"] == result_doc["ok"]
-        assert result_file["content"] == result_doc["content"]
-        assert result_file["exists"] == result_doc["exists"]
-        assert result_file["document"] == result_doc["document"]
-
-
-class TestReadDocumentDeprecationWarning:
-    """read_document logs a deprecation warning; read_file does not."""
-
-    def _load(self):
-        fake_ssc = _make_fake_ssc(
-            read_return={"content": _PRODUCT_SPEC_CONTENT, "version_id": _VERSION_ID}
-        )
-        mod = _load_module_file("plugins.tools.read", REPO_ROOT / "plugins" / "tools" / "read.py")
-        _patch_module_wbc(mod, _make_feature_detail(owner="go"))
-        _inject_ssc(mod, fake_ssc)
-        return mod
-
-    def test_read_document_logs_deprecation_warning(self, caplog):
-        mod = self._load()
-
-        with caplog.at_level(logging.WARNING, logger="plugins.tools.read"):
-            with _enter_patches(*_ctx_patches()):
-                mod.handle_read_document(
-                    document="product_spec",
-                    workspace_id=_WORKSPACE_ID,
-                    feature_id=_FEATURE_ID,
-                )
-
-        deprecation_logs = [
-            r for r in caplog.records
-            if "deprecated" in r.message.lower()
-        ]
-        assert len(deprecation_logs) >= 1, (
-            "handle_read_document must emit a deprecation warning. "
-            f"Captured: {[r.message for r in caplog.records]}"
-        )
-        assert "read_file" in deprecation_logs[0].message, (
-            "Deprecation warning must mention read_file as the replacement"
-        )
-
-    def test_read_file_does_not_log_deprecation_warning(self, caplog):
-        mod = self._load()
-
-        with caplog.at_level(logging.WARNING, logger="plugins.tools.read"):
-            with _enter_patches(*_ctx_patches()):
-                mod.handle_read_file(
-                    document="product_spec",
-                    workspace_id=_WORKSPACE_ID,
-                    feature_id=_FEATURE_ID,
-                )
-
-        deprecation_logs = [
-            r for r in caplog.records
-            if "deprecated" in r.message.lower()
-        ]
-        assert len(deprecation_logs) == 0, (
-            "handle_read_file must NOT emit any deprecation warning. "
-            f"Unexpected: {[r.message for r in deprecation_logs]}"
-        )
-
-    def test_read_document_deprecation_does_not_alter_return(self, caplog):
-        mod = self._load()
-
-        with caplog.at_level(logging.WARNING):
-            with _enter_patches(*_ctx_patches()):
-                result = mod.handle_read_document(
-                    document="product_spec",
-                    workspace_id=_WORKSPACE_ID,
-                    feature_id=_FEATURE_ID,
-                )
-
-        assert result["ok"] is True
-        assert result["content"] == _PRODUCT_SPEC_CONTENT
-
 
 class TestToolRegistrationNames:
-    """Verify plugins/__init__.py registers both read_document and read_file."""
+    """Verify plugins/__init__.py registers read_file only — read_document is gone."""
 
-    def test_both_tools_in_registry(self):
-        """Both read_document and read_file must appear in the _TOOLS tuple."""
-        # We test the constant _TOOLS by inspecting the file directly.
+    def test_read_file_in_registry(self):
         init_path = REPO_ROOT / "plugins" / "__init__.py"
         text = init_path.read_text(encoding="utf-8")
-        assert '"read_document"' in text, "read_document must remain in _TOOLS"
-        assert '"read_file"' in text, "read_file must be added to _TOOLS"
+        assert '"read_file"' in text, "read_file must be registered"
 
-    def test_read_file_entry_uses_canonical_handler(self):
-        """The read_file entry must reference handle_read_file (not the deprecated wrapper)."""
+    def test_read_document_not_in_registry(self):
         init_path = REPO_ROOT / "plugins" / "__init__.py"
         text = init_path.read_text(encoding="utf-8")
-        # Find the block for read_file
-        idx = text.find('"read_file"')
-        assert idx != -1, "read_file must be in __init__.py"
-        # The surrounding context should reference handle_read_file
-        block = text[idx:idx + 400]
-        assert "handle_read_file" in block, (
-            "read_file entry must reference handle_read_file, not handle_read_document"
+        assert '"read_document"' not in text, (
+            "read_document must be fully removed from the tool registry"
         )
 
-    def test_read_document_entry_uses_deprecated_wrapper(self):
-        """The read_document entry must reference handle_read_document (the deprecation wrapper)."""
+    def test_read_file_entry_uses_canonical_handler(self):
         init_path = REPO_ROOT / "plugins" / "__init__.py"
         text = init_path.read_text(encoding="utf-8")
-        idx = text.find('"read_document"')
-        assert idx != -1
+        idx = text.find('"read_file"')
+        assert idx != -1, "read_file must be in __init__.py"
         block = text[idx:idx + 400]
-        assert "handle_read_document" in block, (
-            "read_document entry must reference handle_read_document"
+        assert "handle_read_file" in block, (
+            "read_file entry must reference handle_read_file"
         )

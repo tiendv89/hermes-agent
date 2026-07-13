@@ -100,7 +100,7 @@ SCHEMA: Dict[str, Any] = {
                 ),
             },
         },
-        "required": ["query"],
+        "required": [],
         "additionalProperties": False,
     },
 }

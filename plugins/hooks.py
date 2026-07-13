@@ -146,6 +146,7 @@ def _read_init_pr_context(
     ]
 
     any_content = False
+    any_error = False
     for label, path in doc_files:
         try:
             result = read_document(gh_owner, gh_repo, init_branch, path, github_token)
@@ -153,11 +154,27 @@ def _read_init_pr_context(
             if content:
                 any_content = True
                 lines.append(f"\n### {label}\n```\n{content}\n```")
-        except Exception:
+        except Exception as exc:
+            any_error = True
+            logger.warning(
+                "inject_context: failed to read %s from init branch %s: %s",
+                path, init_branch, exc,
+            )
             continue
 
     if not any_content:
-        lines.append("(No documents committed to the init branch yet.)")
+        if any_error:
+            # Distinguish "genuinely empty branch" from "fetch failed" — asserting
+            # emptiness here when a read errored risks the agent overwriting real
+            # existing content it believes doesn't exist (see the "don't overwrite"
+            # instruction appended at the end of inject_context).
+            lines.append(
+                "(Could not read one or more init-branch documents due to a fetch "
+                "error — this does NOT mean the branch is empty. Re-check with "
+                "read_file before assuming no content exists.)"
+            )
+        else:
+            lines.append("(No documents committed to the init branch yet.)")
 
     return "\n".join(lines)
 
@@ -262,8 +279,23 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                             "list_documents(path=<folder>) to descend into a subfolder."
                         )
                         parts.append("\n".join(doc_lines))
+                else:
+                    logger.warning(
+                        "inject_context: list_workspace_documents returned error: %s",
+                        docs.get("error"),
+                    )
+                    parts.append(
+                        "note: could not load the workspace file listing this turn "
+                        "(list_documents error) — uploaded files may still exist; "
+                        "call list_documents directly before concluding none do."
+                    )
             except Exception as _exc:
-                logger.debug("inject_context: list_workspace_documents failed: %s", _exc)
+                logger.warning("inject_context: list_workspace_documents failed: %s", _exc)
+                parts.append(
+                    "note: could not load the workspace file listing this turn "
+                    "(unexpected error) — uploaded files may still exist; call "
+                    "list_documents directly before concluding none do."
+                )
 
         if feature_id:
             feat = get_feature(workspace_id=workspace_id, feature_id=feature_id)
@@ -306,7 +338,13 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                             if init_block:
                                 parts.append(init_block)
                     except Exception as _exc:
-                        logger.debug("inject_context: init PR read failed: %s", _exc)
+                        logger.warning("inject_context: init PR read failed: %s", _exc)
+                        parts.append(
+                            "note: could not load this feature's init-PR document "
+                            "context this turn (fetch error) — do not assume the "
+                            "init branch is empty; re-check with read_file "
+                            "before writing or approving documents."
+                        )
 
             from .tools.tasks import handle as get_tasks
 

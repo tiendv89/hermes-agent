@@ -10,7 +10,7 @@ local filesystem, without having to reason about the full flat list itself.
 
 Only sees documents that have a row in storage-service — go-owned feature
 documents and workspace-root files (see storage_service_client.list_documents).
-ts-owned feature documents live in git; read them directly with read_document,
+ts-owned feature documents live in git; read them directly with read_file,
 there is no folder listing for that path yet.
 """
 
@@ -29,7 +29,7 @@ SCHEMA: Dict[str, Any] = {
     "description": (
         "Walk a workspace's document folder like a local filesystem — go-owned/workspace-root "
         "documents only (storage-service backed; ts-owned feature docs live in git and aren't "
-        "listed here, read them directly with read_document). Root is the workspace itself "
+        "listed here, read them directly with read_file). Root is the workspace itself "
         "(everything under the current org_id/workspace_id); pass 'path' to list one subfolder's "
         "immediate contents, e.g. path='docs/features/my-feature' to see that feature's files. "
         "Omit 'path' to list the workspace root. Returns 'folders' (immediate subfolder names) "

@@ -19,9 +19,9 @@ This skill runs in two phases, determined by reading `status.yaml` before doing 
 - Output a clear message: "Technical design draft complete. Awaiting human approval before task breakdown."
 
 **Phase 2 — Tasks** (when `stages.technical_design.review_status` is `approved`):
-- **Read the approved design FIRST via `read_document(document="technical_design")`, and the spec via `read_document(document="product_spec")`.** Derive the task breakdown from the actual design + spec content — never infer tasks from the request text, RAG, or sibling features. These reads hit the feature branch directly, so they work even when the docs are unmerged/unindexed. If `read_document` returns `exists: false` for the technical design, stop and tell the human rather than inventing tasks.
+- **Read the approved design FIRST via `read_file(document="technical_design")`, and the spec via `read_file(document="product_spec")`.** Derive the task breakdown from the actual design + spec content — never infer tasks from the request text, RAG, or sibling features. These reads hit the feature branch directly, so they work even when the docs are unmerged/unindexed. If `read_file` returns `exists: false` for the technical design, stop and tell the human rather than inventing tasks.
 - `technical-design.md` already exists and is approved — do not rewrite it unless instructed.
-- **Check the feature `owner`** — read it from `status.yaml` (the same `read_document(document="status")` call); **an absent `owner` means `ts`**:
+- **Check the feature `owner`** — read it from `status.yaml` (the same `read_file(document="status")` call); **an absent `owner` means `ts`**:
   - **`ts` (default):** produce `tasks.md` **and** `tasks/T<n>.yaml` files (current behavior).
   - **`go`:** produce `tasks.md` **only** — do **not** write any `tasks/T<n>.yaml`. A go feature's task state lives in the database, not git. Emit the per-task machine fields as a materialization input instead (see "Go feature task materialization" below).
 - Stop after task files are written. Do not advance `status.yaml` — that is the `approve-feature` skill's job.
@@ -69,9 +69,9 @@ RAG context is read-only pre-flight — it does not change what you produce, onl
 
 ## Inputs
 Read from:
-- **`docs/features/<feature_id>/product-spec.md` — load this FIRST via `read_document(document="product_spec")`.** This reads the management repo's feature branch directly, so it works even when the spec is unmerged and not yet in RAG. The design MUST be grounded in the spec's actual scope — never infer the spec from RAG, the request text, or related features. If `read_document` returns `exists: false`, stop and tell the human the spec is missing rather than guessing.
-- `docs/features/<feature_id>/status.yaml` — via `read_document(document="status")`
-- existing `technical-design.md` — via `read_document(document="technical_design")` — if present
+- **`docs/features/<feature_id>/product-spec.md` — load this FIRST via `read_file(document="product_spec")`.** This reads the management repo's feature branch directly, so it works even when the spec is unmerged and not yet in RAG. The design MUST be grounded in the spec's actual scope — never infer the spec from RAG, the request text, or related features. If `read_file` returns `exists: false`, stop and tell the human the spec is missing rather than guessing.
+- `docs/features/<feature_id>/status.yaml` — via `read_file(document="status")`
+- existing `technical-design.md` — via `read_file(document="technical_design")` — if present
 - `workspace.yaml` (for workflow settings only — NOT as the authority on which repos exist; discover queryable repos via GitNexus `list_repos`)
 - project `CLAUDE.md`
 

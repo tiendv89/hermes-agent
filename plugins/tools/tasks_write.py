@@ -44,7 +44,7 @@ SCHEMA: Dict[str, Any] = {
         "Writes tasks.md only. Tasks are created in the DB at "
         "tasks-stage approval (via approve_feature or the backup /create-tasks command) — "
         "not during breakdown. "
-        "REQUIRED FIRST: call read_document(document='technical_design') (and 'product_spec') to "
+        "REQUIRED FIRST: call read_file(document='technical_design') (and 'product_spec') to "
         "load the approved design from the feature branch and derive the task list from its actual "
         "content — never infer tasks from RAG or the request text. "
         "Each task's 'repo' MUST be a real repo name from query_gitnexus(tool='list_repos'); "
