@@ -115,6 +115,13 @@ def _image_url(base_url: str, workspace_id: str, image_id: str) -> str:
     return f"{base_url}/api/workspaces/{workspace_id}/images/{quote(image_id, safe='')}"
 
 
+def _list_url(base_url: str, workspace_id: str, feature_id: str) -> str:
+    if not feature_id:
+        # Every non-deleted document across the whole workspace.
+        return f"{base_url}/api/workspaces/{workspace_id}/documents"
+    return f"{base_url}/api/workspaces/{workspace_id}/features/{quote(feature_id, safe='')}/documents"
+
+
 def _create_document(
     base_url: str,
     headers: Dict[str, str],
@@ -260,6 +267,61 @@ def read_document_content(
         "content": data.get("content", ""),
         "version_id": data.get("version_id"),
     }
+
+
+def list_documents(
+    workspace_id: str,
+    feature_id: str = "",
+    *,
+    user_id: str = "",
+    org_id: str = "",
+) -> Dict[str, Any]:
+    """List documents under a workspace root or one feature's document folder.
+
+    Pass feature_id="" to list every non-deleted document across the whole
+    workspace (GET /api/workspaces/{wid}/documents); pass a feature_id to
+    scope the listing to that feature's folder (GET
+    .../features/{fid}/documents). Each entry's "path" is already resolved
+    relative to the workspace root (e.g. "docs/features/my-feature/product_spec.md",
+    or "shared/logo.png" for a workspace-root file with no owning feature) —
+    the single source of truth for where a document lives; do not assume any
+    prefix convention beyond what "path" reports.
+
+    This only sees documents that have a row in storage-service — go-owned
+    feature documents and workspace-root files. ts-owned feature documents
+    live in git and are not returned here (see read_document.py's owner
+    guard); there is no listing endpoint for the git-backed path.
+
+    Returns a dict with key "documents": a list of dicts, each with keys
+    id, workspace_id, path, and optionally feature_id, folder_id,
+    current_version_id, created_at, deleted_at.
+
+    Raises StorageServiceError on config errors or non-2xx responses.
+    """
+    base_url, token = _resolve_config()
+    url = _list_url(base_url, workspace_id, feature_id)
+    headers = _build_headers(token, user_id, org_id)
+    del headers["Content-Type"]  # GET; avoid implying a JSON body
+    try:
+        resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+
+    if not resp.ok:
+        body: Any = {}
+        try:
+            body = resp.json()
+        except Exception:
+            pass
+        reason = body.get("error") or body.get("reason_code") or ""
+        raise StorageServiceError(
+            f"storage-service GET {url} returned {resp.status_code}: {body}",
+            reason_code=reason,
+            status=resp.status_code,
+        )
+
+    data = resp.json()
+    return {"documents": data.get("documents", [])}
 
 
 def write_document_content(

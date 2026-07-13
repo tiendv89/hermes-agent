@@ -651,6 +651,18 @@ When the `query_gitnexus` tool is available, use it for structural code question
 
 `query_gitnexus` appears when `GITNEXUS_MCP_URL` is set in the executor environment. TypeScript and Python are the primary indexed languages; for other languages verify coverage with grep if results seem incomplete. This rule applies in both interactive sessions and agent runtime. Its purpose is to leverage the pre-built AST + call-graph index for structural questions rather than doing expensive full-file reads or grep scans.
 
+## Document folders — root scope, combine RAG discovery with a direct read
+
+Every document folder — a feature's `docs/features/<feature_id>/` folder and workspace-root files uploaded via the Files browser alike — is scoped under the current `organization_id`/`workspace_id` as its root. This matches how `query_rag` and `query_gitnexus` are keyed (`…/ws/<organization_id>/<workspace_id>/…`) and how storage-service authorizes every document read (`X-Org-Id` header + `:wid` path segment). Always resolve `organization_id`/`workspace_id` from session context (or `get_workspace_context`/`workflow_lookup_feature`) rather than guessing — a lookup scoped to the wrong org/workspace silently returns nothing or another tenant's content.
+
+**For best performance, combine the two — don't treat one as a strict fallback of the other:**
+1. **`query_rag` first, for discovery.** It's a fast semantic search across every indexed document in the org/workspace, so it's the cheapest way to find *which* document(s) are relevant when you don't already know the exact path — no need to enumerate features or guess filenames.
+2. **Then read the full file** for anything RAG surfaced that you're going to rely on: `read_document` / `read_file` for a feature's canonical docs (`product_spec`, `technical_design`, `status`) or any other file in its folder, or `read_workspace_file` for a workspace-root document. RAG returns ranked *chunks/excerpts*, not the complete current file — don't ground a design, an edit, or an answer in a chunk alone when the full, current document is one more call away.
+3. **Skip straight to the read tools (no RAG call) when you already know the exact path** — e.g. you're re-reading a document you just wrote, or the design-phase context-gathering rule above sends you to `read_document(document="product_spec")` first specifically because it may be unmerged and not yet indexed.
+4. **Fall back to reading directly, bypassing RAG, only when RAG is unavailable** — unconfigured/unreachable (`query_rag` reports no `RAG_MCP_URL` or an error) — or returns nothing for a document you have reason to believe exists. Use `list_documents` (below) to browse the folder tree when you don't know the exact path and RAG can't help you find it.
+
+**Walking the document folder tree.** Use `list_documents` to browse a workspace's or feature's document folder the way you would a local filesystem — call it with no `path` to see the workspace root's immediate folders/files, then call again with a returned folder path to descend, e.g. `path="docs/features/my-feature"`. This is go-owned/storage-service scoped only: ts-owned feature documents live in git and won't appear in this listing — use `read_document` directly for those, there is no folder-listing tool for the git-backed path yet.
+
 ## status.yaml — feature-branch fields
 
 The `status.yaml` file in each feature directory tracks both stage-level review state and

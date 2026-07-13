@@ -17,6 +17,7 @@ from .tools import (
     file_ops as file_ops_tool,
     read as read_tool,
     read_workspace_file as read_workspace_file_tool,
+    list_documents as list_documents_tool,
     tasks as tasks_tool,
     gitnexus,
     rag,
@@ -147,6 +148,12 @@ _TOOLS = (
         "name": "read_workspace_file",
         "schema": read_workspace_file_tool.SCHEMA,
         "handler": read_workspace_file_tool.handle,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "list_documents",
+        "schema": list_documents_tool.SCHEMA,
+        "handler": list_documents_tool.handle,
         "check_fn": check_workflow_available,
     },
     {
