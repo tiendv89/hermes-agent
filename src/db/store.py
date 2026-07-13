@@ -10,6 +10,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from .models import Message, MessageMention, MessageReaction, ModelCatalog, Session, SessionMember, SessionRead
@@ -928,7 +929,7 @@ async def update_message_cta_suggestions(
 
 
 # ---------------------------------------------------------------------------
-# Reaction store (m3-agent-chat-essential-feature T3)
+# Reaction store
 # ---------------------------------------------------------------------------
 
 
@@ -985,24 +986,25 @@ async def toggle_message_reaction(
     Returns the updated aggregate reaction list for the message:
     ``[{emoji, count, reactedByMe}]``.
     """
-    existing = await db.execute(
-        select(MessageReaction).where(
-            MessageReaction.message_id == message_id,
-            MessageReaction.user_id == user_id,
-            MessageReaction.emoji == emoji,
+    stmt = (
+        pg_insert(MessageReaction)
+        .values(
+            message_id=message_id,
+            user_id=user_id,
+            emoji=emoji,
+            created_at=time.time(),
         )
+        .on_conflict_do_nothing(index_elements=["message_id", "user_id", "emoji"])
     )
-    row = existing.scalar_one_or_none()
+    result = await db.execute(stmt)
 
-    if row is not None:
-        await db.delete(row)
-    else:
-        db.add(
-            MessageReaction(
-                message_id=message_id,
-                user_id=user_id,
-                emoji=emoji,
-                created_at=time.time(),
+    if result.rowcount == 0:
+        # Row already existed — toggle means delete
+        await db.execute(
+            delete(MessageReaction).where(
+                MessageReaction.message_id == message_id,
+                MessageReaction.user_id == user_id,
+                MessageReaction.emoji == emoji,
             )
         )
 

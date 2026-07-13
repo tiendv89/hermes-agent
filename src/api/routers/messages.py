@@ -467,7 +467,7 @@ async def forward_message(
 
 
 # ---------------------------------------------------------------------------
-# Reaction endpoint (m3-agent-chat-essential-feature T3)
+# Reaction endpoint
 # ---------------------------------------------------------------------------
 
 
