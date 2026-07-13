@@ -184,8 +184,6 @@ def test_append_message_forwarded_from_default_is_none():
 @pytest.mark.asyncio
 async def test_get_session_messages_includes_forwarded_from_message_id():
     """When a message has forwarded_from_message_id set it appears in the dict."""
-    from sqlalchemy import select
-
     msg = _make_message(id=10, forwarded_from_message_id=5)
 
     mock_result = MagicMock()

@@ -428,7 +428,8 @@ async def forward_message(
     if body.comment:
         forwarded_content = f"{body.comment.strip()}\n\n{forwarded_content}"
 
-    new_message_ids = []
+    # Pre-validate all destinations before writing any messages to ensure atomicity.
+    # append_message commits after each insert, so a 404 mid-loop would leave orphaned rows.
     for dest_session_id in body.destination_session_ids:
         dest_session = await get_session(db, dest_session_id)
         if dest_session is None:
@@ -436,6 +437,10 @@ async def forward_message(
                 status_code=404,
                 detail=f"Destination session not found: {dest_session_id}",
             )
+
+    # All destinations valid — safe to write
+    new_message_ids = []
+    for dest_session_id in body.destination_session_ids:
         new_id = await append_message(
             db,
             session_id=dest_session_id,
