@@ -1,7 +1,7 @@
 # Technical Design
 
 ## Feature
-- Feature ID: `<feature-id>`
+- Feature: `<feature-title>`
 - Title: `<feature-title>`
 
 ## Current State
