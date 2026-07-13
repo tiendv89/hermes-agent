@@ -183,12 +183,14 @@ def handle_write_file(
     if path_error:
         return {"ok": False, "error": path_error}
 
+    slug = ""
     if fid:
         try:
             detail = run_async(
                 get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
             )
             owner = detail.get("owner") or "ts"
+            slug = detail.get("feature_name") or ""
         except Exception as exc:
             logger.warning("write_file: could not fetch feature_detail: %s", exc)
             return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
@@ -208,6 +210,7 @@ def handle_write_file(
             content,
             user_id=caller_user_id,
             org_id=caller_org_id,
+            feature_slug=slug,
         )
     except StorageServiceError as exc:
         logger.warning("write_file: storage-service error: %s", exc)
@@ -256,12 +259,14 @@ def handle_edit_file(
     if path_error:
         return {"ok": False, "error": path_error}
 
+    slug = ""
     if fid:
         try:
             detail = run_async(
                 get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id)
             )
             owner = detail.get("owner") or "ts"
+            slug = detail.get("feature_name") or ""
         except Exception as exc:
             logger.warning("edit_file: could not fetch feature_detail: %s", exc)
             return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
@@ -302,6 +307,7 @@ def handle_edit_file(
             new_content,
             user_id=caller_user_id,
             org_id=caller_org_id,
+            feature_slug=slug,
         )
     except StorageServiceError as exc:
         logger.warning("edit_file: storage-service error: %s", exc)

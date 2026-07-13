@@ -288,6 +288,7 @@ class TestWriteFileGoOwner:
             _NOTES_CONTENT,
             user_id="user-1",
             org_id="org-1",
+            feature_slug=_FEATURE_ID,
         )
 
     def test_go_owned_nested_path(self):
@@ -319,6 +320,7 @@ class TestWriteFileGoOwner:
             "# Handoff\n",
             user_id="user-1",
             org_id="org-1",
+            feature_slug=_FEATURE_ID,
         )
 
     def test_go_owned_no_git_write_attempted(self):
@@ -464,6 +466,7 @@ class TestWriteFileNoFeatureId:
             "hello",
             user_id="user-1",
             org_id="org-1",
+            feature_slug="",
         )
 
     def test_no_feature_id_skips_owner_check(self):
@@ -622,6 +625,7 @@ class TestEditFileGoOwner:
             expected,
             user_id="user-1",
             org_id="org-1",
+            feature_slug=_FEATURE_ID,
         )
 
     def test_go_owned_reads_fresh_content_before_applying_edits(self):
@@ -809,7 +813,7 @@ class TestEditFileNoFeatureId:
             _WORKSPACE_ID, "", "api.txt", user_id="user-1", org_id="org-1"
         )
         fake_ssc.write_document_content.assert_called_once_with(
-            _WORKSPACE_ID, "", "api.txt", "new", user_id="user-1", org_id="org-1"
+            _WORKSPACE_ID, "", "api.txt", "new", user_id="user-1", org_id="org-1", feature_slug=""
         )
 
     def test_missing_workspace_id_still_returns_error(self):

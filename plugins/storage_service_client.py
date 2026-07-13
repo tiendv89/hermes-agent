@@ -121,6 +121,7 @@ def _create_document(
     workspace_id: str,
     feature_id: str,
     path: str,
+    feature_slug: str = "",
 ) -> None:
     """Create an empty document row via POST /api/documents.
 
@@ -131,11 +132,21 @@ def _create_document(
     to the same path can then succeed. feature_id="" creates it at the
     workspace root, matching PutDocumentContent's own no-feature variant.
 
+    feature_slug, when known, is stored alongside the row so storage-service
+    builds the document's readable path/object key as
+    "docs/features/{feature_slug}/{path}" instead of falling back to the raw
+    feature_id (see FeatureRelativePath in storage-service's objectkey.go).
+
     Raises StorageServiceError on a non-2xx response (including "already
     exists" races, which the caller's retried PUT will simply overwrite).
     """
     url = f"{base_url}/api/documents"
-    payload = {"workspace_id": workspace_id, "feature_id": feature_id, "path": path}
+    payload = {
+        "workspace_id": workspace_id,
+        "feature_id": feature_id,
+        "path": path,
+        "feature_slug": feature_slug,
+    }
     try:
         resp = requests.post(url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT)
     except requests.RequestException as exc:
@@ -259,6 +270,7 @@ def write_document_content(
     *,
     user_id: str = "",
     org_id: str = "",
+    feature_slug: str = "",
 ) -> Dict[str, Any]:
     """Write a document's content to storage-service.
 
@@ -267,6 +279,11 @@ def write_document_content(
     this creates it via POST /api/documents and retries the PUT once. This
     covers any non-canonical path (feature-scoped or workspace-root) on its
     first write, not just the three pre-provisioned canonical documents.
+
+    feature_slug, when known, is passed through to _create_document so a
+    brand-new document lands under the feature's human-readable folder
+    instead of a raw-UUID one. Only matters on first write (the 404 branch);
+    an existing row already has its slug recorded.
 
     Returns a dict with keys:
       - ``ok`` (bool): True on success
@@ -287,7 +304,7 @@ def write_document_content(
 
     resp = _put()
     if resp.status_code == 404:
-        _create_document(base_url, headers, workspace_id, feature_id, path)
+        _create_document(base_url, headers, workspace_id, feature_id, path, feature_slug)
         resp = _put()
 
     if not resp.ok:

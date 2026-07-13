@@ -64,7 +64,32 @@ class TestWriteDocumentContentCreateOnMissing:
             "workspace_id": _WORKSPACE_ID,
             "feature_id": _FEATURE_ID,
             "path": "api.txt",
+            "feature_slug": "",
         }
+
+    def test_404_creates_document_with_feature_slug_when_given(self):
+        """feature_slug, when passed, is forwarded to POST /api/documents so
+        storage-service can build the human-readable path instead of falling
+        back to the raw feature_id."""
+        not_found = _resp(404, {"error": "document not found"})
+        ok = _resp(200, {"version_id": "v1"})
+
+        with (
+            patch("requests.put", side_effect=[not_found, ok]),
+            patch("requests.post", return_value=_resp(201)) as mock_post,
+        ):
+            ssc.write_document_content(
+                _WORKSPACE_ID,
+                _FEATURE_ID,
+                "design.md",
+                "hello",
+                user_id="u1",
+                org_id="org-1",
+                feature_slug="f1-post-classify-single-record",
+            )
+
+        _, post_kwargs = mock_post.call_args
+        assert post_kwargs["json"]["feature_slug"] == "f1-post-classify-single-record"
 
     def test_404_creates_workspace_root_document_when_no_feature_id(self):
         """feature_id="" still creates the row (workspace-root) and retries."""
