@@ -31,9 +31,10 @@ from src.api.model_catalog import resolve_model
 from src.api.routers.messages import _image_urls_for, _should_trigger_agent
 from src.db import (
     Message,
+    add_member,
+    can_view_session,
     get_messages_as_conversation,
     get_session,
-    is_member,
     persist_mentions,
     touch_session,
     update_session_model,
@@ -41,6 +42,7 @@ from src.db import (
 from src.db.store import append_message, get_thread_replies
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
+from src.services.user_service_client import is_org_member
 from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
@@ -88,11 +90,29 @@ async def post_thread_reply(
     if session is None:
         raise HTTPException(status_code=404, detail="Thread not found.")
 
-    # Verify caller is a member.
-    owner_id = getattr(session, "user_id", None) or ""
-    caller_is_member = (user_id == owner_id) or await is_member(db, session_id, user_id)
-    if not caller_is_member:
+    ws_id = getattr(session, "workspace_id", "") or ""
+    try:
+        org_id = await get_workspace_organization_id(
+            ws_id, user_id=identity.user_id, org_id=identity.org_id
+        ) or ""
+    except Exception:
+        logger.exception("workflow-backend org_id lookup failed for workspace %s", ws_id)
+        org_id = ""
+
+    # Sessions (kind='thread') are org-public like channels — any org member is
+    # authorized to reply even without an explicit session_members row.
+    kind_val = getattr(session, "kind", "thread") or "thread"
+    caller_is_workspace_member = False
+    if kind_val == "thread":
+        caller_is_workspace_member = await is_org_member(org_id, user_id)
+
+    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
+    if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
+
+    # Implicit join for authorized org members on any thread session — idempotent.
+    if kind_val == "thread" and caller_is_workspace_member:
+        await add_member(db, session_id, user_id, added_by=user_id)
 
     # Load the root message and validate it belongs to this session and is itself
     # a top-level message (thread_root_id IS NULL — no nested threads).
@@ -117,15 +137,6 @@ async def post_thread_reply(
     else:
         # Default: the reply is to the root message itself.
         inner_reply_to_id = root_id
-
-    ws_id = getattr(session, "workspace_id", "") or ""
-    try:
-        org_id = await get_workspace_organization_id(
-            ws_id, user_id=identity.user_id, org_id=identity.org_id
-        ) or ""
-    except Exception:
-        logger.exception("workflow-backend org_id lookup failed for workspace %s", ws_id)
-        org_id = ""
 
     # --- Mention parse + resolve ---
     handles = parse_mention_handles(body.content)

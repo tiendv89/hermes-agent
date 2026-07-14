@@ -3,8 +3,10 @@
 Covers the T2 test plan:
   - can_view_session: non-member org user authorized on feature session
     (kind='thread', feature_id != '').
-  - can_view_session: workspace Team Chat thread (feature_id='') rejects
-    non-members even when caller_is_workspace_member=True.
+  - can_view_session: workspace Team Chat thread (feature_id='') is org-public
+    too — a confirmed org member is authorized with no explicit
+    session_members row (m3-chat-public-session: sessions are public by
+    default, like channels, with no membership step required).
   - can_view_session: non-org-member rejected on feature session
     (caller_is_workspace_member=False).
   - can_view_session: owner always authorized regardless of kind/feature_id.
@@ -116,38 +118,38 @@ async def test_can_view_session_feature_thread_non_org_member_rejected():
 
 
 @pytest.mark.asyncio
-async def test_can_view_session_workspace_thread_non_member_rejected():
-    """Workspace Team Chat thread (feature_id='') rejects non-members."""
+async def test_can_view_session_workspace_thread_org_member_authorized():
+    """Workspace Team Chat thread (feature_id='') is org-public like a feature
+    session — a confirmed org member is authorized with no explicit
+    session_members row (m3-chat-public-session: sessions are public by
+    default, same as channels)."""
     from src.db.store import can_view_session
 
     db = _mock_db()
-    db.get = AsyncMock(return_value=None)  # not an explicit member
     session = _make_session(user_id="owner", kind="thread", feature_id="")
 
     result = await can_view_session(
-        db, session, "non_member", caller_is_workspace_member=True
-    )
-
-    assert result is False
-    db.get.assert_called_once()  # explicit membership check was made
-
-
-@pytest.mark.asyncio
-async def test_can_view_session_workspace_thread_explicit_member_authorized():
-    """Workspace Team Chat thread allows an explicit session_members row."""
-    from src.db.store import can_view_session
-    from src.db.models import SessionMember
-
-    existing_row = MagicMock(spec=SessionMember)
-    db = _mock_db()
-    db.get = AsyncMock(return_value=existing_row)
-    session = _make_session(user_id="owner", kind="thread", feature_id="")
-
-    result = await can_view_session(
-        db, session, "explicit_member", caller_is_workspace_member=False
+        db, session, "other_user", caller_is_workspace_member=True
     )
 
     assert result is True
+    db.get.assert_not_called()  # no DB lookup needed — policy allows
+
+
+@pytest.mark.asyncio
+async def test_can_view_session_workspace_thread_non_org_member_rejected():
+    """A caller who is NOT a confirmed org member is rejected on a workspace thread."""
+    from src.db.store import can_view_session
+
+    db = _mock_db()
+    session = _make_session(user_id="owner", kind="thread", feature_id="")
+
+    result = await can_view_session(
+        db, session, "outsider_user", caller_is_workspace_member=False
+    )
+
+    assert result is False
+    db.get.assert_not_called()  # thread visibility no longer falls back to explicit membership
 
 
 @pytest.mark.asyncio

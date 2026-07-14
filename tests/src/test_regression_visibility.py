@@ -1,18 +1,25 @@
-"""Regression tests for Channels/Team-Chat-thread visibility (T6).
+"""Regression tests for Channels/Team-Chat-thread visibility (T6, later widened).
 
-Proves that the visibility widening in T2/T3 — which makes feature sessions
-(kind='thread' AND feature_id != '') org-public — does NOT change behavior for:
+Originally proved that the T2/T3 visibility widening — which made feature
+sessions (kind='thread' AND feature_id != '') org-public — did NOT change
+behavior for workspace Team Chat threads or channels. A later change made
+*all* thread-kind sessions (feature-scoped or workspace-level) org-public by
+default, matching channels, so a workspace member no longer needs an explicit
+session_members row to view/post in any session (only channels/DMs still do).
 
-  1. Workspace Team Chat threads (feature_id='') — non-members are still rejected
-     at the store layer (can_view_session), stream endpoint, and messages endpoint.
-  2. Channels (kind='channel') — non-members still require an explicit
-     session_members row; no implicit join is triggered on stream/post access;
-     the dedicated /join endpoint is the only way to gain membership.
-  3. list_member_sessions — channels are fully excluded; workspace threads remain
-     governed by explicit membership only (branches 1 + 2 are unchanged; branch 3
-     is strictly scoped to kind='thread' AND feature_id != '').
+This file now proves:
 
-All three subtasks from tasks.md § T6 are covered here.
+  1. Workspace Team Chat threads (feature_id='') — behave exactly like feature
+     sessions: a confirmed org member is authorized at the store layer
+     (can_view_session), stream endpoint, and messages endpoint, with implicit
+     join firing the same way.
+  2. Channels (kind='channel') — unaffected by the sessions-visibility change:
+     non-members still require an explicit session_members row; no implicit
+     join is triggered on stream/post access; the dedicated /join endpoint is
+     the only way to gain membership.
+  3. list_member_sessions — channels are fully excluded; unaffected by the
+     sessions-visibility change (this function is not wired to any router and
+     is out of scope for that change).
 """
 
 from __future__ import annotations
@@ -62,66 +69,59 @@ def _make_session(
 
 
 # ============================================================================
-# 1. Workspace Team Chat thread regressions
-#    Subtask: "a non-member cannot view/post a workspace Team Chat thread
-#    (feature_id='') after T2/T3 land."
+# 1. Workspace Team Chat thread — now org-public, same as feature sessions
+#    Subtask: "a confirmed org member can view/post a workspace Team Chat
+#    thread (feature_id='') with no explicit session_members row, and gets
+#    implicitly joined, exactly like a feature session."
 # ============================================================================
 
 
 @pytest.mark.asyncio
-async def test_regression_workspace_thread_non_member_rejected_store():
-    """can_view_session: workspace thread non-member still rejected after T2/T3.
+async def test_regression_workspace_thread_org_member_authorized_store():
+    """can_view_session: workspace thread org member authorized with no explicit row.
 
-    Even when caller_is_workspace_member=True, a workspace Team Chat thread
-    (kind='thread', feature_id='') falls through to the explicit is_member check,
-    which returns None (no row) → False.
+    caller_is_workspace_member=True is now sufficient for any kind='thread'
+    session regardless of feature_id — no session_members lookup needed.
     """
     from src.db.store import can_view_session
 
     db = _mock_db()
-    db.get = AsyncMock(return_value=None)  # no session_members row
 
     session = _make_session(kind="thread", feature_id="")
 
     result = await can_view_session(
-        db, session, "non_member_user", caller_is_workspace_member=True
-    )
-
-    assert result is False
-    db.get.assert_called_once()  # explicit membership check was made
-
-
-@pytest.mark.asyncio
-async def test_regression_workspace_thread_explicit_member_still_authorized_store():
-    """can_view_session: workspace thread explicit member still allowed after T2/T3.
-
-    An existing session_members row grants access; T2/T3 must not have broken this.
-    """
-    from src.db.store import can_view_session
-    from src.db.models import SessionMember
-
-    existing_row = MagicMock(spec=SessionMember)
-    db = _mock_db()
-    db.get = AsyncMock(return_value=existing_row)
-
-    session = _make_session(kind="thread", feature_id="")
-
-    result = await can_view_session(
-        db, session, "explicit_member", caller_is_workspace_member=False
+        db, session, "org_member_user", caller_is_workspace_member=True
     )
 
     assert result is True
+    db.get.assert_not_called()  # no DB lookup needed — policy allows
 
 
 @pytest.mark.asyncio
-async def test_regression_stream_workspace_thread_non_member_403():
-    """Stream endpoint: workspace thread non-member raises 403 after T2/T3.
+async def test_regression_workspace_thread_non_org_member_rejected_store():
+    """can_view_session: workspace thread rejects a caller who is not a
+    confirmed org member, with no fallback to explicit membership."""
+    from src.db.store import can_view_session
 
-    The stream handler only sets caller_is_workspace_member=True for feature
-    sessions (feature_id != '').  For workspace threads (feature_id=''), it stays
-    False, so can_view_session falls back to is_member — non-member → 403.
+    db = _mock_db()
+
+    session = _make_session(kind="thread", feature_id="")
+
+    result = await can_view_session(
+        db, session, "outsider_user", caller_is_workspace_member=False
+    )
+
+    assert result is False
+    db.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_regression_stream_workspace_thread_org_member_authorized_and_implicit_join():
+    """Stream endpoint: org member authorized on a workspace thread → implicit join.
+
+    The stream handler now resolves org membership for any kind='thread'
+    session regardless of feature_id, mirroring feature-session behavior.
     """
-    from fastapi import HTTPException
     from src.api.routers.stream import stream_thread
 
     ws_thread = _make_session(
@@ -136,37 +136,48 @@ async def test_regression_stream_workspace_thread_non_member_403():
     identity.user_id = "non_member_user"
     identity.org_id = "org-1"
 
+    fake_bus = MagicMock()
+    fake_bus.subscribe_raw = MagicMock()
+    fake_bus.unsubscribe_raw = MagicMock()
+
     with (
         patch(
             "src.api.routers.stream.get_session",
             new=AsyncMock(return_value=ws_thread),
         ),
         patch(
-            "src.api.routers.stream.can_view_session",
-            new=AsyncMock(return_value=False),
+            "src.api.routers.stream.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch("src.api.routers.stream.is_org_member", new=AsyncMock(return_value=True)),
+        patch(
+            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=True)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
+        patch(
+            "src.api.routers.stream.get_messages_since", new=AsyncMock(return_value=[])
+        ),
+        patch("src.api.routers.stream.attach_authors", new=AsyncMock()),
+        patch("src.api.routers.stream.get_bus", return_value=fake_bus),
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_thread(
-                session_id="sess_wsthread_1",
-                since=None,
-                identity=identity,
-                db=db,
-            )
+        from starlette.responses import StreamingResponse
 
-    assert exc_info.value.status_code == 403
-    add_member_mock.assert_not_awaited()  # no implicit join attempted
+        resp = await stream_thread(
+            session_id="sess_wsthread_1",
+            since=None,
+            identity=identity,
+            db=db,
+        )
+        assert isinstance(resp, StreamingResponse)
+        add_member_mock.assert_awaited_once_with(
+            db, "sess_wsthread_1", "non_member_user", added_by="non_member_user"
+        )
 
 
 @pytest.mark.asyncio
-async def test_regression_stream_workspace_thread_no_implicit_join():
-    """Stream endpoint: no implicit join for workspace threads after T2/T3.
-
-    The implicit join guard checks `kind='thread' AND feature_id != ''`.
-    Workspace threads have feature_id='', so add_member must never be called,
-    even for an authorized explicit member.
-    """
+async def test_regression_stream_workspace_thread_non_org_member_403():
+    """Stream endpoint: workspace thread non-org-member still raises 403."""
+    from fastapi import HTTPException
     from src.api.routers.stream import stream_thread
 
     ws_thread = _make_session(
@@ -178,12 +189,8 @@ async def test_regression_stream_workspace_thread_no_implicit_join():
     db = _mock_db()
 
     identity = MagicMock()
-    identity.user_id = "explicit_member"
+    identity.user_id = "outsider"
     identity.org_id = "org-1"
-
-    fake_bus = MagicMock()
-    fake_bus.subscribe_raw = MagicMock()
-    fake_bus.unsubscribe_raw = MagicMock()
 
     with (
         patch(
@@ -191,35 +198,32 @@ async def test_regression_stream_workspace_thread_no_implicit_join():
             new=AsyncMock(return_value=ws_thread),
         ),
         patch(
-            "src.api.routers.stream.can_view_session",
-            new=AsyncMock(return_value=True),
+            "src.api.routers.stream.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.api.routers.stream.is_org_member", new=AsyncMock(return_value=False)
+        ),
+        patch(
+            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
-        patch(
-            "src.api.routers.stream.get_messages_since",
-            new=AsyncMock(return_value=[]),
-        ),
-        patch("src.api.routers.stream.attach_authors", new=AsyncMock()),
-        patch("src.api.routers.stream.get_bus", return_value=fake_bus),
     ):
-        from starlette.responses import StreamingResponse
+        with pytest.raises(HTTPException) as exc_info:
+            await stream_thread(
+                session_id="sess_wsthread_2",
+                since=None,
+                identity=identity,
+                db=db,
+            )
 
-        resp = await stream_thread(
-            session_id="sess_wsthread_2",
-            since=None,
-            identity=identity,
-            db=db,
-        )
-        assert isinstance(resp, StreamingResponse)
-
-    # Critically: add_member must not be called for workspace threads.
+    assert exc_info.value.status_code == 403
     add_member_mock.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_regression_messages_workspace_thread_non_member_403():
-    """Messages endpoint: workspace thread non-member still rejected after T2/T3."""
-    from fastapi import HTTPException
+async def test_regression_messages_workspace_thread_org_member_gets_implicit_join():
+    """Messages endpoint: org member posting to a workspace thread → implicit join."""
     from src.api.routers.messages import send_message, SendMessageRequest
 
     ws_thread = _make_session(
@@ -231,58 +235,7 @@ async def test_regression_messages_workspace_thread_non_member_403():
     db = _mock_db()
 
     identity = MagicMock()
-    identity.user_id = "non_member_user"
-    identity.org_id = "org-1"
-
-    request = MagicMock()
-
-    with (
-        patch(
-            "src.api.routers.messages.get_session",
-            new=AsyncMock(return_value=ws_thread),
-        ),
-        patch(
-            "src.api.routers.messages.get_workspace_organization_id",
-            new=AsyncMock(return_value="org-1"),
-        ),
-        patch(
-            "src.api.routers.messages.can_view_session",
-            new=AsyncMock(return_value=False),
-        ),
-        patch("src.api.routers.messages.add_member", new=add_member_mock),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await send_message(
-                session_id="sess_wsthread_3",
-                body=SendMessageRequest(content="should fail"),
-                request=request,
-                identity=identity,
-                db=db,
-            )
-
-    assert exc_info.value.status_code == 403
-    add_member_mock.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_regression_messages_workspace_thread_no_implicit_join():
-    """Messages endpoint: no implicit join for workspace threads after T2/T3.
-
-    Authorized explicit member can post, but add_member is never called because
-    the implicit-join gate requires feature_id != ''.
-    """
-    from src.api.routers.messages import send_message, SendMessageRequest
-
-    ws_thread = _make_session(
-        session_id="sess_wsthread_4",
-        kind="thread",
-        feature_id="",
-    )
-    add_member_mock = AsyncMock()
-    db = _mock_db()
-
-    identity = MagicMock()
-    identity.user_id = "explicit_member"
+    identity.user_id = "org_member_user"
     identity.org_id = "org-1"
 
     request = MagicMock()
@@ -297,6 +250,9 @@ async def test_regression_messages_workspace_thread_no_implicit_join():
         patch(
             "src.api.routers.messages.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.api.routers.messages.is_org_member", new=AsyncMock(return_value=True)
         ),
         patch(
             "src.api.routers.messages.can_view_session",
@@ -320,7 +276,7 @@ async def test_regression_messages_workspace_thread_no_implicit_join():
         patch("src.api.routers.messages._should_trigger_agent", return_value=False),
     ):
         resp = await send_message(
-            session_id="sess_wsthread_4",
+            session_id="sess_wsthread_3",
             body=SendMessageRequest(content="workspace thread message"),
             request=request,
             identity=identity,
@@ -328,8 +284,9 @@ async def test_regression_messages_workspace_thread_no_implicit_join():
         )
 
     assert resp.status_code == 202
-    # Critically: add_member must not be called for workspace threads.
-    add_member_mock.assert_not_awaited()
+    add_member_mock.assert_awaited_once_with(
+        db, "sess_wsthread_3", "org_member_user", added_by="org_member_user"
+    )
 
 
 # ============================================================================

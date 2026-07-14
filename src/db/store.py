@@ -894,8 +894,11 @@ async def list_sessions(
     Excludes channels (kind='channel'), which are feature-scoped sessions surfaced
     in their own CHANNELS list — without this they'd double up under Sessions.
 
-    When ``user_id`` is provided, only that user's own sessions are returned —
-    sessions are private single-user agent chats, not shared like channels.
+    Sessions are org-public like channels (m3-chat-public-session): every
+    non-archived session for the workspace+feature is returned regardless of
+    who created it, matching can_view_session's org-public policy for
+    kind='thread' sessions. ``user_id`` is accepted for interface stability but
+    no longer filters the result.
     """
     conditions = [
         Session.workspace_id == workspace_id,
@@ -903,8 +906,6 @@ async def list_sessions(
         Session.kind != "channel",
         Session.archived == False,  # noqa: E712
     ]
-    if user_id:
-        conditions.append(Session.user_id == user_id)
 
     result = await db.execute(
         select(
@@ -1143,28 +1144,28 @@ async def can_view_session(
 ) -> bool:
     """Authorization check for viewing/posting to a session.
 
-    Three-way branch:
+    Two-way branch:
       - Owner: always authorized.
-      - kind='thread' AND feature_id != '': feature session is org-public — any
-        caller confirmed as a workspace/org member is authorized
-        (m3-chat-public-session).
-      - All other sessions (kind='channel', kind='thread' AND feature_id == '',
-        kind='dm'): explicit session_members row required — existing behavior
-        unchanged.
+      - kind='thread' (feature-scoped or workspace-level): every session is
+        org-public, like a channel — any caller confirmed as a workspace/org
+        member is authorized, whether or not feature_id is set
+        (m3-chat-public-session: sessions are public by default, same as
+        channels, with no explicit membership step required).
+      - kind='channel', kind='dm': explicit session_members row required —
+        existing behavior unchanged (channels use their own self-serve /join
+        endpoint; DMs are inherently two-party).
 
     caller_is_workspace_member: True when user-service confirmed the caller
     belongs to the org owning the session's workspace. Pass False for
-    non-feature sessions to preserve existing behavior for channels and
-    workspace threads.
+    channels/DMs to preserve their existing explicit-membership behavior.
     """
     owner_id = getattr(session, "user_id", None) or ""
     if user_id == owner_id:
         return True
 
     kind = getattr(session, "kind", "thread") or "thread"
-    feature_id = getattr(session, "feature_id", "") or ""
 
-    if kind == "thread" and feature_id:
+    if kind == "thread":
         return caller_is_workspace_member
 
     return await is_member(db, session.id, user_id)
@@ -1654,10 +1655,14 @@ async def list_workspace_threads(
     user_id: str,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Return workspace-level threads the user owns or is a member of.
+    """Return workspace-level threads for the workspace, newest-first.
 
-    Workspace threads are kind='thread' rows with feature_id=''.
-    Non-members are excluded (own ∪ member-of filter).
+    Workspace threads are kind='thread' rows with feature_id=''. They are
+    org-public like channels (m3-chat-public-session): every non-archived
+    workspace thread is returned regardless of ownership/membership, matching
+    can_view_session's org-public policy for kind='thread' sessions.
+    ``user_id`` is accepted for interface stability but no longer filters the
+    result.
     """
     result = await db.execute(
         select(
@@ -1674,14 +1679,6 @@ async def list_workspace_threads(
             Session.archived == False,  # noqa: E712
             Session.kind == "thread",
             Session.feature_id == "",
-            or_(
-                Session.user_id == user_id,
-                Session.id.in_(
-                    select(SessionMember.session_id).where(
-                        SessionMember.user_id == user_id
-                    )
-                ),
-            ),
         )
         .order_by(Session.last_active_at.desc())
         .limit(limit)

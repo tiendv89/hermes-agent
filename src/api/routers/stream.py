@@ -90,17 +90,22 @@ async def stream_thread(
     if session is None:
         raise HTTPException(status_code=404, detail="Thread not found.")
 
-    # For feature sessions (kind='thread' AND feature_id != ''), any org member
-    # is authorized to view even without an explicit session_members row.
-    # Resolve workspace org membership only when needed (feature sessions only).
+    # Sessions (kind='thread', feature-scoped or workspace-level) are org-public
+    # like channels — any org member is authorized to view even without an
+    # explicit session_members row. Resolve workspace org membership only when
+    # needed (thread sessions only; channels/DMs keep their existing behavior).
     kind_val = getattr(session, "kind", "thread") or "thread"
-    feature_id_val = getattr(session, "feature_id", "") or ""
     ws_id = getattr(session, "workspace_id", "") or ""
 
     caller_is_workspace_member = False
-    if kind_val == "thread" and feature_id_val:
+    if kind_val == "thread":
         try:
-            org_id = await get_workspace_organization_id(ws_id, user_id=user_id) or ""
+            org_id = (
+                await get_workspace_organization_id(
+                    ws_id, user_id=user_id, org_id=identity.org_id
+                )
+                or ""
+            )
         except Exception:
             logger.exception("org_id lookup failed for workspace %s", ws_id)
             org_id = ""
@@ -112,9 +117,10 @@ async def stream_thread(
     if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
-    # Implicit join for authorized org members on feature sessions — idempotent
-    # (add_member is a no-op when the row already exists).
-    if kind_val == "thread" and feature_id_val and caller_is_workspace_member:
+    # Implicit join for authorized org members on any thread session (feature-
+    # scoped or workspace-level) — idempotent (add_member is a no-op when the
+    # row already exists).
+    if kind_val == "thread" and caller_is_workspace_member:
         await add_member(db, session_id, user_id, added_by=user_id)
 
     # Parse the since cursor (treat as message integer id; ignore if non-numeric).
@@ -213,13 +219,17 @@ async def post_typing(
         raise HTTPException(status_code=404, detail="Thread not found.")
 
     kind_val = getattr(session, "kind", "thread") or "thread"
-    feature_id_val = getattr(session, "feature_id", "") or ""
     ws_id = getattr(session, "workspace_id", "") or ""
 
     caller_is_workspace_member = False
-    if kind_val == "thread" and feature_id_val:
+    if kind_val == "thread":
         try:
-            org_id = await get_workspace_organization_id(ws_id, user_id=user_id) or ""
+            org_id = (
+                await get_workspace_organization_id(
+                    ws_id, user_id=user_id, org_id=identity.org_id
+                )
+                or ""
+            )
         except Exception:
             org_id = ""
         caller_is_workspace_member = await is_org_member(org_id, user_id)

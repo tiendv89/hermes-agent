@@ -42,7 +42,6 @@ from src.db import (
     get_messages_since,
     get_session,
     get_session_messages,
-    is_member,
     persist_mentions,
     set_session_title,
     soft_delete_message,
@@ -250,13 +249,13 @@ async def send_message(
         )
         org_id = ""
 
-    # For feature sessions (kind='thread' AND feature_id != ''), any org member
-    # is authorized to post even without an explicit session_members row.
+    # Sessions (kind='thread', feature-scoped or workspace-level) are org-public
+    # like channels — any org member is authorized to post even without an
+    # explicit session_members row.
     kind_val = getattr(session, "kind", "thread") or "thread"
-    feature_id_str = getattr(session, "feature_id", "") or ""
 
     caller_is_workspace_member = False
-    if kind_val == "thread" and feature_id_str:
+    if kind_val == "thread":
         caller_is_workspace_member = await is_org_member(org_id, user_id)
 
     authorized = await can_view_session(
@@ -265,8 +264,9 @@ async def send_message(
     if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
-    # Implicit join for authorized org members on feature sessions — idempotent.
-    if kind_val == "thread" and feature_id_str and caller_is_workspace_member:
+    # Implicit join for authorized org members on any thread session (feature-
+    # scoped or workspace-level) — idempotent.
+    if kind_val == "thread" and caller_is_workspace_member:
         await add_member(db, session_id, user_id, added_by=user_id)
 
     # --- Mention parse + resolve ---
@@ -643,11 +643,27 @@ async def toggle_reaction(
     session = await get_session(db, msg_row.session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
-    owner_id = getattr(session, "user_id", None) or ""
-    caller_is_member = (user_id == owner_id) or await is_member(
-        db, msg_row.session_id, user_id
-    )
-    if not caller_is_member:
+
+    kind_val = getattr(session, "kind", "thread") or "thread"
+    caller_is_workspace_member = False
+    if kind_val == "thread":
+        ws_id = getattr(session, "workspace_id", "") or ""
+        try:
+            org_id = (
+                await get_workspace_organization_id(
+                    ws_id, user_id=identity.user_id, org_id=identity.org_id
+                )
+                or ""
+            )
+        except Exception:
+            logger.exception(
+                "workflow-backend org_id lookup failed for workspace %s", ws_id
+            )
+            org_id = ""
+        caller_is_workspace_member = await is_org_member(org_id, user_id)
+
+    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
+    if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     reactions = await toggle_message_reaction(db, msg_id, user_id, body.emoji.strip())
