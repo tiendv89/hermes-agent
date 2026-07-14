@@ -697,7 +697,6 @@ async def test_regression_list_member_sessions_channels_excluded():
     The store-level query already filters kind='thread'; this test asserts the
     caller gets an empty list when the DB returns nothing matching.
     """
-    import time
     from src.db.store import list_member_sessions
 
     # Simulate the DB returning nothing (a channel would not match the
