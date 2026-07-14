@@ -13,7 +13,15 @@ from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, MessageReaction, ModelCatalog, Session, SessionMember, SessionRead
+from .models import (
+    Message,
+    MessageMention,
+    MessageReaction,
+    ModelCatalog,
+    Session,
+    SessionMember,
+    SessionRead,
+)
 from src.services.author_resolver import author_for
 from src.services.notification_client import (
     build_channel_message_payload,
@@ -47,7 +55,8 @@ async def init_db(engine: AsyncEngine) -> None:
             if path.name in applied:
                 continue
             sql_no_comments = "\n".join(
-                line for line in path.read_text(encoding="utf-8").splitlines()
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
                 if not line.strip().startswith("--")
             )
             for stmt in sql_no_comments.split(";"):
@@ -323,7 +332,11 @@ async def _emit_message_notifications(
     <text>" one — otherwise a reply looks identical to an ordinary channel
     message in the activity feed.
     """
-    reply_kind = "thread" if thread_root_id is not None else ("message" if reply_to_message_id is not None else None)
+    reply_kind = (
+        "thread"
+        if thread_root_id is not None
+        else ("message" if reply_to_message_id is not None else None)
+    )
     try:
         session = await db.get(Session, session_id)
         if session is None:
@@ -473,7 +486,13 @@ async def append_message(
         # dm: notify the other party in a DM session.
         if content:
             await _emit_message_notifications(
-                db, session_id, message_id, author_id, content, reply_to_message_id=reply_to_message_id, thread_root_id=thread_root_id
+                db,
+                session_id,
+                message_id,
+                author_id,
+                content,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
             )
 
     return message_id
@@ -725,9 +744,7 @@ async def get_thread_replies(
         conditions.append(Message.id > since)
 
     result = await db.execute(
-        select(Message)
-        .where(*conditions)
-        .order_by(Message.created_at, Message.id)
+        select(Message).where(*conditions).order_by(Message.created_at, Message.id)
     )
     messages = []
     for msg in result.scalars().all():
@@ -792,7 +809,9 @@ async def get_thread_reply_summaries(
         )
         .group_by(Message.thread_root_id)
     )
-    counts: Dict[int, int] = {row.thread_root_id: row.reply_count for row in result.all()}
+    counts: Dict[int, int] = {
+        row.thread_root_id: row.reply_count for row in result.all()
+    }
 
     # Fetch the most recent replies per thread root to extract recent repliers.
     # One query with a window function alternative; we use a simpler approach:
@@ -1102,6 +1121,41 @@ async def is_member(
     return row is not None
 
 
+async def can_view_session(
+    db: AsyncSession,
+    session,
+    user_id: str,
+    caller_is_workspace_member: bool,
+) -> bool:
+    """Authorization check for viewing/posting to a session.
+
+    Three-way branch:
+      - Owner: always authorized.
+      - kind='thread' AND feature_id != '': feature session is org-public — any
+        caller confirmed as a workspace/org member is authorized
+        (m3-chat-public-session).
+      - All other sessions (kind='channel', kind='thread' AND feature_id == '',
+        kind='dm'): explicit session_members row required — existing behavior
+        unchanged.
+
+    caller_is_workspace_member: True when user-service confirmed the caller
+    belongs to the org owning the session's workspace. Pass False for
+    non-feature sessions to preserve existing behavior for channels and
+    workspace threads.
+    """
+    owner_id = getattr(session, "user_id", None) or ""
+    if user_id == owner_id:
+        return True
+
+    kind = getattr(session, "kind", "thread") or "thread"
+    feature_id = getattr(session, "feature_id", "") or ""
+
+    if kind == "thread" and feature_id:
+        return caller_is_workspace_member
+
+    return await is_member(db, session.id, user_id)
+
+
 async def list_member_sessions(
     db: AsyncSession,
     workspace_id: str,
@@ -1236,7 +1290,9 @@ async def persist_mentions(
                         content=content,
                         actor_user_id=author_id,
                         actor_name=actor_name,
-                        feature_id=(getattr(session, "feature_id", "") or None) if session else None,
+                        feature_id=(getattr(session, "feature_id", "") or None)
+                        if session
+                        else None,
                     )
                     for m in user_mentions
                 ]

@@ -74,7 +74,9 @@ async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service org members lookup %s -> %s", url, resp.status)
+                    logger.warning(
+                        "user-service org members lookup %s -> %s", url, resp.status
+                    )
                     return {}
                 body = await resp.json()
     except Exception:
@@ -133,7 +135,9 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service users lookup %s -> %s", url, resp.status)
+                    logger.warning(
+                        "user-service users lookup %s -> %s", url, resp.status
+                    )
                     return resolved
                 body = await resp.json()
     except Exception:
@@ -237,6 +241,33 @@ async def get_accessible_workspace_ids(
     container = body.get("data", body) if isinstance(body, dict) else {}
     ids = container.get("workspace_ids", []) if isinstance(container, dict) else []
     return [str(wid) for wid in ids if wid]
+
+
+async def is_org_member(org_id: str, user_id: str) -> bool:
+    """Return True if user_id is a member (any role) of org_id.
+
+    Permissive when USER_SERVICE_URL is unset (dev mode) — returns True so
+    local tests and direct-call dev runs are not blocked. Returns False on
+    empty org_id/user_id or on unexpected errors.
+    """
+    base_url = os.environ.get("USER_SERVICE_URL", "")
+    if not base_url:
+        logger.debug(
+            "USER_SERVICE_URL not set — granting org membership for %s/%s (dev mode)",
+            org_id,
+            user_id,
+        )
+        return True
+    if not org_id or not user_id:
+        return False
+    try:
+        role = await get_org_role(org_id, user_id)
+        return role is not None
+    except Exception:
+        logger.exception(
+            "is_org_member check failed for org=%s user=%s", org_id, user_id
+        )
+        return False
 
 
 async def is_org_admin(
