@@ -34,6 +34,8 @@ from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import default_model, resolve_model
 from src.db import (
+    add_member,
+    can_view_session,
     edit_message,
     get_message,
     get_messages_as_conversation,
@@ -52,7 +54,7 @@ from src.db.models import Message, Session
 from src.db.store import append_message, get_thread_reply_summaries
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
-from src.services.user_service_client import list_users_by_ids
+from src.services.user_service_client import is_org_member, list_users_by_ids
 from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
@@ -225,12 +227,7 @@ async def send_message(
     if session is None:
         raise HTTPException(status_code=404, detail="Thread not found.")
 
-    # Verify caller is a member (owner or explicit member).
-    owner_id = getattr(session, "user_id", None) or ""
-    caller_is_member = (user_id == owner_id) or await is_member(db, session_id, user_id)
-    if not caller_is_member:
-        raise HTTPException(status_code=403, detail="Not a member of this thread.")
-
+    # Resolve workspace and org context used for both auth and agent dispatch.
     ws_id = getattr(session, "workspace_id", "") or ""
     try:
         org_id = await get_workspace_organization_id(
@@ -239,6 +236,23 @@ async def send_message(
     except Exception:
         logger.exception("workflow-backend org_id lookup failed for workspace %s", ws_id)
         org_id = ""
+
+    # For feature sessions (kind='thread' AND feature_id != ''), any org member
+    # is authorized to post even without an explicit session_members row.
+    kind_val = getattr(session, "kind", "thread") or "thread"
+    feature_id_str = getattr(session, "feature_id", "") or ""
+
+    caller_is_workspace_member = False
+    if kind_val == "thread" and feature_id_str:
+        caller_is_workspace_member = await is_org_member(org_id, user_id)
+
+    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
+    if not authorized:
+        raise HTTPException(status_code=403, detail="Not a member of this thread.")
+
+    # Implicit join for authorized org members on feature sessions — idempotent.
+    if kind_val == "thread" and feature_id_str and caller_is_workspace_member:
+        await add_member(db, session_id, user_id, added_by=user_id)
 
     # --- Mention parse + resolve ---
     handles = parse_mention_handles(body.content)

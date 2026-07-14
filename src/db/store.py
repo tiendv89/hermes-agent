@@ -1102,6 +1102,41 @@ async def is_member(
     return row is not None
 
 
+async def can_view_session(
+    db: AsyncSession,
+    session,
+    user_id: str,
+    caller_is_workspace_member: bool,
+) -> bool:
+    """Authorization check for viewing/posting to a session.
+
+    Three-way branch:
+      - Owner: always authorized.
+      - kind='thread' AND feature_id != '': feature session is org-public — any
+        caller confirmed as a workspace/org member is authorized
+        (m3-chat-public-session).
+      - All other sessions (kind='channel', kind='thread' AND feature_id == '',
+        kind='dm'): explicit session_members row required — existing behavior
+        unchanged.
+
+    caller_is_workspace_member: True when user-service confirmed the caller
+    belongs to the org owning the session's workspace. Pass False for
+    non-feature sessions to preserve existing behavior for channels and
+    workspace threads.
+    """
+    owner_id = getattr(session, "user_id", None) or ""
+    if user_id == owner_id:
+        return True
+
+    kind = getattr(session, "kind", "thread") or "thread"
+    feature_id = getattr(session, "feature_id", "") or ""
+
+    if kind == "thread" and feature_id:
+        return caller_is_workspace_member
+
+    return await is_member(db, session.id, user_id)
+
+
 async def list_member_sessions(
     db: AsyncSession,
     workspace_id: str,
