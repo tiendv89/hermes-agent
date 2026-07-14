@@ -276,8 +276,6 @@ async def test_stream_feature_session_org_member_authorized_and_implicit_join():
     identity.user_id = "non_member_user"
     identity.org_id = "org-1"
 
-    # A fake bus queue that will immediately stop iteration (empty queue with one item).
-    fake_queue = asyncio.Queue()
     fake_bus = MagicMock()
     fake_bus.subscribe_raw = MagicMock()
     fake_bus.unsubscribe_raw = MagicMock()
@@ -408,7 +406,6 @@ async def test_stream_workspace_thread_non_member_no_implicit_join():
 @pytest.mark.asyncio
 async def test_send_message_feature_session_org_member_gets_implicit_join():
     """Org member posting to a feature session → implicit session_members insert."""
-    from types import SimpleNamespace
     from src.api.routers.messages import send_message, SendMessageRequest
 
     feature_session = _make_session(
