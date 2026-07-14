@@ -30,8 +30,10 @@ from src.api.agent_dispatch import (
 )
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
+from src.api.thread_authz import authorize_thread_access
 from src.db import (
     create_workspace_thread,
+    get_session,
     list_workspace_threads,
 )
 
@@ -215,6 +217,7 @@ async def reply_to_clarify(
     session_id: str,
     body: ClarifyReplyRequest,
     identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Answer a pending ``agent.clarify`` prompt, unblocking the agent's turn.
 
@@ -222,6 +225,11 @@ async def reply_to_clarify(
     ``clarify_id`` (see ``agent_dispatch._make_clarify_callback``); this just
     resolves that wait — it does not itself touch the SSE/bus stream, which
     resumes automatically once the agent's tool call returns.
+
+    Only the user who triggered the turn may answer — deliberately, so a
+    clarify meant for one user can't be hijacked/answered by another thread
+    member (mirrors agent_dispatch.try_resolve_pending_clarify's restriction
+    on the plain-chat-reply path).
 
     Returns 404 if there's no active turn, or if ``clarify_id`` doesn't match
     any pending entry (already resolved, expired, or never existed — e.g. a
@@ -247,3 +255,38 @@ async def reply_to_clarify(
         raise HTTPException(status_code=404, detail="clarify_not_pending")
 
     return JSONResponse({"status": "accepted"}, status_code=202)
+
+
+@router.get("/threads/{session_id}/clarify")
+async def get_pending_clarify(
+    session_id: str,
+    identity: Identity = Depends(require_identity),
+    db: AsyncSession = Depends(get_db),
+) -> JSONResponse:
+    """Return the oldest pending ``agent.clarify`` prompt for this session, if any.
+
+    Lets a client that missed the live ``agent.clarify`` SSE event (reconnect,
+    refresh, backgrounded tab) recover the pending question on load instead of
+    the turn looking permanently stuck until the clarify timeout — call this
+    whenever a thread view mounts or the stream reconnects.
+
+    Returns 200 with the entry (``clarify_id``, ``question``, ``choices``) if
+    one is pending, or 404 ``no_pending_clarify`` otherwise (including when
+    there's no active turn at all).
+    """
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    session = await get_session(db, session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Thread not found.")
+    await authorize_thread_access(db, session, user_id, identity.org_id)
+
+    from tools import clarify_gateway
+
+    entry = clarify_gateway.get_pending_for_session(session_id, include_choice_prompts=True)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="no_pending_clarify")
+
+    return JSONResponse(entry.signature())

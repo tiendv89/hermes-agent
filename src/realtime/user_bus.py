@@ -14,8 +14,11 @@ Postgres LISTEN/NOTIFY or Redis pub/sub swap-in here.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List
+
+logger = logging.getLogger(__name__)
 
 _MAX_QUEUE = 256  # drop events for a slow subscriber rather than blocking
 
@@ -30,15 +33,20 @@ class UserBus:
         """Publish an event to all current subscribers of ``user_id``.
 
         Non-blocking: subscribers that haven't drained their queue miss
-        events (``put_nowait`` raises ``QueueFull``, silently dropped here).
-        A disconnected/reconnecting client just falls back to the existing
-        5s poll on the Activity feed for anything missed.
+        events (``put_nowait`` raises ``QueueFull``, logged here). A
+        disconnected/reconnecting client just falls back to the existing 5s
+        poll on the Activity feed for anything missed.
         """
         for q in list(self._topics.get(user_id, [])):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                logger.warning(
+                    "user_bus: dropped event %r for user %s — subscriber queue full (maxsize=%d)",
+                    event.get("event"),
+                    user_id,
+                    _MAX_QUEUE,
+                )
 
     def subscribe_raw(self, user_id: str, q: asyncio.Queue) -> None:
         """Register a pre-created queue synchronously (see SessionBus for why)."""

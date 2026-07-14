@@ -13,8 +13,11 @@ T4 uses it only to publish ``channel.deleted`` events on channel deletion.
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List
+
+logger = logging.getLogger(__name__)
 
 _MAX_QUEUE = 256  # drop events for a slow subscriber rather than blocking
 
@@ -29,15 +32,24 @@ class SessionBus:
         """Publish an event to all current subscribers of ``session_id``.
 
         Non-blocking: subscribers that have not drained their queue will miss
-        events (their ``put_nowait`` raises ``QueueFull`` which is silently
-        dropped here). This matches the in-process v4 delivery contract — a
-        ``?since=`` replay cursor (T3) covers the gap on reconnect.
+        events (their ``put_nowait`` raises ``QueueFull``, logged here — it
+        used to be silently swallowed, which made a slow-consumer drop
+        indistinguishable from any other "client just didn't get it" cause).
+        This matches the in-process v4 delivery contract — a ``?since=``
+        replay cursor (T3) covers persisted messages on reconnect, but
+        live-only events (deltas, tool progress, typing) dropped this way are
+        unrecoverable.
         """
         for q in list(self._topics.get(session_id, [])):
             try:
                 q.put_nowait(event)
             except asyncio.QueueFull:
-                pass
+                logger.warning(
+                    "bus: dropped event %r for session %s — subscriber queue full (maxsize=%d)",
+                    event.get("event"),
+                    session_id,
+                    _MAX_QUEUE,
+                )
 
     def subscribe_raw(self, session_id: str, q: asyncio.Queue) -> None:
         """Register a pre-created queue synchronously.

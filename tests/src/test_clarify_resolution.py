@@ -83,6 +83,8 @@ def test_no_active_run_returns_false():
 
 
 def test_active_run_but_different_user_returns_false():
+    """Only the triggering user's plain-chat reply resolves it — a message
+    from anyone else must not hijack/answer someone else's clarify prompt."""
     from tools import clarify_gateway
 
     from src.api import agent_dispatch
@@ -354,3 +356,182 @@ async def test_post_thread_reply_resolves_clarify_instead_of_dispatching():
     entry = clarify_gateway._entries["cid-2"]
     assert entry.event.is_set()
     assert entry.response == "production"
+
+
+# ---------------------------------------------------------------------------
+# POST /threads/{session_id}/clarify — router-level: triggering-user-only
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reply_to_clarify_rejects_non_triggering_user():
+    from fastapi import HTTPException
+
+    from tools import clarify_gateway
+
+    from src.api import agent_dispatch
+    from src.api.agent_dispatch import ActiveRun
+    from src.api.routers.threads import reply_to_clarify, ClarifyReplyRequest
+
+    agent_dispatch._active_runs["sess_clarify_3"] = ActiveRun(
+        run_id="r1", task=MagicMock(), triggered_by="triggering_user"
+    )
+    clarify_gateway.register(
+        "cid-3", session_key="sess_clarify_3", question="Which env?", choices=None
+    )
+
+    identity = MagicMock()
+    identity.user_id = "someone_else"
+    identity.org_id = "org-1"
+
+    with pytest.raises(HTTPException) as exc_info:
+        await reply_to_clarify(
+            session_id="sess_clarify_3",
+            body=ClarifyReplyRequest(clarify_id="cid-3", response="prod"),
+            identity=identity,
+            db=_mock_db(),
+        )
+    assert exc_info.value.status_code == 403
+    # Untouched.
+    entry = clarify_gateway._entries["cid-3"]
+    assert not entry.event.is_set()
+
+
+@pytest.mark.asyncio
+async def test_reply_to_clarify_accepts_triggering_user():
+    from tools import clarify_gateway
+
+    from src.api import agent_dispatch
+    from src.api.agent_dispatch import ActiveRun
+    from src.api.routers.threads import reply_to_clarify, ClarifyReplyRequest
+
+    agent_dispatch._active_runs["sess_clarify_4"] = ActiveRun(
+        run_id="r1", task=MagicMock(), triggered_by="triggering_user"
+    )
+    clarify_gateway.register(
+        "cid-4", session_key="sess_clarify_4", question="Which env?", choices=None
+    )
+
+    identity = MagicMock()
+    identity.user_id = "triggering_user"
+    identity.org_id = "org-1"
+
+    resp = await reply_to_clarify(
+        session_id="sess_clarify_4",
+        body=ClarifyReplyRequest(clarify_id="cid-4", response="prod"),
+        identity=identity,
+        db=_mock_db(),
+    )
+    assert resp.status_code == 202
+    entry = clarify_gateway._entries["cid-4"]
+    assert entry.event.is_set()
+    assert entry.response == "prod"
+
+
+# ---------------------------------------------------------------------------
+# GET /threads/{session_id}/clarify — peek at the pending prompt
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_pending_clarify_returns_the_entry_when_authorized():
+    from tools import clarify_gateway
+
+    from src.api.routers.threads import get_pending_clarify
+
+    session = _make_session(session_id="sess_clarify_5")
+    clarify_gateway.register(
+        "cid-5",
+        session_key="sess_clarify_5",
+        question="Which repo?",
+        choices=["api-repo", "web-repo"],
+    )
+
+    identity = MagicMock()
+    identity.user_id = "any_member"
+    identity.org_id = "org-1"
+
+    with (
+        patch(
+            "src.api.routers.threads.get_session",
+            new=AsyncMock(return_value=session),
+        ),
+        patch(
+            "src.api.routers.threads.authorize_thread_access",
+            new=AsyncMock(return_value=(True, "org-1")),
+        ),
+    ):
+        resp = await get_pending_clarify(
+            session_id="sess_clarify_5", identity=identity, db=_mock_db()
+        )
+
+    assert resp.status_code == 200
+    import json
+
+    payload = json.loads(resp.body)
+    assert payload["clarify_id"] == "cid-5"
+    assert payload["question"] == "Which repo?"
+    assert payload["choices"] == ["api-repo", "web-repo"]
+
+
+@pytest.mark.asyncio
+async def test_get_pending_clarify_404_when_nothing_pending():
+    from fastapi import HTTPException
+
+    from src.api.routers.threads import get_pending_clarify
+
+    session = _make_session(session_id="sess_clarify_6")
+
+    identity = MagicMock()
+    identity.user_id = "any_member"
+    identity.org_id = "org-1"
+
+    with (
+        patch(
+            "src.api.routers.threads.get_session",
+            new=AsyncMock(return_value=session),
+        ),
+        patch(
+            "src.api.routers.threads.authorize_thread_access",
+            new=AsyncMock(return_value=(True, "org-1")),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_pending_clarify(
+                session_id="sess_clarify_6", identity=identity, db=_mock_db()
+            )
+
+    assert exc_info.value.status_code == 404
+    assert exc_info.value.detail == "no_pending_clarify"
+
+
+@pytest.mark.asyncio
+async def test_get_pending_clarify_requires_thread_access():
+    """A caller with no access to the thread must not be able to peek at its
+    pending clarify — authorize_thread_access's own exception propagates."""
+    from fastapi import HTTPException
+
+    from src.api.routers.threads import get_pending_clarify
+
+    session = _make_session(session_id="sess_clarify_7")
+
+    identity = MagicMock()
+    identity.user_id = "outsider"
+    identity.org_id = "org-1"
+
+    with (
+        patch(
+            "src.api.routers.threads.get_session",
+            new=AsyncMock(return_value=session),
+        ),
+        patch(
+            "src.api.routers.threads.authorize_thread_access",
+            new=AsyncMock(side_effect=HTTPException(status_code=403, detail="Not a member of this thread.")),
+        ),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await get_pending_clarify(
+                session_id="sess_clarify_7", identity=identity, db=_mock_db()
+            )
+
+    assert exc_info.value.status_code == 403

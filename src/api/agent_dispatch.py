@@ -129,13 +129,18 @@ def try_resolve_pending_clarify(session_id: str, user_id: str, response_text: st
     ``clarify_gateway.wait_for_response``), it gets silently coalesced into
     ``_pending_agent_turns`` instead of resolving the clarify — the answer
     then sits queued for up to the clarify timeout (default 1h) instead of
-    unblocking the agent. Only the triggering user's reply resolves it here,
-    matching ``POST /threads/{id}/clarify``'s own authorization rule.
+    unblocking the agent.
+
+    Only the user who triggered the turn resolves it this way — deliberately,
+    matching ``POST /threads/{id}/clarify``'s own restriction, so a clarify
+    meant for one user can't be answered by an unrelated message from another
+    thread member.
 
     Returns True if a pending clarify was resolved (the caller should treat
     the message as consumed — skip the normal dispatch gate/schedule_agent_turn
-    for it) — False if there's nothing pending for this session/user, so the
-    caller should fall through to normal dispatch.
+    for it) — False if there's no active turn, the caller isn't the triggering
+    user, or nothing is pending — so the caller should fall through to normal
+    dispatch.
     """
     with _active_runs_lock:
         active_run = _active_runs.get(session_id)
