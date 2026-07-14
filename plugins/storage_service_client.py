@@ -37,7 +37,16 @@ Endpoint contract (storage-service):
     Authorization: Bearer <STORAGE_SERVICE_TOKEN>
     X-User-Id: <caller user_id>
     X-Org-Id: <caller org_id>
-    X-Accessible-Org-Ids: <org_id>
+    X-Accessible-Org-Ids: <every org user_id is a member of, per user-service's
+                          GET /internal/users/:userId/accessible-orgs — NOT
+                          just org_id. storage-service's HasOrgAccess (see
+                          internal/middleware/auth.go) checks whether a
+                          document's owning organization_id is in this list;
+                          a caller whose session org_id differs from the
+                          document's org — despite genuinely belonging to
+                          that org too — must still see it, or every write
+                          403s for a feature/document that does exist. Falls
+                          back to [org_id] if the lookup is unavailable.
   GET response: {"content": "...", "version_id": "..."}
   PUT body:     {"content": "..."}
   PUT response: {"ok": true, "version_id": "..."}
@@ -56,7 +65,8 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+import time
+from typing import Any, Dict, List
 from urllib.parse import quote
 
 import requests
@@ -64,6 +74,51 @@ import requests
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30
+
+# Mirrors user_service_client._accessible_orgs_cache's TTL — duplicated here
+# (rather than calling that async function) because this module is
+# synchronous (requests), while user_service_client is aiohttp-based.
+_ACCESSIBLE_ORGS_TTL_SECONDS = 30.0
+_accessible_orgs_cache: Dict[str, tuple[float, List[str]]] = {}
+
+
+def _get_accessible_org_ids(user_id: str) -> List[str]:
+    """Return every org_id user_id is a member of.
+
+    Sync counterpart of user_service_client.get_accessible_org_ids (same
+    endpoint, same cache TTL) — this module can't await that coroutine since
+    it's built entirely on `requests`, not aiohttp. Returns ``[]`` when
+    USER_SERVICE_URL is unset, user_id is empty, or on any error; callers
+    should fall back to treating that as "unknown" rather than "no orgs".
+    """
+    if not user_id:
+        return []
+
+    cached = _accessible_orgs_cache.get(user_id)
+    if cached and (time.monotonic() - cached[0]) < _ACCESSIBLE_ORGS_TTL_SECONDS:
+        return cached[1]
+
+    base_url = os.environ.get("USER_SERVICE_URL", "").rstrip("/")
+    if not base_url:
+        return []
+
+    token = os.environ.get("USER_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    url = f"{base_url}/internal/users/{user_id}/accessible-orgs"
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=5)
+        if resp.status_code != 200:
+            logger.warning("storage_service_client: accessible-orgs lookup %s -> %s", url, resp.status_code)
+            return []
+        body = resp.json()
+    except Exception:
+        logger.exception("storage_service_client: accessible-orgs lookup failed for %s", user_id)
+        return []
+
+    org_ids = [str(oid) for oid in (body.get("accessible_org_ids") or []) if oid]
+    _accessible_orgs_cache[user_id] = (time.monotonic(), org_ids)
+    return org_ids
 
 
 class StorageServiceError(Exception):
@@ -95,12 +150,13 @@ def _resolve_config() -> tuple[str, str]:
 
 
 def _build_headers(token: str, user_id: str, org_id: str) -> Dict[str, str]:
+    accessible = _get_accessible_org_ids(user_id) or ([org_id] if org_id else [])
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "X-User-Id": user_id or "",
         "X-Org-Id": org_id or "",
-        "X-Accessible-Org-Ids": org_id or "",
+        "X-Accessible-Org-Ids": ",".join(accessible),
     }
 
 

@@ -168,3 +168,34 @@ class TestWriteDocumentContentCreateOnMissing:
                 )
 
         mock_post.assert_not_called()
+
+
+class TestBuildHeadersAccessibleOrgIds:
+    """The bug this fixes: HasOrgAccess (storage-service's
+    internal/middleware/auth.go) checks whether a document's owning
+    organization_id is in X-Accessible-Org-Ids — a caller who belongs to
+    multiple orgs must see all of them here, not just their session's
+    single "current" org_id, or a write to a document owned by an org the
+    caller genuinely belongs to (just not their active session org) 403s."""
+
+    def test_falls_back_to_org_id_when_lookup_unavailable(self, monkeypatch):
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+        headers = ssc._build_headers(_TOKEN, "u1", "org-42")
+        assert headers["X-Accessible-Org-Ids"] == "org-42"
+
+    def test_uses_full_membership_list_when_available(self, monkeypatch):
+        monkeypatch.setenv("USER_SERVICE_URL", "http://user-service.test")
+        ssc._accessible_orgs_cache.clear()
+        with patch(
+            "requests.get",
+            return_value=_resp(200, {"accessible_org_ids": ["org-kitelabs", "org-inga"]}),
+        ):
+            headers = ssc._build_headers(_TOKEN, "u1", "org-kitelabs")
+        assert headers["X-Accessible-Org-Ids"] == "org-kitelabs,org-inga"
+
+    def test_lookup_failure_falls_back_to_org_id(self, monkeypatch):
+        monkeypatch.setenv("USER_SERVICE_URL", "http://user-service.test")
+        ssc._accessible_orgs_cache.clear()
+        with patch("requests.get", side_effect=Exception("connection refused")):
+            headers = ssc._build_headers(_TOKEN, "u1", "org-42")
+        assert headers["X-Accessible-Org-Ids"] == "org-42"
