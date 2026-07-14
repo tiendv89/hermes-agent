@@ -233,8 +233,10 @@ async def test_is_org_member_delegates_to_get_org_role_not_member():
 
 
 @pytest.mark.asyncio
-async def test_is_org_member_exception_returns_false():
-    """is_org_member returns False when user-service raises an unexpected error."""
+async def test_is_org_member_exception_propagates():
+    """is_org_member re-raises unexpected user-service errors instead of
+    swallowing them to False — callers must be able to tell "confirmed not a
+    member" apart from "lookup failed" (see src.api.thread_authz)."""
     from src.services.user_service_client import is_org_member
 
     with (
@@ -244,9 +246,8 @@ async def test_is_org_member_exception_returns_false():
             new=AsyncMock(side_effect=Exception("connection refused")),
         ),
     ):
-        result = await is_org_member("org-1", "user-a")
-
-    assert result is False
+        with pytest.raises(Exception, match="connection refused"):
+            await is_org_member("org-1", "user-a")
 
 
 # ---------------------------------------------------------------------------
@@ -287,12 +288,12 @@ async def test_stream_feature_session_org_member_authorized_and_implicit_join():
             new=AsyncMock(return_value=feature_session),
         ),
         patch(
-            "src.api.routers.stream.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
-        patch("src.api.routers.stream.is_org_member", new=AsyncMock(return_value=True)),
+        patch("src.api.thread_authz.is_org_member", new=AsyncMock(return_value=True)),
         patch(
-            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=True)
+            "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=True)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
         patch(
@@ -340,14 +341,14 @@ async def test_stream_feature_session_non_org_member_rejected():
             new=AsyncMock(return_value=feature_session),
         ),
         patch(
-            "src.api.routers.stream.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.stream.is_org_member", new=AsyncMock(return_value=False)
+            "src.api.thread_authz.is_org_member", new=AsyncMock(return_value=False)
         ),
         patch(
-            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)
+            "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=False)
         ),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -358,6 +359,48 @@ async def test_stream_feature_session_non_org_member_rejected():
                 db=db,
             )
     assert exc_info.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_authorize_thread_access_lookup_error_raises_502_not_403():
+    """A workflow-backend/user-service failure must not be conflated with a
+    genuine 'not a member' — it should surface as a distinct 502 so a caller
+    who IS a member isn't told they aren't because of a transient outage."""
+    from src.api.thread_authz import authorize_thread_access
+    from fastapi import HTTPException
+
+    session = _make_session(user_id="owner", kind="thread", feature_id="feat-1")
+    db = _mock_db()
+
+    with patch(
+        "src.api.thread_authz.get_workspace_organization_id",
+        new=AsyncMock(side_effect=Exception("workflow-backend unreachable")),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await authorize_thread_access(db, session, "some_user", "org-1")
+
+    assert exc_info.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_authorize_thread_access_no_owning_org_raises_502_not_403():
+    """workflow-backend resolving no owning org for the workspace (e.g. the
+    workspace row isn't found) is ambiguous, not a confirmed non-membership —
+    must not be silently coerced into org_id="" and a misleading 403."""
+    from src.api.thread_authz import authorize_thread_access
+    from fastapi import HTTPException
+
+    session = _make_session(user_id="owner", kind="thread", feature_id="feat-1")
+    db = _mock_db()
+
+    with patch(
+        "src.api.thread_authz.get_workspace_organization_id",
+        new=AsyncMock(return_value=None),
+    ):
+        with pytest.raises(HTTPException) as exc_info:
+            await authorize_thread_access(db, session, "some_user", "org-1")
+
+    assert exc_info.value.status_code == 502
 
 
 @pytest.mark.asyncio
@@ -384,7 +427,12 @@ async def test_stream_workspace_thread_non_member_no_implicit_join():
             "src.api.routers.stream.get_session", new=AsyncMock(return_value=ws_thread)
         ),
         patch(
-            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)
+            "src.api.thread_authz.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch("src.api.thread_authz.is_org_member", new=AsyncMock(return_value=False)),
+        patch(
+            "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=False)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
     ):
@@ -433,14 +481,14 @@ async def test_send_message_feature_session_org_member_gets_implicit_join():
             new=AsyncMock(return_value=feature_session),
         ),
         patch(
-            "src.api.routers.messages.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.messages.is_org_member", new=AsyncMock(return_value=True)
+            "src.api.thread_authz.is_org_member", new=AsyncMock(return_value=True)
         ),
         patch(
-            "src.api.routers.messages.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=True),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
@@ -501,11 +549,11 @@ async def test_send_message_workspace_thread_non_member_rejected():
             new=AsyncMock(return_value=ws_thread),
         ),
         patch(
-            "src.api.routers.messages.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.messages.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=False),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
@@ -549,14 +597,14 @@ async def test_send_message_feature_session_non_org_member_rejected():
             new=AsyncMock(return_value=feature_session),
         ),
         patch(
-            "src.api.routers.messages.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.messages.is_org_member", new=AsyncMock(return_value=False)
+            "src.api.thread_authz.is_org_member", new=AsyncMock(return_value=False)
         ),
         patch(
-            "src.api.routers.messages.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=False),
         ),
     ):

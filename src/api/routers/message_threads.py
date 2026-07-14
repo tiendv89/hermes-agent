@@ -14,7 +14,6 @@ GET /threads/{session_id}/messages/{message_id}/replies?since=
 from __future__ import annotations
 
 import asyncio
-import logging
 import time as _time
 from typing import List, Optional
 
@@ -29,10 +28,10 @@ from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import resolve_model
 from src.api.routers.messages import _image_urls_for, _should_trigger_agent
+from src.api.thread_authz import authorize_thread_access
 from src.db import (
     Message,
     add_member,
-    can_view_session,
     get_messages_as_conversation,
     get_session,
     persist_mentions,
@@ -42,10 +41,6 @@ from src.db import (
 from src.db.store import append_message, get_thread_replies
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
-from src.services.user_service_client import is_org_member
-from src.services.workflow_backend_client import get_workspace_organization_id
-
-logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -91,24 +86,13 @@ async def post_thread_reply(
         raise HTTPException(status_code=404, detail="Thread not found.")
 
     ws_id = getattr(session, "workspace_id", "") or ""
-    try:
-        org_id = await get_workspace_organization_id(
-            ws_id, user_id=identity.user_id, org_id=identity.org_id
-        ) or ""
-    except Exception:
-        logger.exception("workflow-backend org_id lookup failed for workspace %s", ws_id)
-        org_id = ""
 
     # Sessions (kind='thread') are org-public like channels — any org member is
     # authorized to reply even without an explicit session_members row.
+    caller_is_workspace_member, org_id = await authorize_thread_access(
+        db, session, identity.user_id, identity.org_id
+    )
     kind_val = getattr(session, "kind", "thread") or "thread"
-    caller_is_workspace_member = False
-    if kind_val == "thread":
-        caller_is_workspace_member = await is_org_member(org_id, user_id)
-
-    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
-    if not authorized:
-        raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     # Implicit join for authorized org members on any thread session — idempotent.
     if kind_val == "thread" and caller_is_workspace_member:

@@ -248,7 +248,12 @@ async def is_org_member(org_id: str, user_id: str) -> bool:
 
     Permissive when USER_SERVICE_URL is unset (dev mode) — returns True so
     local tests and direct-call dev runs are not blocked. Returns False on
-    empty org_id/user_id or on unexpected errors.
+    empty org_id/user_id. Unlike a stale prior version of this function,
+    unexpected errors are NOT swallowed to False — callers that use this for
+    an authorization decision must be able to tell "confirmed not a member"
+    apart from "user-service lookup failed", matching how is_org_admin already
+    lets get_org_role's errors propagate. Raises UserServiceError on an
+    unexpected user-service response, or the underlying network exception.
     """
     base_url = os.environ.get("USER_SERVICE_URL", "")
     if not base_url:
@@ -260,14 +265,8 @@ async def is_org_member(org_id: str, user_id: str) -> bool:
         return True
     if not org_id or not user_id:
         return False
-    try:
-        role = await get_org_role(org_id, user_id)
-        return role is not None
-    except Exception:
-        logger.exception(
-            "is_org_member check failed for org=%s user=%s", org_id, user_id
-        )
-        return False
+    role = await get_org_role(org_id, user_id)
+    return role is not None
 
 
 async def is_org_admin(

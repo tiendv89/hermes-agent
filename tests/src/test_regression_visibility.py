@@ -146,12 +146,12 @@ async def test_regression_stream_workspace_thread_org_member_authorized_and_impl
             new=AsyncMock(return_value=ws_thread),
         ),
         patch(
-            "src.api.routers.stream.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
-        patch("src.api.routers.stream.is_org_member", new=AsyncMock(return_value=True)),
+        patch("src.api.thread_authz.is_org_member", new=AsyncMock(return_value=True)),
         patch(
-            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=True)
+            "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=True)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
         patch(
@@ -198,14 +198,14 @@ async def test_regression_stream_workspace_thread_non_org_member_403():
             new=AsyncMock(return_value=ws_thread),
         ),
         patch(
-            "src.api.routers.stream.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.stream.is_org_member", new=AsyncMock(return_value=False)
+            "src.api.thread_authz.is_org_member", new=AsyncMock(return_value=False)
         ),
         patch(
-            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)
+            "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=False)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
     ):
@@ -248,14 +248,14 @@ async def test_regression_messages_workspace_thread_org_member_gets_implicit_joi
             new=AsyncMock(return_value=ws_thread),
         ),
         patch(
-            "src.api.routers.messages.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.messages.is_org_member", new=AsyncMock(return_value=True)
+            "src.api.thread_authz.is_org_member", new=AsyncMock(return_value=True)
         ),
         patch(
-            "src.api.routers.messages.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=True),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
@@ -367,7 +367,7 @@ async def test_regression_stream_channel_non_member_403():
             new=AsyncMock(return_value=channel),
         ),
         patch(
-            "src.api.routers.stream.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=False),
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
@@ -416,7 +416,7 @@ async def test_regression_stream_channel_no_implicit_join_for_member():
             new=AsyncMock(return_value=channel),
         ),
         patch(
-            "src.api.routers.stream.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=True),
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
@@ -466,11 +466,11 @@ async def test_regression_messages_channel_non_member_403():
             new=AsyncMock(return_value=channel),
         ),
         patch(
-            "src.api.routers.messages.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.messages.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=False),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
@@ -519,11 +519,11 @@ async def test_regression_messages_channel_no_implicit_join():
             new=AsyncMock(return_value=channel),
         ),
         patch(
-            "src.api.routers.messages.get_workspace_organization_id",
+            "src.api.thread_authz.get_workspace_organization_id",
             new=AsyncMock(return_value="org-1"),
         ),
         patch(
-            "src.api.routers.messages.can_view_session",
+            "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=True),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
