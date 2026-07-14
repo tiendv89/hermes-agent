@@ -9,7 +9,7 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -1107,12 +1107,34 @@ async def list_member_sessions(
     workspace_id: str,
     user_id: str,
     limit: int = 50,
+    *,
+    accessible_workspace_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Return non-archived sessions the user owns OR is a member of (G7).
+    """Return non-archived threads the caller owns, is a member of, or can see
+    as an org member (feature sessions only).
 
-    Excludes channels (kind='channel') — those are listed via list_channels().
+    Three branches (G7 + T3 org-visibility extension):
+    1. own — sessions where user_id created the session, scoped to workspace_id.
+    2. member-of — sessions where user_id has an explicit session_members row,
+       scoped to workspace_id.
+    3. org-visible feature sessions — kind='thread' AND feature_id<>'' in any
+       workspace listed in accessible_workspace_ids (defaults to [workspace_id]).
+       No session_members row is required; access was already verified by the
+       caller via the user-service membership check.
+
+    Branch 3 is strictly scoped to kind='thread' AND feature_id<>''.
+    Workspace Team Chat threads (feature_id='') are unaffected — they remain
+    governed by explicit membership only.
+    Channels (kind='channel') are excluded — use list_channels() instead.
     Returns sessions ordered by last_active_at DESC.
     """
+    # Workspaces where org-public feature sessions are visible to this caller.
+    # Callers that have confirmed multi-workspace access via user-service should
+    # pass the full list; default to [workspace_id] for the common single-workspace case.
+    feature_workspaces = (
+        accessible_workspace_ids if accessible_workspace_ids is not None else [workspace_id]
+    )
+
     result = await db.execute(
         select(
             Session.id,
@@ -1124,15 +1146,25 @@ async def list_member_sessions(
             Session.kind,
         )
         .where(
-            Session.workspace_id == workspace_id,
             Session.archived == False,  # noqa: E712
             Session.kind == "thread",
             or_(
-                Session.user_id == user_id,
-                Session.id.in_(
-                    select(SessionMember.session_id).where(
-                        SessionMember.user_id == user_id
-                    )
+                # Branch 1: sessions the caller owns (scoped to current workspace).
+                and_(Session.workspace_id == workspace_id, Session.user_id == user_id),
+                # Branch 2: sessions where the caller is an explicit member.
+                and_(
+                    Session.workspace_id == workspace_id,
+                    Session.id.in_(
+                        select(SessionMember.session_id).where(
+                            SessionMember.user_id == user_id
+                        )
+                    ),
+                ),
+                # Branch 3: org-visible feature sessions in accessible workspaces.
+                # Scoped strictly to feature_id<>'' — workspace threads excluded.
+                and_(
+                    Session.feature_id != "",
+                    Session.workspace_id.in_(feature_workspaces),
                 ),
             ),
         )
