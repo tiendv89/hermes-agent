@@ -27,7 +27,7 @@ from typing import List, Optional
 
 from src.db.models import Message as MessageModel
 
-from src.api.agent_dispatch import schedule_agent_turn
+from src.api.agent_dispatch import schedule_agent_turn, try_resolve_pending_clarify
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
@@ -320,6 +320,22 @@ async def send_message(
             },
         },
     )
+
+    # --- Clarify resolution ---
+    # If the triggering user's turn is parked waiting on a `clarify` prompt,
+    # this message IS the answer — resolve it directly instead of letting the
+    # dispatch gate below coalesce it behind the still-in-flight turn (where
+    # it would sit unseen for up to the clarify timeout). See
+    # agent_dispatch.try_resolve_pending_clarify.
+    if try_resolve_pending_clarify(session_id, user_id, body.content):
+        return JSONResponse(
+            {
+                "status": "accepted",
+                "message_id": str(message_id),
+                "agent_triggered": False,
+            },
+            status_code=202,
+        )
 
     # --- Dispatch gate ---
     if not _should_trigger_agent(session, has_agent_mention):

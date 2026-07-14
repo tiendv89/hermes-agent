@@ -269,6 +269,57 @@ async def is_org_member(org_id: str, user_id: str) -> bool:
     return role is not None
 
 
+_accessible_orgs_cache: Dict[str, tuple[float, List[str]]] = {}
+
+
+async def get_accessible_org_ids(user_id: str) -> List[str]:
+    """Return every org_id user_id is a member of.
+
+    Calls user-service's ``GET /internal/users/:userId/accessible-orgs``
+    (service-token auth) — the bulk membership lookup by user_id, independent
+    of any single "current org" a caller happens to be scoped to. Results are
+    cached briefly (same TTL as list_org_members). Returns ``[]`` when
+    USER_SERVICE_URL is unset (dev mode), user_id is empty, or on any error —
+    callers should treat that as "unknown" and fall back rather than assume
+    no memberships.
+    """
+    if not user_id:
+        return []
+
+    cached = _accessible_orgs_cache.get(user_id)
+    if cached and (time.monotonic() - cached[0]) < _MEMBERS_TTL_SECONDS:
+        return cached[1]
+
+    base_url = os.environ.get("USER_SERVICE_URL", "").rstrip("/")
+    if not base_url:
+        return []
+
+    token = os.environ.get("USER_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    url = f"{base_url}/internal/users/{user_id}/accessible-orgs"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "user-service accessible-orgs lookup %s -> %s", url, resp.status
+                    )
+                    return []
+                body = await resp.json()
+    except Exception:
+        logger.exception("user-service accessible-orgs lookup failed for %s", user_id)
+        return []
+
+    # Flat response, no {"success", "data"} envelope: {"accessible_org_ids": [...]}.
+    org_ids = body.get("accessible_org_ids", []) if isinstance(body, dict) else []
+    org_ids = [str(oid) for oid in org_ids if oid]
+    _accessible_orgs_cache[user_id] = (time.monotonic(), org_ids)
+    return org_ids
+
+
 async def is_org_admin(
     org_id: str,
     user_id: str,

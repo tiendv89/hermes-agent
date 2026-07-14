@@ -22,7 +22,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.api.agent_dispatch import schedule_agent_turn
+from src.api.agent_dispatch import schedule_agent_turn, try_resolve_pending_clarify
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
@@ -173,6 +173,15 @@ async def post_thread_reply(
             },
         },
     )
+
+    # --- Clarify resolution ---
+    # See messages.py's send_message for why this must be checked before the
+    # dispatch gate below (agent_dispatch.try_resolve_pending_clarify).
+    if try_resolve_pending_clarify(session_id, user_id, body.content):
+        return JSONResponse(
+            {"status": "accepted", "message_id": str(new_message_id), "agent_triggered": False},
+            status_code=202,
+        )
 
     # --- Dispatch gate (unchanged — G5) ---
     if not _should_trigger_agent(session, has_agent_mention):

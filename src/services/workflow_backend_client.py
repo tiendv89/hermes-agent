@@ -17,7 +17,16 @@ Endpoint contract (workflow-backend, T3 guard):
     Authorization: Bearer <WORKFLOW_BACKEND_SERVICE_TOKEN>
     X-User-Id: <caller user_id from T1-threaded context>
     X-Org-Id: <caller org_id from T1-threaded context>
-    X-Accessible-Org-Ids: <org_id> (single-org action)
+    X-Accessible-Org-Ids: <every org user_id is a member of, per user-service's
+                          GET /internal/users/:userId/accessible-orgs — NOT
+                          just org_id. workflow-backend's Reader.GetWorkspace
+                          filters `WHERE organization_id = ANY(accessible)`,
+                          so a caller whose session org_id differs from a
+                          workspace's owning org — despite the caller
+                          genuinely belonging to that org too — must still
+                          see it, or every workspace-scoped call 404s as
+                          DATABASE_NOT_FOUND for a workspace that exists.
+                          Falls back to [org_id] if the lookup is unavailable.
   Body: {"tasks": [{"id": "T1", "title": "...", "depends_on": [], ...}, ...]}
   → 200/201  {"tasks": [...]}
   → 4xx      {"error": "<reason_code>", "message": "..."}
@@ -31,6 +40,8 @@ import os
 from typing import Any, Dict, List
 
 import aiohttp
+
+from src.services.user_service_client import get_accessible_org_ids
 
 logger = logging.getLogger(__name__)
 
@@ -51,14 +62,21 @@ class WorkflowBackendError(Exception):
         self.status = status
 
 
-def _build_headers(user_id: str, org_id: str, token: str) -> Dict[str, str]:
-    """Build HTTP headers for a workflow-backend service-to-service call."""
+async def _build_headers(user_id: str, org_id: str, token: str) -> Dict[str, str]:
+    """Build HTTP headers for a workflow-backend service-to-service call.
+
+    X-Accessible-Org-Ids is every org user_id actually belongs to (see module
+    docstring for why this must not be just org_id) — falls back to [org_id]
+    if the accessible-orgs lookup is empty/unavailable so behavior degrades to
+    the old single-org scoping rather than sending an empty header.
+    """
+    accessible = await get_accessible_org_ids(user_id) or ([org_id] if org_id else [])
     return {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "X-User-Id": user_id,
         "X-Org-Id": org_id,
-        "X-Accessible-Org-Ids": org_id,
+        "X-Accessible-Org-Ids": ",".join(accessible),
     }
 
 
@@ -148,7 +166,7 @@ async def create_feature_tasks(
         if org_id is None:
             org_id = get_org_id()
 
-    headers = _build_headers(user_id, org_id, token)
+    headers = await _build_headers(user_id, org_id, token)
     url = f"{base_url}/api/workspaces/{workspace_id}/features/{feature_id}/tasks"
     payload: Dict[str, Any] = {"tasks": tasks}
 
@@ -260,7 +278,7 @@ async def _call(
         if org_id is None:
             org_id = get_org_id()
 
-    headers = _build_headers(user_id, org_id, token)
+    headers = await _build_headers(user_id, org_id, token)
     url = f"{base_url}{path}"
 
     async with aiohttp.ClientSession() as session:

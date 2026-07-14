@@ -120,6 +120,35 @@ def _make_clarify_callback(session_id: str, translator: Any) -> Callable[..., st
     return _clarify_callback
 
 
+def try_resolve_pending_clarify(session_id: str, user_id: str, response_text: str) -> bool:
+    """Resolve a pending ``clarify`` wait with a normal chat message, if one applies.
+
+    Without this, a plain reply to a clarify prompt goes through
+    ``schedule_agent_turn`` like any other message: since the turn is still
+    "in flight" (its worker thread is parked in
+    ``clarify_gateway.wait_for_response``), it gets silently coalesced into
+    ``_pending_agent_turns`` instead of resolving the clarify — the answer
+    then sits queued for up to the clarify timeout (default 1h) instead of
+    unblocking the agent. Only the triggering user's reply resolves it here,
+    matching ``POST /threads/{id}/clarify``'s own authorization rule.
+
+    Returns True if a pending clarify was resolved (the caller should treat
+    the message as consumed — skip the normal dispatch gate/schedule_agent_turn
+    for it) — False if there's nothing pending for this session/user, so the
+    caller should fall through to normal dispatch.
+    """
+    with _active_runs_lock:
+        active_run = _active_runs.get(session_id)
+    if active_run is None or active_run.triggered_by != user_id:
+        return False
+
+    from tools import clarify_gateway
+
+    if not clarify_gateway.has_pending(session_id):
+        return False
+    return clarify_gateway.resolve_text_response_for_session(session_id, response_text)
+
+
 # ---------------------------------------------------------------------------
 # Shared in-flight guard (also used by the legacy /chat route)
 # ---------------------------------------------------------------------------

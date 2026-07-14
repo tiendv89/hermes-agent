@@ -91,36 +91,80 @@ def _import_client():
 
 
 class TestBuildHeaders:
-    def test_authorization_header(self):
+    """_build_headers is async: X-Accessible-Org-Ids requires a user-service
+    round trip (get_accessible_org_ids). monkeypatch clears USER_SERVICE_URL
+    so these tests hit the "unavailable -> fall back to [org_id]" path
+    without a real network call; TestBuildHeadersAccessibleOrgIds below
+    covers the real multi-org lookup."""
+
+    @pytest.mark.asyncio
+    async def test_authorization_header(self, monkeypatch):
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
         _, build_headers, _, _ = _import_client()
-        h = build_headers("uid-1", "org-1", "svc-token")
+        h = await build_headers("uid-1", "org-1", "svc-token")
         assert h["Authorization"] == "Bearer svc-token"
 
-    def test_x_user_id_header(self):
+    @pytest.mark.asyncio
+    async def test_x_user_id_header(self, monkeypatch):
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
         _, build_headers, _, _ = _import_client()
-        h = build_headers("uid-1", "org-1", "svc-token")
+        h = await build_headers("uid-1", "org-1", "svc-token")
         assert h["X-User-Id"] == "uid-1"
 
-    def test_x_org_id_header(self):
+    @pytest.mark.asyncio
+    async def test_x_org_id_header(self, monkeypatch):
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
         _, build_headers, _, _ = _import_client()
-        h = build_headers("uid-1", "org-1", "svc-token")
+        h = await build_headers("uid-1", "org-1", "svc-token")
         assert h["X-Org-Id"] == "org-1"
 
-    def test_x_accessible_org_ids_equals_org_id(self):
+    @pytest.mark.asyncio
+    async def test_x_accessible_org_ids_falls_back_to_org_id_when_unavailable(
+        self, monkeypatch
+    ):
+        """When user-service's accessible-orgs lookup is unavailable, fall back
+        to the single org_id — the old (imperfect) behavior — rather than an
+        empty header."""
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
         _, build_headers, _, _ = _import_client()
-        h = build_headers("uid-1", "org-42", "svc-token")
+        h = await build_headers("uid-1", "org-42", "svc-token")
         assert h["X-Accessible-Org-Ids"] == "org-42"
 
-    def test_content_type_is_json(self):
+    @pytest.mark.asyncio
+    async def test_content_type_is_json(self, monkeypatch):
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
         _, build_headers, _, _ = _import_client()
-        h = build_headers("u", "o", "t")
+        h = await build_headers("u", "o", "t")
         assert h["Content-Type"] == "application/json"
 
-    def test_empty_identity_values_accepted(self):
+    @pytest.mark.asyncio
+    async def test_empty_identity_values_accepted(self, monkeypatch):
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
         _, build_headers, _, _ = _import_client()
-        h = build_headers("", "", "tok")
+        h = await build_headers("", "", "tok")
         assert h["X-User-Id"] == ""
         assert h["X-Org-Id"] == ""
+
+
+class TestBuildHeadersAccessibleOrgIds:
+    """The bug this fixes: a caller who belongs to multiple orgs must see all
+    of them in X-Accessible-Org-Ids, not just the session's single org_id —
+    workflow-backend's Reader.GetWorkspace filters
+    `WHERE organization_id = ANY(accessible)`, so a workspace owned by an org
+    the caller belongs to but isn't their "current" session org must still
+    resolve, or it 404s as DATABASE_NOT_FOUND despite existing."""
+
+    @pytest.mark.asyncio
+    async def test_uses_full_membership_list_not_just_org_id(self, monkeypatch):
+        from unittest.mock import AsyncMock
+
+        _, build_headers, _, _ = _import_client()
+        monkeypatch.setattr(
+            "src.services.workflow_backend_client.get_accessible_org_ids",
+            AsyncMock(return_value=["org-kitelabs", "org-inga"]),
+        )
+        h = await build_headers("uid-1", "org-kitelabs", "svc-token")
+        assert h["X-Accessible-Org-Ids"] == "org-kitelabs,org-inga"
 
 
 # ---------------------------------------------------------------------------
