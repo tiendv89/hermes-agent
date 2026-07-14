@@ -13,6 +13,9 @@ Each event is a dict ``{"event": "<name>", "data": {...}}``:
     agent.reasoning         — {"content": "<reasoning delta>"}
     hermes.tool.progress    — {"tool": "...", "toolCallId": "...", "status": "running"|"completed"}
     hermes.artifact.saved   — {"artifact": "<kind>"}
+    agent.clarify           — {"clarify_id": "...", "question": "...", "choices": [...] | None}
+                              (the agent is blocked waiting on this; resolve via
+                              POST /threads/{id}/clarify {clarify_id, response})
     agent.done              — {"finish_reason": "stop"|"error", "error": "<msg>"}  (error optional)
     agent.working           — {"session_id": "..."}  (published when the turn starts)
 
@@ -104,6 +107,19 @@ class BusPublishingSSETranslator(HermesSSETranslator):
         artifact = artifact_for_tool(name, args, output)
         if artifact and coerce_tool_output(output).get("ok"):
             self._bus_publish("hermes.artifact.saved", {"artifact": artifact})
+
+    def on_clarify(
+        self,
+        clarify_id: str = "",
+        question: str = "",
+        choices: Any = None,
+        **kwargs: Any,
+    ) -> None:
+        super().on_clarify(clarify_id=clarify_id, question=question, choices=choices, **kwargs)
+        self._bus_publish(
+            "agent.clarify",
+            {"clarify_id": clarify_id, "question": question, "choices": choices},
+        )
 
     def on_error(self, message: str = "", **kwargs: Any) -> None:
         super().on_error(message=message, **kwargs)

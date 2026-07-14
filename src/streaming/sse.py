@@ -15,11 +15,14 @@ any OpenAI-compatible client can consume it:
     data: {... "choices": [{"delta": {}, "finish_reason": "stop"}], "usage": {...}}
     data: [DONE]
 
-On top of that base format two ``event:``-typed frames carry workflow-gateway
+On top of that base format a few ``event:``-typed frames carry workflow-gateway
 extensions (plain OpenAI clients ignore them):
 
     event: hermes.tool.progress   — a tool started / finished (status + toolCallId)
     event: hermes.artifact.saved  — a workflow write tool committed a document
+    event: agent.clarify          — the agent is blocked asking a clarifying
+                                     question; reply via POST
+                                     /threads/{id}/clarify {clarify_id, response}
 """
 
 from __future__ import annotations
@@ -222,6 +225,20 @@ class HermesSSETranslator:
         artifact = artifact_for_tool(name, args, output)
         if artifact and coerce_tool_output(output).get("ok"):
             self._emit(self._event("hermes.artifact.saved", {"artifact": artifact}))
+
+    def on_clarify(
+        self,
+        clarify_id: str = "",
+        question: str = "",
+        choices: Optional[list] = None,
+        **_: Any,
+    ) -> None:
+        self._emit(
+            self._event(
+                "agent.clarify",
+                {"clarify_id": clarify_id, "question": question, "choices": choices},
+            )
+        )
 
     def on_usage(self, input_tokens: int = 0, output_tokens: int = 0, **_: Any) -> None:
         self._usage = {

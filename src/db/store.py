@@ -691,6 +691,13 @@ async def get_messages_since(
                 entry["edited_at"] = msg.edited_at
             if msg.tool_name:
                 entry["tool_name"] = msg.tool_name
+            if msg.tool_call_id:
+                entry["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls:
+                try:
+                    entry["tool_calls"] = json.loads(msg.tool_calls)
+                except (ValueError, TypeError):
+                    entry["tool_calls"] = msg.tool_calls
             if msg.reply_to_message_id is not None:
                 entry["reply_to_message_id"] = str(msg.reply_to_message_id)
             if msg.thread_root_id is not None:
@@ -760,6 +767,13 @@ async def get_thread_replies(
                 entry["reply_to_message_id"] = str(msg.reply_to_message_id)
             if msg.tool_name:
                 entry["tool_name"] = msg.tool_name
+            if msg.tool_call_id:
+                entry["tool_call_id"] = msg.tool_call_id
+            if msg.tool_calls:
+                try:
+                    entry["tool_calls"] = json.loads(msg.tool_calls)
+                except (ValueError, TypeError):
+                    entry["tool_calls"] = msg.tool_calls
             if msg.image_ids:
                 entry["image_ids"] = msg.image_ids
         messages.append(entry)

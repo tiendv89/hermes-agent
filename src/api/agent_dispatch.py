@@ -87,6 +87,39 @@ def _make_delta_callback(cb: Callable) -> Callable:
     return _fixed_cb
 
 
+def _make_clarify_callback(session_id: str, translator: Any) -> Callable[..., str]:
+    """Build the ``clarify`` tool's callback: register + notify + block.
+
+    Runs on the agent's worker thread. Registers a pending entry with the
+    vendored ``clarify_gateway`` primitive, publishes an ``agent.clarify``
+    event so the frontend can render the question, then blocks until the
+    turn's ``/threads/{id}/clarify`` reply resolves it or the configured
+    timeout elapses. Always calls ``wait_for_response`` (even if the notify
+    publish fails) so the pending entry is never leaked.
+    """
+
+    def _clarify_callback(question: str, choices: Optional[List[str]] = None) -> str:
+        from tools import clarify_gateway
+
+        clarify_id = uuid.uuid4().hex
+        clarify_gateway.register(
+            clarify_id, session_key=session_id, question=question, choices=choices
+        )
+        try:
+            translator.on_clarify(clarify_id=clarify_id, question=question, choices=choices)
+        except Exception:
+            logger.exception(
+                "agent_dispatch: failed to publish clarify prompt for session %s",
+                session_id,
+            )
+        response = clarify_gateway.wait_for_response(
+            clarify_id, timeout=clarify_gateway.get_clarify_timeout()
+        )
+        return response or ""
+
+    return _clarify_callback
+
+
 # ---------------------------------------------------------------------------
 # Shared in-flight guard (also used by the legacy /chat route)
 # ---------------------------------------------------------------------------
@@ -638,7 +671,9 @@ def _run_agent_turn(
             api_key=api_key,
             base_url=base_url,
             enabled_toolsets=(
-                ["workflow", "web", "vision"] if downloaded_image_paths else ["workflow", "web"]
+                ["workflow", "web", "clarify", "vision"]
+                if downloaded_image_paths
+                else ["workflow", "web", "clarify"]
             ),
             max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
             quiet_mode=True,
@@ -646,6 +681,7 @@ def _run_agent_turn(
             ephemeral_system_prompt=shared_rules,
             session_id=session_id,
             user_id=user_id or None,
+            clarify_callback=_make_clarify_callback(session_id, translator),
             gateway_session_key=session_id,
             session_db=session_db,
             stream_delta_callback=_make_delta_callback(translator.on_delta),

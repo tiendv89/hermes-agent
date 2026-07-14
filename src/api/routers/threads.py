@@ -55,6 +55,11 @@ class ThreadResponse(BaseModel):
     thread_id: str
 
 
+class ClarifyReplyRequest(BaseModel):
+    clarify_id: str
+    response: str = ""
+
+
 # ---------------------------------------------------------------------------
 # POST /threads
 # ---------------------------------------------------------------------------
@@ -168,6 +173,19 @@ async def cancel_agent_turn(
     # 1. Flag the worker thread before anything else so it stops persisting.
     active_run.cancel_event.set()
 
+    # 1b. Unblock a pending `clarify` wait — interrupt()/task.cancel() below
+    #     only reach the LLM call and the async Task; a worker thread parked
+    #     in clarify_gateway.wait_for_response() is otherwise deaf to both and
+    #     would keep the active-run guard pinned for up to the full timeout.
+    try:
+        from tools import clarify_gateway
+
+        clarify_gateway.clear_session(session_id)
+    except Exception:
+        logger.exception(
+            "threads: failed to clear pending clarify for session %s", session_id
+        )
+
     # 2. Interrupt the live agent so the in-flight LLM call/tool loop unwinds.
     #    May be None if cancel races setup before the agent is built — the
     #    cancel_event still makes the worker bail at its next checkpoint.
@@ -185,3 +203,47 @@ async def cancel_agent_turn(
         "threads: cancel requested for session %s by user %s", session_id, user_id
     )
     return JSONResponse({"status": "cancelling"}, status_code=202)
+
+
+# ---------------------------------------------------------------------------
+# POST /threads/{session_id}/clarify
+# ---------------------------------------------------------------------------
+
+
+@router.post("/threads/{session_id}/clarify", status_code=202)
+async def reply_to_clarify(
+    session_id: str,
+    body: ClarifyReplyRequest,
+    identity: Identity = Depends(require_identity),
+) -> JSONResponse:
+    """Answer a pending ``agent.clarify`` prompt, unblocking the agent's turn.
+
+    The turn's worker thread is parked inside the `clarify` tool waiting on
+    ``clarify_id`` (see ``agent_dispatch._make_clarify_callback``); this just
+    resolves that wait — it does not itself touch the SSE/bus stream, which
+    resumes automatically once the agent's tool call returns.
+
+    Returns 404 if there's no active turn, or if ``clarify_id`` doesn't match
+    any pending entry (already resolved, expired, or never existed — e.g. a
+    stale UI prompt from a previous turn).
+    """
+    user_id = identity.user_id
+    if not user_id:
+        raise HTTPException(status_code=400, detail="Missing caller identity.")
+
+    with _active_runs_lock:
+        active_run = _active_runs.get(session_id)
+
+    if active_run is None or active_run.task is None:
+        raise HTTPException(status_code=404, detail="no_active_turn")
+
+    if active_run.triggered_by != user_id:
+        raise HTTPException(status_code=403, detail="not_triggering_member")
+
+    from tools import clarify_gateway
+
+    resolved = clarify_gateway.resolve_gateway_clarify(body.clarify_id, body.response)
+    if not resolved:
+        raise HTTPException(status_code=404, detail="clarify_not_pending")
+
+    return JSONResponse({"status": "accepted"}, status_code=202)

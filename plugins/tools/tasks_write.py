@@ -50,6 +50,11 @@ SCHEMA: Dict[str, Any] = {
         "Each task's 'repo' MUST be a real repo name from query_gitnexus(tool='list_repos'); "
         "determine it by querying GitNexus for the symbols/files the task touches and using the "
         "repo that contains them — do NOT guess the repo from the feature title or use workspace.yaml. "
+        "If the technical design leaves the breakdown itself ambiguous — unclear task ownership "
+        "(agent vs. human), unclear sequencing/dependencies, or a scope split GitNexus can't "
+        "resolve — use the clarify tool to ask the user before writing, rather than guessing "
+        "(interactive sessions only — skip clarify when AGENT_RUNTIME=1 and note the ambiguity "
+        "in the task instead). "
         "Call this after technical_design is approved and you have designed the full task list."
     ),
     "parameters": {

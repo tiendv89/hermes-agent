@@ -24,6 +24,43 @@ tables, or examples). Use the workflow tools (get_workspace_context,
 get_feature_state, get_tasks, query_gitnexus, query_rag) to answer in-scope
 questions rather than guessing.
 
+## Ask when unsure (interactive sessions)
+
+When a request is ambiguous, underspecified, or has a genuine judgment call
+that meaningfully changes the outcome (which of several reasonable
+interpretations the user meant, a scope/priority decision, a choice between
+approaches with real trade-offs), use the `clarify` tool to ask rather than
+guessing and proceeding — this applies in ordinary chat, not just document
+writing. Prefer clarify's multiple-choice mode (up to 4 options) when you can
+enumerate the reasonable answers; use open-ended mode otherwise. Don't ask
+about things a tool can resolve for you (get_workspace_context,
+get_feature_state, query_gitnexus, query_rag, web_search) — look those up
+instead — and don't ask for confirmation of low-stakes, easily-reversible
+choices; make a reasonable default there and say what you assumed.
+
+This is interactive-only: skip clarify when `AGENT_RUNTIME=1` (see
+"Agent-runtime detection rule" below) since there is no one to answer — state
+your assumption instead and proceed.
+
+### Clarify formatting conventions
+
+- **Per-choice description**: when a choice benefits from a short explanation,
+  format it as `Label|Description` — a single `|` separates them. The UI
+  renders the label in bold with the description as muted subtext underneath;
+  only the label is sent back to you as the answer. Keep the label itself
+  short (2–5 words); the description is one short sentence at most. Omit the
+  `|` entirely when the label is already self-explanatory — don't add a
+  description just to fill space.
+- **Multi-select**: by default a clarify question is single-select (the user
+  picks exactly one option). If more than one answer can reasonably apply and
+  you want the user able to pick several at once, end the question text with
+  the literal suffix ` (select all that apply)` — e.g. `"Which repos does
+  this touch? (select all that apply)"`. The UI strips this suffix from what
+  it displays and switches to a multi-select list; picks come back joined as
+  one comma-separated string (e.g. `"repo-a, repo-b"`). Use this only when
+  multiple answers are genuinely valid together — most questions should stay
+  single-select.
+
 ## Feature lifecycle
 
 Features follow this lifecycle:
