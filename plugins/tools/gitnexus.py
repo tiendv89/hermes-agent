@@ -173,10 +173,15 @@ async def handle(
             "ok": False,
             "error": "workspace_id is required but was not provided and no workspace context is set.",
         }
-    # GitNexus's MCP endpoint is now org+workspace scoped
-    # (/ws/<organization_id>/<workspace_id>/sse, matching rag-service), so
-    # organization_id is required just like workspace_id above.
-    org_id = get_org_id()
+
+    from src.services.workflow_backend_client import get_workspace_organization_id
+
+    try:
+        org_id = await get_workspace_organization_id(workspace_id)
+    except Exception as exc:
+        logger.debug("query_gitnexus: workspace org lookup failed: %s", exc)
+        org_id = None
+    org_id = org_id or get_org_id()
     if not org_id:
         return {
             "ok": False,
@@ -288,7 +293,18 @@ def list_indexed_repos(
             "a workspace-scoped endpoint, skipping"
         )
         return None
-    organization_id = organization_id or get_org_id()
+    if not organization_id:
+        # Resolve from the workspace's actual owning org, not the session's
+        # single "current" org — a multi-org user's current org can differ
+        # from the org that owns this workspace. Falls back to session
+        # context only when the lookup itself fails.
+        from src.services.workflow_backend_client import get_workspace_organization_id
+
+        try:
+            organization_id = _run_coro_sync(get_workspace_organization_id(workspace_id))
+        except Exception as exc:
+            logger.debug("list_indexed_repos: workspace org lookup failed: %s", exc)
+        organization_id = organization_id or get_org_id()
     if not organization_id:
         logger.debug(
             "list_indexed_repos: no organization_id in context — GitNexus requires "

@@ -95,11 +95,18 @@ async def handle(
             "ok": False,
             "error": "workspace_id is required but was not provided and no workspace context is set.",
         }
-    # No slug resolution here (unlike GitNexus): rag-service's Qdrant
-    # collections are keyed by the raw organization_id/workspace_id UUIDs
-    # storage-service uses, not by slug — see read_workspace_file.py for the
-    # same pattern.
-    org_id = coerce_text(organization_id) or get_org_id()
+
+    org_id = coerce_text(organization_id)
+    if not org_id:
+        from src.services.workflow_backend_client import get_workspace_organization_id
+
+        try:
+            org_id = await get_workspace_organization_id(wid)
+        except Exception as exc:
+            logger.debug("query_rag: workspace org lookup failed: %s", exc)
+            org_id = None
+    if not org_id:
+        org_id = get_org_id()
     if not org_id:
         return {
             "ok": False,

@@ -153,7 +153,7 @@ class TestWorkflowQueryGitnexus:
         fake_results = [{"type": "text", "text": "symbol found"}]
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-1", "test-workspace", "")
+        ctx.set_context("sess-t3-1", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -170,6 +170,7 @@ class TestWorkflowQueryGitnexus:
             "query",
             {"query": "where is register() defined"},
             workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -177,7 +178,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-2", "test-workspace", "")
+        ctx.set_context("sess-t3-2", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -191,6 +192,7 @@ class TestWorkflowQueryGitnexus:
             "query",
             {"query": "TopNav", "repo": "voyager-interface"},
             workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -198,7 +200,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-3", "test-workspace", "")
+        ctx.set_context("sess-t3-3", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -219,6 +221,7 @@ class TestWorkflowQueryGitnexus:
                 "repo": "voyager-interface",
             },
             workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -226,7 +229,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-4", "test-workspace", "")
+        ctx.set_context("sess-t3-4", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -240,6 +243,7 @@ class TestWorkflowQueryGitnexus:
             "query",
             {"query": "find X"},
             workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -247,7 +251,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-5", "test-workspace", "")
+        ctx.set_context("sess-t3-5", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -262,6 +266,7 @@ class TestWorkflowQueryGitnexus:
             "context",
             {"name": "register"},
             workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -269,7 +274,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-6", "test-workspace", "")
+        ctx.set_context("sess-t3-6", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -285,6 +290,7 @@ class TestWorkflowQueryGitnexus:
             "detect_changes",
             {"scope": "unstaged", "repo": "voyager-interface"},
             workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -292,7 +298,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-7", "test-workspace", "")
+        ctx.set_context("sess-t3-7", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -303,7 +309,11 @@ class TestWorkflowQueryGitnexus:
             result = await handle(tool="list_repos")
         assert result["ok"] is True
         mock_call.assert_awaited_once_with(
-            "http://gitnexus:8002", "list_repos", {}, workspace_id="test-workspace"
+            "http://gitnexus:8002",
+            "list_repos",
+            {},
+            workspace_id="test-workspace",
+            organization_id="test-org",
         )
 
     @pytest.mark.asyncio
@@ -311,7 +321,7 @@ class TestWorkflowQueryGitnexus:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-t3-8", "test-workspace", "")
+        ctx.set_context("sess-t3-8", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
@@ -322,6 +332,69 @@ class TestWorkflowQueryGitnexus:
             result = await handle(query="anything")
         assert result["ok"] is False
         assert "refused" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_resolves_org_from_workspace_not_session_context(self, monkeypatch):
+        """A multi-org user's session "current" org can differ from the org
+        that actually owns the workspace being queried — the workspace's
+        owning org must win, not the stale session context."""
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
+        import plugins.context as ctx
+
+        ctx.set_context("sess-t3-9", "test-workspace", "", org_id="session-org")
+        with (
+            patch(
+                "src.services.workflow_backend_client.get_workspace_organization_id",
+                AsyncMock(return_value="workspace-owning-org"),
+            ),
+            patch(
+                "plugins.tools.gitnexus.call_mcp_tool",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_call,
+        ):
+            from plugins.tools.gitnexus import handle
+
+            result = await handle(query="find X")
+        assert result["ok"] is True
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002",
+            "query",
+            {"query": "find X"},
+            workspace_id="test-workspace",
+            organization_id="workspace-owning-org",
+        )
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_session_org_when_workspace_lookup_fails(self, monkeypatch):
+        """workflow-backend being unreachable must not hard-fail the query —
+        fall back to the session's org context."""
+        monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
+        import plugins.context as ctx
+
+        ctx.set_context("sess-t3-10", "test-workspace", "", org_id="session-org")
+        with (
+            patch(
+                "src.services.workflow_backend_client.get_workspace_organization_id",
+                AsyncMock(side_effect=RuntimeError("workflow-backend unreachable")),
+            ),
+            patch(
+                "plugins.tools.gitnexus.call_mcp_tool",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_call,
+        ):
+            from plugins.tools.gitnexus import handle
+
+            result = await handle(query="find X")
+        assert result["ok"] is True
+        mock_call.assert_awaited_once_with(
+            "http://gitnexus:8002",
+            "query",
+            {"query": "find X"},
+            workspace_id="test-workspace",
+            organization_id="session-org",
+        )
 
     def test_check_available_false_when_unset(self):
         from plugins.tools.gitnexus import check_available
@@ -474,6 +547,60 @@ class TestWorkflowQueryRag:
         assert result["ok"] is False
         assert "organization_id is required" in result["error"]
         mock_call.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_resolves_org_from_workspace_not_session_context(self, monkeypatch):
+        """A multi-org user's session "current" org can differ from the org
+        that actually owns the workspace being queried — when organization_id
+        isn't passed explicitly, the workspace's owning org must win over the
+        stale session context."""
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
+        import plugins.context as ctx
+
+        ctx.set_context("sess-rag-1", "ws-1", "", org_id="session-org")
+        with (
+            patch(
+                "src.services.workflow_backend_client.get_workspace_organization_id",
+                AsyncMock(return_value="workspace-owning-org"),
+            ),
+            patch(
+                "plugins.tools.rag.call_mcp_tool",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_call,
+        ):
+            from plugins.tools.rag import handle
+
+            result = await handle(query="q", workspace_id="ws-1")
+        assert result["ok"] is True
+        called_args = mock_call.await_args[0]
+        assert called_args[2]["organization_id"] == "workspace-owning-org"
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_session_org_when_workspace_lookup_fails(self, monkeypatch):
+        """workflow-backend being unreachable must not hard-fail the query —
+        fall back to the session's org context."""
+        monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
+        import plugins.context as ctx
+
+        ctx.set_context("sess-rag-2", "ws-1", "", org_id="session-org")
+        with (
+            patch(
+                "src.services.workflow_backend_client.get_workspace_organization_id",
+                AsyncMock(side_effect=RuntimeError("workflow-backend unreachable")),
+            ),
+            patch(
+                "plugins.tools.rag.call_mcp_tool",
+                new_callable=AsyncMock,
+                return_value=[],
+            ) as mock_call,
+        ):
+            from plugins.tools.rag import handle
+
+            result = await handle(query="q", workspace_id="ws-1")
+        assert result["ok"] is True
+        called_args = mock_call.await_args[0]
+        assert called_args[2]["organization_id"] == "session-org"
 
     @pytest.mark.asyncio
     async def test_error_returns_ok_false(self, monkeypatch):
@@ -938,7 +1065,7 @@ class TestMcpArgCoercionAndErrors:
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
         import plugins.context as ctx
 
-        ctx.set_context("sess-coerce", "test-workspace", "")
+        ctx.set_context("sess-coerce", "test-workspace", "", org_id="test-org")
         with patch(
             "plugins.tools.gitnexus.call_mcp_tool",
             new_callable=AsyncMock,
