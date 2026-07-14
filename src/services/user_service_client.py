@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -188,6 +188,55 @@ async def get_org_role(
                 )
             data = await resp.json()
             return data.get("role")
+
+
+async def get_accessible_workspace_ids(
+    user_id: str,
+    org_id: str,
+) -> List[str]:
+    """Return the workspace IDs accessible to user_id within org_id.
+
+    Calls user-service's internal accessible-workspace-ids endpoint
+    (``AccessibleWorkspaceIDs`` in ``internal/organizations/organizations.go``).
+    Returns ``[]`` when USER_SERVICE_URL is unset (permissive dev mode), or on error.
+    """
+    if not org_id or not user_id:
+        return []
+
+    base_url = os.environ.get("USER_SERVICE_URL", "").rstrip("/")
+    if not base_url:
+        logger.debug(
+            "USER_SERVICE_URL not set — skipping accessible-workspace-ids for %s/%s",
+            org_id,
+            user_id,
+        )
+        return []
+
+    token = os.environ.get("USER_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    url = f"{base_url}/internal/accessible-workspace-ids"
+    params = {"org_id": org_id, "user_id": user_id}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "user-service accessible-workspace-ids %s -> %s", url, resp.status
+                    )
+                    return []
+                body = await resp.json()
+    except Exception:
+        logger.exception(
+            "user-service accessible-workspace-ids lookup failed for %s/%s", org_id, user_id
+        )
+        return []
+
+    container = body.get("data", body) if isinstance(body, dict) else {}
+    ids = container.get("workspace_ids", []) if isinstance(container, dict) else []
+    return [str(wid) for wid in ids if wid]
 
 
 async def is_org_admin(
