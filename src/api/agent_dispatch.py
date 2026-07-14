@@ -637,7 +637,9 @@ def _run_agent_turn(
             provider=provider,
             api_key=api_key,
             base_url=base_url,
-            enabled_toolsets=["workflow", "vision"] if downloaded_image_paths else ["workflow"],
+            enabled_toolsets=(
+                ["workflow", "web", "vision"] if downloaded_image_paths else ["workflow", "web"]
+            ),
             max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
             quiet_mode=True,
             platform="workflow_gateway",

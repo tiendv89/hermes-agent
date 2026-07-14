@@ -8,9 +8,8 @@ The workflow gateway exposes this list via ``GET /api/v1/models`` so the
 front-end can render a model picker, and resolves a chosen model id to the
 provider + credentials used to construct the agent for a turn.
 
-**Defense-in-depth fallback**: if the catalog table is empty or the DB is
-unavailable at lookup time, ``_FALLBACK_MODEL_ID`` is used. This covers the
-window between first deploy and the first migration run.
+There is no server-side default model — callers must supply an explicit,
+active catalog model id, or ``resolve_model`` raises ``ValueError``.
 """
 
 from __future__ import annotations
@@ -24,11 +23,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.db import store as db_store
 
 logger = logging.getLogger(__name__)
-
-# Built-in fallback — used only when the catalog table has no active rows.
-# This is intentionally minimal (one model) so a misconfigured catalog fails
-# loudly rather than silently presenting a stale hardcoded list.
-_FALLBACK_MODEL_ID = "claude-sonnet-4-6"
 
 
 class ModelInfo(TypedDict):
@@ -49,28 +43,6 @@ async def is_supported(db: AsyncSession, model_id: str) -> bool:
     return row is not None and row.is_active
 
 
-async def default_model(db: AsyncSession) -> str:
-    """The server default model id.
-
-    Resolution order:
-    1. ``HERMES_MODEL`` env var (ops-level emergency override) — if it names an
-       active catalog model.
-    2. The catalog row with ``is_default=True``.
-    3. ``_FALLBACK_MODEL_ID`` (defense in depth, e.g. empty catalog).
-    """
-    env = os.environ.get("HERMES_MODEL", "").strip()
-    if env:
-        row = await db_store.get_catalog_model(db, env)
-        if row is not None and row.is_active:
-            return env
-
-    row = await db_store.get_default_catalog_model(db)
-    if row is not None:
-        return row.model_id
-
-    return _FALLBACK_MODEL_ID
-
-
 class ResolvedModel(TypedDict):
     model: str
     provider: str
@@ -81,23 +53,16 @@ class ResolvedModel(TypedDict):
 async def resolve_model(db: AsyncSession, model_id: str) -> ResolvedModel:
     """Map a catalog model id to the provider + credentials used to run it.
 
-    An unknown or inactive id falls back to the server default so a turn can
-    never be wedged by a bad model string.
+    Raises ``ValueError`` if ``model_id`` is empty, or not an active catalog
+    entry — there is no server-side default to fall back to.
     """
     target_id = (model_id or "").strip()
+    if not target_id:
+        raise ValueError("model is required")
+
     row = await db_store.get_catalog_model(db, target_id)
     if row is None or not row.is_active:
-        fallback_id = await default_model(db)
-        row = await db_store.get_catalog_model(db, fallback_id)
-
-    if row is None:
-        # Last-resort: use the hardcoded fallback id with anthropic defaults.
-        return {
-            "model": _FALLBACK_MODEL_ID,
-            "provider": "anthropic",
-            "api_key": os.environ.get("ANTHROPIC_API_KEY") or None,
-            "base_url": None,
-        }
+        raise ValueError(f"Unknown or inactive model: {target_id!r}")
 
     provider = row.provider
     if provider == "deepseek":

@@ -1,7 +1,0 @@
-agent:
-  model: claude-sonnet-4-6
-  provider: anthropic
-
-plugins:
-  enabled:
-    - workflow

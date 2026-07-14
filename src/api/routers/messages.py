@@ -32,7 +32,7 @@ from src.api.agent_dispatch import schedule_agent_turn
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
-from src.api.model_catalog import default_model, resolve_model
+from src.api.model_catalog import resolve_model
 from src.db import (
     edit_message,
     get_message,
@@ -315,10 +315,13 @@ async def send_message(
         )
 
     # --- Trigger agent (with coalescing) ---
-    chosen_model = (
-        (body.model or "").strip() or getattr(session, "model", None) or await default_model(db)
-    )
-    resolved = await resolve_model(db, chosen_model)
+    chosen_model = (body.model or "").strip() or getattr(session, "model", None)
+    if not chosen_model:
+        raise HTTPException(status_code=400, detail="model is required.")
+    try:
+        resolved = await resolve_model(db, chosen_model)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if resolved["model"] != getattr(session, "model", None):
         await update_session_model(db, session_id, resolved["model"])
 

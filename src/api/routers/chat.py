@@ -23,7 +23,7 @@ from src.api.agent_dispatch import (
 )
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
-from src.api.model_catalog import default_model, resolve_model
+from src.api.model_catalog import resolve_model
 from src.db import (
     get_messages_as_conversation,
     get_session,
@@ -101,12 +101,13 @@ async def chat(
 
         history = await get_messages_as_conversation(db, session_id)
 
-        chosen = (
-            (body.model or "").strip()
-            or getattr(session, "model", None)
-            or await default_model(db)
-        )
-        resolved = await resolve_model(db, chosen)
+        chosen = (body.model or "").strip() or getattr(session, "model", None)
+        if not chosen:
+            raise HTTPException(status_code=400, detail="model is required.")
+        try:
+            resolved = await resolve_model(db, chosen)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
         if resolved["model"] != getattr(session, "model", None):
             await update_session_model(db, session_id, resolved["model"])
 

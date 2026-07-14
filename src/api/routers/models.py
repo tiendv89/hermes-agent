@@ -12,7 +12,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
-from src.api.model_catalog import default_model, get_active_models
+from src.api.model_catalog import get_active_models
 
 router = APIRouter()
 
@@ -21,11 +21,10 @@ router = APIRouter()
 async def list_models_endpoint(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> JSONResponse:
-    """Return the supported chat models and the server default.
+    """Return the supported chat models.
 
-    Response shape is unchanged — {models: [{id, label, provider}], default}.
-    The catalog is now read from the model_catalog table instead of a hardcoded list.
+    There is no server-side default model — callers must always pass an
+    explicit ``model`` id when starting or continuing a conversation.
     """
     models = await get_active_models(db)
-    default = await default_model(db)
-    return JSONResponse({"models": models, "default": default})
+    return JSONResponse({"models": models})
