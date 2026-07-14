@@ -420,7 +420,8 @@ async def test_post_thread_reply_non_member_forbidden():
     session = _mock_session(user_id="owner-99")  # different owner
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=False)):
+         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=False)), \
+         patch("src.api.routers.message_threads.is_org_member", AsyncMock(return_value=False)):
 
         request = MagicMock()
         identity = MagicMock()

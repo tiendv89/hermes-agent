@@ -35,12 +35,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.db import (
+    add_member,
+    can_view_session,
     get_messages_since,
     get_session,
-    is_member,
 )
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors
+from src.services.user_service_client import is_org_member
+from src.services.workflow_backend_client import get_workspace_organization_id
 
 logger = logging.getLogger(__name__)
 
@@ -87,10 +90,38 @@ async def stream_thread(
     if session is None:
         raise HTTPException(status_code=404, detail="Thread not found.")
 
-    owner_id = getattr(session, "user_id", None) or ""
-    caller_is_member = (user_id == owner_id) or await is_member(db, session_id, user_id)
-    if not caller_is_member:
+    # Sessions (kind='thread', feature-scoped or workspace-level) are org-public
+    # like channels — any org member is authorized to view even without an
+    # explicit session_members row. Resolve workspace org membership only when
+    # needed (thread sessions only; channels/DMs keep their existing behavior).
+    kind_val = getattr(session, "kind", "thread") or "thread"
+    ws_id = getattr(session, "workspace_id", "") or ""
+
+    caller_is_workspace_member = False
+    if kind_val == "thread":
+        try:
+            org_id = (
+                await get_workspace_organization_id(
+                    ws_id, user_id=user_id, org_id=identity.org_id
+                )
+                or ""
+            )
+        except Exception:
+            logger.exception("org_id lookup failed for workspace %s", ws_id)
+            org_id = ""
+        caller_is_workspace_member = await is_org_member(org_id, user_id)
+
+    authorized = await can_view_session(
+        db, session, user_id, caller_is_workspace_member
+    )
+    if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
+
+    # Implicit join for authorized org members on any thread session (feature-
+    # scoped or workspace-level) — idempotent (add_member is a no-op when the
+    # row already exists).
+    if kind_val == "thread" and caller_is_workspace_member:
+        await add_member(db, session_id, user_id, added_by=user_id)
 
     # Parse the since cursor (treat as message integer id; ignore if non-numeric).
     since_id: Optional[int] = None
@@ -112,7 +143,9 @@ async def stream_thread(
     if since_id is not None:
         replay_messages = await get_messages_since(db, session_id, since_id)
         # Enrich author display info so replayed messages show real names.
-        await attach_authors(getattr(session, "workspace_id", "") or "", replay_messages)
+        await attach_authors(
+            getattr(session, "workspace_id", "") or "", replay_messages
+        )
 
     async def event_generator():
         try:
@@ -185,9 +218,26 @@ async def post_typing(
     if session is None:
         raise HTTPException(status_code=404, detail="Thread not found.")
 
-    owner_id = getattr(session, "user_id", None) or ""
-    caller_is_member = (user_id == owner_id) or await is_member(db, session_id, user_id)
-    if not caller_is_member:
+    kind_val = getattr(session, "kind", "thread") or "thread"
+    ws_id = getattr(session, "workspace_id", "") or ""
+
+    caller_is_workspace_member = False
+    if kind_val == "thread":
+        try:
+            org_id = (
+                await get_workspace_organization_id(
+                    ws_id, user_id=user_id, org_id=identity.org_id
+                )
+                or ""
+            )
+        except Exception:
+            org_id = ""
+        caller_is_workspace_member = await is_org_member(org_id, user_id)
+
+    authorized = await can_view_session(
+        db, session, user_id, caller_is_workspace_member
+    )
+    if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
     get_bus().publish(

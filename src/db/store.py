@@ -9,11 +9,19 @@ import time
 import uuid
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import delete, func, or_, select, text, update
+from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, MessageReaction, ModelCatalog, Session, SessionMember, SessionRead
+from .models import (
+    Message,
+    MessageMention,
+    MessageReaction,
+    ModelCatalog,
+    Session,
+    SessionMember,
+    SessionRead,
+)
 from src.services.author_resolver import author_for
 from src.services.notification_client import (
     build_channel_message_payload,
@@ -47,7 +55,8 @@ async def init_db(engine: AsyncEngine) -> None:
             if path.name in applied:
                 continue
             sql_no_comments = "\n".join(
-                line for line in path.read_text(encoding="utf-8").splitlines()
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
                 if not line.strip().startswith("--")
             )
             for stmt in sql_no_comments.split(";"):
@@ -323,7 +332,11 @@ async def _emit_message_notifications(
     <text>" one — otherwise a reply looks identical to an ordinary channel
     message in the activity feed.
     """
-    reply_kind = "thread" if thread_root_id is not None else ("message" if reply_to_message_id is not None else None)
+    reply_kind = (
+        "thread"
+        if thread_root_id is not None
+        else ("message" if reply_to_message_id is not None else None)
+    )
     try:
         session = await db.get(Session, session_id)
         if session is None:
@@ -473,7 +486,13 @@ async def append_message(
         # dm: notify the other party in a DM session.
         if content:
             await _emit_message_notifications(
-                db, session_id, message_id, author_id, content, reply_to_message_id=reply_to_message_id, thread_root_id=thread_root_id
+                db,
+                session_id,
+                message_id,
+                author_id,
+                content,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
             )
 
     return message_id
@@ -732,9 +751,7 @@ async def get_thread_replies(
         conditions.append(Message.id > since)
 
     result = await db.execute(
-        select(Message)
-        .where(*conditions)
-        .order_by(Message.created_at, Message.id)
+        select(Message).where(*conditions).order_by(Message.created_at, Message.id)
     )
     messages = []
     for msg in result.scalars().all():
@@ -806,7 +823,9 @@ async def get_thread_reply_summaries(
         )
         .group_by(Message.thread_root_id)
     )
-    counts: Dict[int, int] = {row.thread_root_id: row.reply_count for row in result.all()}
+    counts: Dict[int, int] = {
+        row.thread_root_id: row.reply_count for row in result.all()
+    }
 
     # Fetch the most recent replies per thread root to extract recent repliers.
     # One query with a window function alternative; we use a simpler approach:
@@ -875,8 +894,11 @@ async def list_sessions(
     Excludes channels (kind='channel'), which are feature-scoped sessions surfaced
     in their own CHANNELS list — without this they'd double up under Sessions.
 
-    When ``user_id`` is provided, only that user's own sessions are returned —
-    sessions are private single-user agent chats, not shared like channels.
+    Sessions are org-public like channels (m3-chat-public-session): every
+    non-archived session for the workspace+feature is returned regardless of
+    who created it, matching can_view_session's org-public policy for
+    kind='thread' sessions. ``user_id`` is accepted for interface stability but
+    no longer filters the result.
     """
     conditions = [
         Session.workspace_id == workspace_id,
@@ -884,8 +906,6 @@ async def list_sessions(
         Session.kind != "channel",
         Session.archived == False,  # noqa: E712
     ]
-    if user_id:
-        conditions.append(Session.user_id == user_id)
 
     result = await db.execute(
         select(
@@ -1116,17 +1136,74 @@ async def is_member(
     return row is not None
 
 
+async def can_view_session(
+    db: AsyncSession,
+    session,
+    user_id: str,
+    caller_is_workspace_member: bool,
+) -> bool:
+    """Authorization check for viewing/posting to a session.
+
+    Two-way branch:
+      - Owner: always authorized.
+      - kind='thread' (feature-scoped or workspace-level): every session is
+        org-public, like a channel — any caller confirmed as a workspace/org
+        member is authorized, whether or not feature_id is set
+        (m3-chat-public-session: sessions are public by default, same as
+        channels, with no explicit membership step required).
+      - kind='channel', kind='dm': explicit session_members row required —
+        existing behavior unchanged (channels use their own self-serve /join
+        endpoint; DMs are inherently two-party).
+
+    caller_is_workspace_member: True when user-service confirmed the caller
+    belongs to the org owning the session's workspace. Pass False for
+    channels/DMs to preserve their existing explicit-membership behavior.
+    """
+    owner_id = getattr(session, "user_id", None) or ""
+    if user_id == owner_id:
+        return True
+
+    kind = getattr(session, "kind", "thread") or "thread"
+
+    if kind == "thread":
+        return caller_is_workspace_member
+
+    return await is_member(db, session.id, user_id)
+
+
 async def list_member_sessions(
     db: AsyncSession,
     workspace_id: str,
     user_id: str,
     limit: int = 50,
+    *,
+    accessible_workspace_ids: Optional[List[str]] = None,
 ) -> List[Dict[str, Any]]:
-    """Return non-archived sessions the user owns OR is a member of (G7).
+    """Return non-archived threads the caller owns, is a member of, or can see
+    as an org member (feature sessions only).
 
-    Excludes channels (kind='channel') — those are listed via list_channels().
+    Three branches (G7 + T3 org-visibility extension):
+    1. own — sessions where user_id created the session, scoped to workspace_id.
+    2. member-of — sessions where user_id has an explicit session_members row,
+       scoped to workspace_id.
+    3. org-visible feature sessions — kind='thread' AND feature_id<>'' in any
+       workspace listed in accessible_workspace_ids (defaults to [workspace_id]).
+       No session_members row is required; access was already verified by the
+       caller via the user-service membership check.
+
+    Branch 3 is strictly scoped to kind='thread' AND feature_id<>''.
+    Workspace Team Chat threads (feature_id='') are unaffected — they remain
+    governed by explicit membership only.
+    Channels (kind='channel') are excluded — use list_channels() instead.
     Returns sessions ordered by last_active_at DESC.
     """
+    # Workspaces where org-public feature sessions are visible to this caller.
+    # Callers that have confirmed multi-workspace access via user-service should
+    # pass the full list; default to [workspace_id] for the common single-workspace case.
+    feature_workspaces = (
+        accessible_workspace_ids if accessible_workspace_ids is not None else [workspace_id]
+    )
+
     result = await db.execute(
         select(
             Session.id,
@@ -1138,15 +1215,25 @@ async def list_member_sessions(
             Session.kind,
         )
         .where(
-            Session.workspace_id == workspace_id,
             Session.archived == False,  # noqa: E712
             Session.kind == "thread",
             or_(
-                Session.user_id == user_id,
-                Session.id.in_(
-                    select(SessionMember.session_id).where(
-                        SessionMember.user_id == user_id
-                    )
+                # Branch 1: sessions the caller owns (scoped to current workspace).
+                and_(Session.workspace_id == workspace_id, Session.user_id == user_id),
+                # Branch 2: sessions where the caller is an explicit member.
+                and_(
+                    Session.workspace_id == workspace_id,
+                    Session.id.in_(
+                        select(SessionMember.session_id).where(
+                            SessionMember.user_id == user_id
+                        )
+                    ),
+                ),
+                # Branch 3: org-visible feature sessions in accessible workspaces.
+                # Scoped strictly to feature_id<>'' — workspace threads excluded.
+                and_(
+                    Session.feature_id != "",
+                    Session.workspace_id.in_(feature_workspaces),
                 ),
             ),
         )
@@ -1218,7 +1305,9 @@ async def persist_mentions(
                         content=content,
                         actor_user_id=author_id,
                         actor_name=actor_name,
-                        feature_id=(getattr(session, "feature_id", "") or None) if session else None,
+                        feature_id=(getattr(session, "feature_id", "") or None)
+                        if session
+                        else None,
                     )
                     for m in user_mentions
                 ]
@@ -1566,10 +1655,14 @@ async def list_workspace_threads(
     user_id: str,
     limit: int = 50,
 ) -> List[Dict[str, Any]]:
-    """Return workspace-level threads the user owns or is a member of.
+    """Return workspace-level threads for the workspace, newest-first.
 
-    Workspace threads are kind='thread' rows with feature_id=''.
-    Non-members are excluded (own ∪ member-of filter).
+    Workspace threads are kind='thread' rows with feature_id=''. They are
+    org-public like channels (m3-chat-public-session): every non-archived
+    workspace thread is returned regardless of ownership/membership, matching
+    can_view_session's org-public policy for kind='thread' sessions.
+    ``user_id`` is accepted for interface stability but no longer filters the
+    result.
     """
     result = await db.execute(
         select(
@@ -1586,14 +1679,6 @@ async def list_workspace_threads(
             Session.archived == False,  # noqa: E712
             Session.kind == "thread",
             Session.feature_id == "",
-            or_(
-                Session.user_id == user_id,
-                Session.id.in_(
-                    select(SessionMember.session_id).where(
-                        SessionMember.user_id == user_id
-                    )
-                ),
-            ),
         )
         .order_by(Session.last_active_at.desc())
         .limit(limit)

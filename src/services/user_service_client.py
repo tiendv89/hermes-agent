@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import aiohttp
 
@@ -74,7 +74,9 @@ async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service org members lookup %s -> %s", url, resp.status)
+                    logger.warning(
+                        "user-service org members lookup %s -> %s", url, resp.status
+                    )
                     return {}
                 body = await resp.json()
     except Exception:
@@ -133,7 +135,9 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service users lookup %s -> %s", url, resp.status)
+                    logger.warning(
+                        "user-service users lookup %s -> %s", url, resp.status
+                    )
                     return resolved
                 body = await resp.json()
     except Exception:
@@ -188,6 +192,82 @@ async def get_org_role(
                 )
             data = await resp.json()
             return data.get("role")
+
+
+async def get_accessible_workspace_ids(
+    user_id: str,
+    org_id: str,
+) -> List[str]:
+    """Return the workspace IDs accessible to user_id within org_id.
+
+    Calls user-service's internal accessible-workspace-ids endpoint
+    (``AccessibleWorkspaceIDs`` in ``internal/organizations/organizations.go``).
+    Returns ``[]`` when USER_SERVICE_URL is unset (permissive dev mode), or on error.
+    """
+    if not org_id or not user_id:
+        return []
+
+    base_url = os.environ.get("USER_SERVICE_URL", "").rstrip("/")
+    if not base_url:
+        logger.debug(
+            "USER_SERVICE_URL not set — skipping accessible-workspace-ids for %s/%s",
+            org_id,
+            user_id,
+        )
+        return []
+
+    token = os.environ.get("USER_SERVICE_TOKEN", "")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    url = f"{base_url}/internal/accessible-workspace-ids"
+    params = {"org_id": org_id, "user_id": user_id}
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+            ) as resp:
+                if resp.status != 200:
+                    logger.warning(
+                        "user-service accessible-workspace-ids %s -> %s", url, resp.status
+                    )
+                    return []
+                body = await resp.json()
+    except Exception:
+        logger.exception(
+            "user-service accessible-workspace-ids lookup failed for %s/%s", org_id, user_id
+        )
+        return []
+
+    container = body.get("data", body) if isinstance(body, dict) else {}
+    ids = container.get("workspace_ids", []) if isinstance(container, dict) else []
+    return [str(wid) for wid in ids if wid]
+
+
+async def is_org_member(org_id: str, user_id: str) -> bool:
+    """Return True if user_id is a member (any role) of org_id.
+
+    Permissive when USER_SERVICE_URL is unset (dev mode) — returns True so
+    local tests and direct-call dev runs are not blocked. Returns False on
+    empty org_id/user_id or on unexpected errors.
+    """
+    base_url = os.environ.get("USER_SERVICE_URL", "")
+    if not base_url:
+        logger.debug(
+            "USER_SERVICE_URL not set — granting org membership for %s/%s (dev mode)",
+            org_id,
+            user_id,
+        )
+        return True
+    if not org_id or not user_id:
+        return False
+    try:
+        role = await get_org_role(org_id, user_id)
+        return role is not None
+    except Exception:
+        logger.exception(
+            "is_org_member check failed for org=%s user=%s", org_id, user_id
+        )
+        return False
 
 
 async def is_org_admin(
