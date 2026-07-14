@@ -150,6 +150,143 @@ async def test_list_member_sessions_scope():
 
 
 @pytest.mark.asyncio
+async def test_list_member_sessions_org_visible_feature_session():
+    """A non-member org user sees a feature session via the third branch.
+
+    list_member_sessions should include kind='thread' sessions with feature_id<>''
+    even when the caller has no session_members row, as long as the workspace is
+    in accessible_workspace_ids (or defaults to [workspace_id]).
+    """
+    from src.db.store import list_member_sessions
+
+    now = time.time()
+    # Feature session owned by a different user — non-member caller should still see it.
+    row_feature = MagicMock(
+        id="sess_feat_other",
+        title="Feature Chat",
+        feature_id="feat-xyz",
+        started_at=now - 100,
+        last_active_at=now - 5,
+        model="claude-sonnet",
+        kind="thread",
+    )
+
+    result_mock = MagicMock()
+    result_mock.all.return_value = [row_feature]
+
+    db = _mock_db()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    # Non-member caller (user_other) with the workspace listed as accessible.
+    sessions = await list_member_sessions(
+        db, "ws-1", "user_other", accessible_workspace_ids=["ws-1"]
+    )
+
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "sess_feat_other"
+    assert sessions[0]["feature_id"] == "feat-xyz"
+    assert sessions[0]["kind"] == "thread"
+
+
+@pytest.mark.asyncio
+async def test_list_member_sessions_feature_session_default_workspace():
+    """Org-visible feature sessions are included using the default workspace_id.
+
+    When accessible_workspace_ids is omitted, the third branch defaults to
+    [workspace_id], so feature sessions in the same workspace are always visible.
+    """
+    from src.db.store import list_member_sessions
+
+    now = time.time()
+    row_feature = MagicMock(
+        id="sess_feat_default",
+        title="Auto-visible",
+        feature_id="feat-auto",
+        started_at=now - 50,
+        last_active_at=now - 1,
+        model=None,
+        kind="thread",
+    )
+
+    result_mock = MagicMock()
+    result_mock.all.return_value = [row_feature]
+
+    db = _mock_db()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    # No accessible_workspace_ids — defaults to [workspace_id].
+    sessions = await list_member_sessions(db, "ws-1", "user_b")
+
+    assert len(sessions) == 1
+    assert sessions[0]["id"] == "sess_feat_default"
+    assert sessions[0]["feature_id"] == "feat-auto"
+
+
+@pytest.mark.asyncio
+async def test_list_member_sessions_workspace_thread_non_member_excluded():
+    """Workspace Team Chat threads (feature_id='') are not included for non-members.
+
+    Branch 3 is scoped strictly to feature_id<>'' — a workspace thread must still
+    require explicit membership (own or session_members row).
+    """
+    from src.db.store import list_member_sessions
+
+    # The DB returns empty — a workspace thread without membership would not match.
+    result_mock = MagicMock()
+    result_mock.all.return_value = []
+
+    db = _mock_db()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    sessions = await list_member_sessions(
+        db, "ws-1", "user_non_member", accessible_workspace_ids=["ws-1"]
+    )
+
+    # The DB returned nothing (as it would for a non-member on a workspace thread).
+    assert sessions == []
+
+
+@pytest.mark.asyncio
+async def test_list_member_sessions_multi_workspace_feature_sessions():
+    """accessible_workspace_ids enables cross-workspace feature session listing."""
+    from src.db.store import list_member_sessions
+
+    now = time.time()
+    row_ws1 = MagicMock(
+        id="sess_ws1",
+        title="WS1 Feature",
+        feature_id="feat-ws1",
+        started_at=now - 200,
+        last_active_at=now - 20,
+        model=None,
+        kind="thread",
+    )
+    row_ws2 = MagicMock(
+        id="sess_ws2",
+        title="WS2 Feature",
+        feature_id="feat-ws2",
+        started_at=now - 300,
+        last_active_at=now - 30,
+        model=None,
+        kind="thread",
+    )
+
+    result_mock = MagicMock()
+    result_mock.all.return_value = [row_ws1, row_ws2]
+
+    db = _mock_db()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    sessions = await list_member_sessions(
+        db, "ws-1", "user_org", accessible_workspace_ids=["ws-1", "ws-2"]
+    )
+
+    ids = {s["id"] for s in sessions}
+    assert "sess_ws1" in ids
+    assert "sess_ws2" in ids
+
+
+@pytest.mark.asyncio
 async def test_is_member_true():
     """is_member returns True when the membership row exists."""
     from src.db.store import is_member
