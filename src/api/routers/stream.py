@@ -106,7 +106,9 @@ async def stream_thread(
             org_id = ""
         caller_is_workspace_member = await is_org_member(org_id, user_id)
 
-    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
+    authorized = await can_view_session(
+        db, session, user_id, caller_is_workspace_member
+    )
     if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
@@ -135,7 +137,9 @@ async def stream_thread(
     if since_id is not None:
         replay_messages = await get_messages_since(db, session_id, since_id)
         # Enrich author display info so replayed messages show real names.
-        await attach_authors(getattr(session, "workspace_id", "") or "", replay_messages)
+        await attach_authors(
+            getattr(session, "workspace_id", "") or "", replay_messages
+        )
 
     async def event_generator():
         try:
@@ -220,7 +224,9 @@ async def post_typing(
             org_id = ""
         caller_is_workspace_member = await is_org_member(org_id, user_id)
 
-    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
+    authorized = await can_view_session(
+        db, session, user_id, caller_is_workspace_member
+    )
     if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 

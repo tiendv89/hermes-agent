@@ -13,7 +13,15 @@ from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from .models import Message, MessageMention, MessageReaction, ModelCatalog, Session, SessionMember, SessionRead
+from .models import (
+    Message,
+    MessageMention,
+    MessageReaction,
+    ModelCatalog,
+    Session,
+    SessionMember,
+    SessionRead,
+)
 from src.services.author_resolver import author_for
 from src.services.notification_client import (
     build_channel_message_payload,
@@ -47,7 +55,8 @@ async def init_db(engine: AsyncEngine) -> None:
             if path.name in applied:
                 continue
             sql_no_comments = "\n".join(
-                line for line in path.read_text(encoding="utf-8").splitlines()
+                line
+                for line in path.read_text(encoding="utf-8").splitlines()
                 if not line.strip().startswith("--")
             )
             for stmt in sql_no_comments.split(";"):
@@ -323,7 +332,11 @@ async def _emit_message_notifications(
     <text>" one — otherwise a reply looks identical to an ordinary channel
     message in the activity feed.
     """
-    reply_kind = "thread" if thread_root_id is not None else ("message" if reply_to_message_id is not None else None)
+    reply_kind = (
+        "thread"
+        if thread_root_id is not None
+        else ("message" if reply_to_message_id is not None else None)
+    )
     try:
         session = await db.get(Session, session_id)
         if session is None:
@@ -473,7 +486,13 @@ async def append_message(
         # dm: notify the other party in a DM session.
         if content:
             await _emit_message_notifications(
-                db, session_id, message_id, author_id, content, reply_to_message_id=reply_to_message_id, thread_root_id=thread_root_id
+                db,
+                session_id,
+                message_id,
+                author_id,
+                content,
+                reply_to_message_id=reply_to_message_id,
+                thread_root_id=thread_root_id,
             )
 
     return message_id
@@ -725,9 +744,7 @@ async def get_thread_replies(
         conditions.append(Message.id > since)
 
     result = await db.execute(
-        select(Message)
-        .where(*conditions)
-        .order_by(Message.created_at, Message.id)
+        select(Message).where(*conditions).order_by(Message.created_at, Message.id)
     )
     messages = []
     for msg in result.scalars().all():
@@ -792,7 +809,9 @@ async def get_thread_reply_summaries(
         )
         .group_by(Message.thread_root_id)
     )
-    counts: Dict[int, int] = {row.thread_root_id: row.reply_count for row in result.all()}
+    counts: Dict[int, int] = {
+        row.thread_root_id: row.reply_count for row in result.all()
+    }
 
     # Fetch the most recent replies per thread root to extract recent repliers.
     # One query with a window function alternative; we use a simpler approach:
@@ -1271,7 +1290,9 @@ async def persist_mentions(
                         content=content,
                         actor_user_id=author_id,
                         actor_name=actor_name,
-                        feature_id=(getattr(session, "feature_id", "") or None) if session else None,
+                        feature_id=(getattr(session, "feature_id", "") or None)
+                        if session
+                        else None,
                     )
                     for m in user_mentions
                 ]

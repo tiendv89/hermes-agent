@@ -76,7 +76,9 @@ async def test_can_view_session_owner_always_authorized():
     db = _mock_db()
     session = _make_session(user_id="owner", kind="thread", feature_id="feat-1")
 
-    result = await can_view_session(db, session, "owner", caller_is_workspace_member=False)
+    result = await can_view_session(
+        db, session, "owner", caller_is_workspace_member=False
+    )
 
     assert result is True
     db.get.assert_not_called()  # no DB lookup needed for owner
@@ -177,6 +179,7 @@ async def test_is_org_member_permissive_without_user_service_url():
 
     with patch.dict("os.environ", {}, clear=False):
         import os
+
         os.environ.pop("USER_SERVICE_URL", None)
         result = await is_org_member("org-1", "user-a")
 
@@ -280,12 +283,22 @@ async def test_stream_feature_session_org_member_authorized_and_implicit_join():
     fake_bus.unsubscribe_raw = MagicMock()
 
     with (
-        patch("src.api.routers.stream.get_session", new=AsyncMock(return_value=feature_session)),
-        patch("src.api.routers.stream.get_workspace_organization_id", new=AsyncMock(return_value="org-1")),
+        patch(
+            "src.api.routers.stream.get_session",
+            new=AsyncMock(return_value=feature_session),
+        ),
+        patch(
+            "src.api.routers.stream.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
         patch("src.api.routers.stream.is_org_member", new=AsyncMock(return_value=True)),
-        patch("src.api.routers.stream.can_view_session", new=AsyncMock(return_value=True)),
+        patch(
+            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=True)
+        ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
-        patch("src.api.routers.stream.get_messages_since", new=AsyncMock(return_value=[])),
+        patch(
+            "src.api.routers.stream.get_messages_since", new=AsyncMock(return_value=[])
+        ),
         patch("src.api.routers.stream.attach_authors", new=AsyncMock()),
         patch("src.api.routers.stream.get_bus", return_value=fake_bus),
     ):
@@ -323,10 +336,20 @@ async def test_stream_feature_session_non_org_member_rejected():
     identity.org_id = "org-1"
 
     with (
-        patch("src.api.routers.stream.get_session", new=AsyncMock(return_value=feature_session)),
-        patch("src.api.routers.stream.get_workspace_organization_id", new=AsyncMock(return_value="org-1")),
-        patch("src.api.routers.stream.is_org_member", new=AsyncMock(return_value=False)),
-        patch("src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.stream.get_session",
+            new=AsyncMock(return_value=feature_session),
+        ),
+        patch(
+            "src.api.routers.stream.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.api.routers.stream.is_org_member", new=AsyncMock(return_value=False)
+        ),
+        patch(
+            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)
+        ),
     ):
         with pytest.raises(HTTPException) as exc_info:
             await stream_thread(
@@ -358,8 +381,12 @@ async def test_stream_workspace_thread_non_member_no_implicit_join():
     identity.org_id = "org-1"
 
     with (
-        patch("src.api.routers.stream.get_session", new=AsyncMock(return_value=ws_thread)),
-        patch("src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.stream.get_session", new=AsyncMock(return_value=ws_thread)
+        ),
+        patch(
+            "src.api.routers.stream.can_view_session", new=AsyncMock(return_value=False)
+        ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -403,15 +430,31 @@ async def test_send_message_feature_session_org_member_gets_implicit_join():
     fake_bus.publish = MagicMock()
 
     with (
-        patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=feature_session)),
-        patch("src.api.routers.messages.get_workspace_organization_id", new=AsyncMock(return_value="org-1")),
-        patch("src.api.routers.messages.is_org_member", new=AsyncMock(return_value=True)),
-        patch("src.api.routers.messages.can_view_session", new=AsyncMock(return_value=True)),
+        patch(
+            "src.api.routers.messages.get_session",
+            new=AsyncMock(return_value=feature_session),
+        ),
+        patch(
+            "src.api.routers.messages.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.api.routers.messages.is_org_member", new=AsyncMock(return_value=True)
+        ),
+        patch(
+            "src.api.routers.messages.can_view_session",
+            new=AsyncMock(return_value=True),
+        ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
         patch("src.api.routers.messages.parse_mention_handles", return_value=set()),
         patch("src.api.routers.messages.resolve_mentions", return_value=[]),
-        patch("src.api.routers.messages.mention_candidates", new=AsyncMock(return_value={})),
-        patch("src.api.routers.messages.append_message", new=AsyncMock(return_value=42)),
+        patch(
+            "src.api.routers.messages.mention_candidates",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "src.api.routers.messages.append_message", new=AsyncMock(return_value=42)
+        ),
         patch("src.api.routers.messages.touch_session", new=AsyncMock()),
         patch("src.api.routers.messages.set_session_title", new=AsyncMock()),
         patch("src.api.routers.messages.author_for", new=AsyncMock(return_value={})),
@@ -455,9 +498,18 @@ async def test_send_message_workspace_thread_non_member_rejected():
     request = MagicMock()
 
     with (
-        patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=ws_thread)),
-        patch("src.api.routers.messages.get_workspace_organization_id", new=AsyncMock(return_value="org-1")),
-        patch("src.api.routers.messages.can_view_session", new=AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.messages.get_session",
+            new=AsyncMock(return_value=ws_thread),
+        ),
+        patch(
+            "src.api.routers.messages.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.api.routers.messages.can_view_session",
+            new=AsyncMock(return_value=False),
+        ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
     ):
         with pytest.raises(HTTPException) as exc_info:
@@ -494,10 +546,21 @@ async def test_send_message_feature_session_non_org_member_rejected():
     request = MagicMock()
 
     with (
-        patch("src.api.routers.messages.get_session", new=AsyncMock(return_value=feature_session)),
-        patch("src.api.routers.messages.get_workspace_organization_id", new=AsyncMock(return_value="org-1")),
-        patch("src.api.routers.messages.is_org_member", new=AsyncMock(return_value=False)),
-        patch("src.api.routers.messages.can_view_session", new=AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.messages.get_session",
+            new=AsyncMock(return_value=feature_session),
+        ),
+        patch(
+            "src.api.routers.messages.get_workspace_organization_id",
+            new=AsyncMock(return_value="org-1"),
+        ),
+        patch(
+            "src.api.routers.messages.is_org_member", new=AsyncMock(return_value=False)
+        ),
+        patch(
+            "src.api.routers.messages.can_view_session",
+            new=AsyncMock(return_value=False),
+        ),
     ):
         with pytest.raises(HTTPException) as exc_info:
             await send_message(

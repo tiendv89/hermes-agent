@@ -74,7 +74,9 @@ async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service org members lookup %s -> %s", url, resp.status)
+                    logger.warning(
+                        "user-service org members lookup %s -> %s", url, resp.status
+                    )
                     return {}
                 body = await resp.json()
     except Exception:
@@ -133,7 +135,9 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
                 url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
             ) as resp:
                 if resp.status != 200:
-                    logger.warning("user-service users lookup %s -> %s", url, resp.status)
+                    logger.warning(
+                        "user-service users lookup %s -> %s", url, resp.status
+                    )
                     return resolved
                 body = await resp.json()
     except Exception:

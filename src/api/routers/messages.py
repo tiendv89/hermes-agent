@@ -113,7 +113,9 @@ def _image_urls_for(workspace_id: str, image_ids) -> List[str]:
             image_ids = []
     if not isinstance(image_ids, list):
         return []
-    return [f"/api/workspaces/{workspace_id}/images/{image_id}" for image_id in image_ids]
+    return [
+        f"/api/workspaces/{workspace_id}/images/{image_id}" for image_id in image_ids
+    ]
 
 
 def _attach_image_urls(messages: list, workspace_id: str) -> None:
@@ -162,7 +164,9 @@ def _agent_reply_thread_context(session, message) -> tuple:
 @router.get("/threads/{session_id}/messages")
 async def get_thread_messages(
     session_id: str,
-    since: str = Query("", description="Return only messages after this message id (cursor)"),
+    since: str = Query(
+        "", description="Return only messages after this message id (cursor)"
+    ),
     _identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
@@ -188,7 +192,9 @@ async def get_thread_messages(
     await attach_authors(workspace_id, messages)
     _attach_image_urls(messages, workspace_id)
     await _attach_forwarded_authors(messages, db)
-    await _attach_reaction_users([m["reactions"] for m in messages if m.get("reactions")])
+    await _attach_reaction_users(
+        [m["reactions"] for m in messages if m.get("reactions")]
+    )
 
     # Attach thread_summary to each top-level message (reply count + recent repliers).
     if messages:
@@ -216,7 +222,9 @@ async def send_message(
     """
     # Empty text is fine for an image-only send — must have at least one or the other.
     if (not body.content or not body.content.strip()) and not body.image_ids:
-        raise HTTPException(status_code=400, detail="content or image_ids must be non-empty.")
+        raise HTTPException(
+            status_code=400, detail="content or image_ids must be non-empty."
+        )
 
     user_id = identity.user_id
     if not user_id:
@@ -230,11 +238,16 @@ async def send_message(
     # Resolve workspace and org context used for both auth and agent dispatch.
     ws_id = getattr(session, "workspace_id", "") or ""
     try:
-        org_id = await get_workspace_organization_id(
-            ws_id, user_id=identity.user_id, org_id=identity.org_id
-        ) or ""
+        org_id = (
+            await get_workspace_organization_id(
+                ws_id, user_id=identity.user_id, org_id=identity.org_id
+            )
+            or ""
+        )
     except Exception:
-        logger.exception("workflow-backend org_id lookup failed for workspace %s", ws_id)
+        logger.exception(
+            "workflow-backend org_id lookup failed for workspace %s", ws_id
+        )
         org_id = ""
 
     # For feature sessions (kind='thread' AND feature_id != ''), any org member
@@ -246,7 +259,9 @@ async def send_message(
     if kind_val == "thread" and feature_id_str:
         caller_is_workspace_member = await is_org_member(org_id, user_id)
 
-    authorized = await can_view_session(db, session, user_id, caller_is_workspace_member)
+    authorized = await can_view_session(
+        db, session, user_id, caller_is_workspace_member
+    )
     if not authorized:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
@@ -268,7 +283,9 @@ async def send_message(
         try:
             reply_to_id = int(body.reply_to_message_id)
         except ValueError:
-            raise HTTPException(status_code=400, detail="reply_to_message_id must be a numeric id.")
+            raise HTTPException(
+                status_code=400, detail="reply_to_message_id must be a numeric id."
+            )
 
     message_id = await append_message(
         db,
@@ -295,7 +312,9 @@ async def send_message(
 
     # Auto-title the session from the first message if it has no title yet.
     if not getattr(session, "title", None):
-        first_line = body.content.strip().splitlines()[0] if body.content.strip() else ""
+        first_line = (
+            body.content.strip().splitlines()[0] if body.content.strip() else ""
+        )
         await set_session_title(db, session_id, first_line[:60] or "New chat")
 
     # --- Fan-out to SSE stream subscribers ---
@@ -314,9 +333,13 @@ async def send_message(
                 "author": author,
                 "created_at": _time.time(),
                 "mentions": resolved_mentions,
-                "reply_to_message_id": str(reply_to_id) if reply_to_id is not None else None,
+                "reply_to_message_id": str(reply_to_id)
+                if reply_to_id is not None
+                else None,
                 "thread_root_id": None,
-                "image_urls": _image_urls_for(ws_id, body.image_ids) if body.image_ids else [],
+                "image_urls": _image_urls_for(ws_id, body.image_ids)
+                if body.image_ids
+                else [],
             },
         },
     )
@@ -324,13 +347,19 @@ async def send_message(
     # --- Dispatch gate ---
     if not _should_trigger_agent(session, has_agent_mention):
         return JSONResponse(
-            {"status": "accepted", "message_id": str(message_id), "agent_triggered": False},
+            {
+                "status": "accepted",
+                "message_id": str(message_id),
+                "agent_triggered": False,
+            },
             status_code=202,
         )
 
     # --- Trigger agent (with coalescing) ---
     chosen_model = (
-        (body.model or "").strip() or getattr(session, "model", None) or await default_model(db)
+        (body.model or "").strip()
+        or getattr(session, "model", None)
+        or await default_model(db)
     )
     resolved = await resolve_model(db, chosen_model)
     if resolved["model"] != getattr(session, "model", None):
@@ -344,7 +373,9 @@ async def send_message(
     feature_id = getattr(session, "feature_id", "") or ""
 
     _trigger_msg = SimpleNamespace(id=message_id, thread_root_id=None)
-    thread_root_id, agent_reply_to_id = _agent_reply_thread_context(session, _trigger_msg)
+    thread_root_id, agent_reply_to_id = _agent_reply_thread_context(
+        session, _trigger_msg
+    )
 
     await schedule_agent_turn(
         session_id=session_id,
@@ -435,7 +466,12 @@ async def _attach_reaction_users(reaction_lists: list) -> None:
     Replaces ``userIds`` with a resolved ``users: [{id, name}]`` list in place, powering
     a "Name1, Name2 reacted with :emoji:" hover tooltip client-side.
     """
-    all_ids = {uid for reactions in reaction_lists for r in reactions for uid in r.get("userIds", [])}
+    all_ids = {
+        uid
+        for reactions in reaction_lists
+        for r in reactions
+        for uid in r.get("userIds", [])
+    }
     users = await list_users_by_ids(list(all_ids)) if all_ids else {}
 
     def _name_for(uid: str) -> str:
@@ -478,7 +514,9 @@ async def forward_message(
         raise HTTPException(status_code=400, detail="Missing caller identity.")
 
     if not body.destination_session_ids:
-        raise HTTPException(status_code=400, detail="destination_session_ids must be non-empty.")
+        raise HTTPException(
+            status_code=400, detail="destination_session_ids must be non-empty."
+        )
 
     try:
         src_id = int(message_id)
@@ -511,7 +549,9 @@ async def forward_message(
 
     # Resolve display info once — same for every destination — for the SSE fan-out below.
     forwarder_author = await author_for("", user_id)
-    original_author = await author_for("", source_msg.author_id) if source_msg.author_id else None
+    original_author = (
+        await author_for("", source_msg.author_id) if source_msg.author_id else None
+    )
 
     # All destinations valid — safe to write
     new_message_ids = []
@@ -591,7 +631,9 @@ async def toggle_reaction(
 
     # Verify message exists and fetch its session for membership check.
     result = await db.execute(
-        select(MessageModel.id, MessageModel.session_id).where(MessageModel.id == msg_id)
+        select(MessageModel.id, MessageModel.session_id).where(
+            MessageModel.id == msg_id
+        )
     )
     msg_row = result.one_or_none()
     if msg_row is None:
@@ -601,7 +643,9 @@ async def toggle_reaction(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
     owner_id = getattr(session, "user_id", None) or ""
-    caller_is_member = (user_id == owner_id) or await is_member(db, msg_row.session_id, user_id)
+    caller_is_member = (user_id == owner_id) or await is_member(
+        db, msg_row.session_id, user_id
+    )
     if not caller_is_member:
         raise HTTPException(status_code=403, detail="Not a member of this thread.")
 
@@ -650,7 +694,9 @@ async def edit_message_endpoint(
     if msg is None:
         raise HTTPException(status_code=404, detail="Message not found.")
     if msg.author_id != user_id:
-        raise HTTPException(status_code=403, detail="Only the author can edit this message.")
+        raise HTTPException(
+            status_code=403, detail="Only the author can edit this message."
+        )
 
     await edit_message(db, msg_id, body.content)
     updated = await get_message(db, msg_id)
@@ -659,7 +705,11 @@ async def edit_message_endpoint(
         updated.session_id,
         {
             "event": "message.edited",
-            "data": {"message_id": str(updated.id), "content": updated.content, "edited_at": updated.edited_at},
+            "data": {
+                "message_id": str(updated.id),
+                "content": updated.content,
+                "edited_at": updated.edited_at,
+            },
         },
     )
 
@@ -702,7 +752,9 @@ async def delete_message_endpoint(
     if msg is None:
         raise HTTPException(status_code=404, detail="Message not found.")
     if msg.author_id != user_id:
-        raise HTTPException(status_code=403, detail="Only the author can delete this message.")
+        raise HTTPException(
+            status_code=403, detail="Only the author can delete this message."
+        )
 
     await soft_delete_message(db, msg_id)
 
