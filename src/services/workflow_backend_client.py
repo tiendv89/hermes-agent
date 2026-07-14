@@ -327,11 +327,22 @@ async def get_workspace_organization_id(
 ) -> str | None:
     """Return the organization_id owning workspace_id, or None if not found.
 
-    Replaces plugins.db.get_workspace_organization_id.
+    Replaces plugins.db.get_workspace_organization_id. Deliberately calls the
+    trusted service-to-service ``/internal/workspaces/:id/organization`` route
+    (the same one workflow-backend built for storage-service to verify
+    workspace ownership) rather than the user-facing ``/api/workspaces/:id``.
+    The ``/api`` route is scoped to the caller's X-Accessible-Org-Ids — since
+    the whole point of this call is discovering an *unknown* org from a
+    workspace id, scoping it to orgs already known to the caller is circular:
+    it returns "not found" for a workspace whose owning org isn't already in
+    the caller's accessible list, even when the workspace genuinely exists.
     """
     try:
         data = await _call(
-            "GET", f"/api/workspaces/{workspace_id}", user_id=user_id, org_id=org_id
+            "GET",
+            f"/internal/workspaces/{workspace_id}/organization",
+            user_id=user_id,
+            org_id=org_id,
         )
     except WorkflowBackendError as exc:
         if exc.status == 404:

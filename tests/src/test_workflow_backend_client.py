@@ -621,11 +621,20 @@ class TestGetWorkspaceOrganizationIdAndSlug:
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
 
         fake_resp = _fake_response(200, {"success": True, "data": {"organization_id": "org-1"}})
+        fake_session = _fake_request_session(fake_resp)
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
-            return_value=_fake_request_session(fake_resp),
+            return_value=fake_session,
         ):
             assert await mod.get_workspace_organization_id("ws-1", user_id="u", org_id="o") == "org-1"
+
+        # Must hit the unscoped internal service-to-service route, not the
+        # user-facing /api/workspaces/:id (which filters by the caller's
+        # X-Accessible-Org-Ids and would 404 a real workspace whose owning
+        # org isn't already in that list — the exact bug this call exists to
+        # resolve in the first place).
+        called_url = fake_session.request.call_args.args[1]
+        assert called_url == "http://backend:8080/internal/workspaces/ws-1/organization"
 
     @pytest.mark.asyncio
     async def test_organization_id_none_when_not_found(self, monkeypatch):
