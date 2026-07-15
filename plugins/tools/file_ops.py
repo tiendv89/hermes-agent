@@ -3,13 +3,11 @@
 These tools mirror how read_file already accepts an arbitrary filename beyond
 the two canonical documents (product_spec / technical_design). They write through
 storage_service_client.py, the same client used by write_product_spec /
-write_technical_design. The ts/git-backed path (document_repo.py) is deliberately
-NOT extended here — ts ownership is being retired.
+write_technical_design.
 
 feature_id is optional. When one is given (explicitly or via context), the file
-is written to that feature's document folder — go-owned features only. With no
-feature_id, the file is written directly under the workspace root instead (no
-owning feature, no go-owner check).
+is written to that feature's document folder. With no feature_id, the file is
+written directly under the workspace root instead.
 
 See technical-design.md §Chosen Design for the full rationale (Option B).
 """
@@ -19,7 +17,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List
 
-from ..storage_service_client import (
+from plugins.clients.storage_service_client import (
     StorageServiceError,
     read_document_content,
     write_document_content,

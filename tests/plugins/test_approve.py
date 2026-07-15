@@ -1,9 +1,7 @@
 """
 Covers:
-  - Helper functions: _find_open_prs, _merge_pr, _ensure_docs_on_base (ts-only
-    helpers — retained for the git-based approval path, unused by go)
-  - handle() for go + tasks + approve: full happy path (DB update, then
-    create/activate tasks via storage-service-read tasks.md — no git at all)
+  - handle() for tasks + approve: full happy path (DB update, then
+    create/activate tasks via storage-service-read tasks.md)
   - handle() resumable: already-approved re-run still runs DB update + task
     creation/activation idempotently
   - handle() step c: DB update called with correct args
@@ -11,9 +9,7 @@ Covers:
   - handle() step d: tasks_already_exist → safe no-op (ok=True)
   - handle() step d: other reason code → error relayed to chat
   - handle() step d: missing/unreadable tasks.md → error
-  - Earlier stages (product_spec, technical_design) for go owner: DB-only, unchanged
-  - go features never touch git anywhere in the tasks-approve pipeline
-  - ts feature: existing behavior unchanged (git commit, no DB pipeline)
+  - Earlier stages (product_spec, technical_design): DB-only, unchanged
 """
 
 from __future__ import annotations
@@ -22,7 +18,7 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -58,13 +54,8 @@ def _clear_env(monkeypatch):
 # Constants
 # ---------------------------------------------------------------------------
 
-_GITHUB_TOKEN = "ghp_test"
 _WORKSPACE_ID = "ws-test"
 _FEATURE_ID = "my-feature"
-_OWNER = "testorg"
-_REPO = "testws"
-_BASE_BRANCH = "main"
-_FEATURE_BRANCH = "feature/my-feature"
 _ACTOR = "agent@example.com"
 
 _TASKS_MD = """\
@@ -111,18 +102,6 @@ _STAGES_TASKS_APPROVED = {
     }
 }
 
-_STATUS_SHA = "sha_status_123"
-_TASKS_MD_SHA = "sha_tasks_456"
-_COMMIT_SHA = "newcommit789"
-
-
-def _make_workspace_context():
-    return {
-        "management_repo": _REPO,
-        "repos": [{"id": _REPO, "github": f"https://github.com/{_OWNER}/{_REPO}"}],
-    }
-
-
 def _make_feature_detail(owner="go", stages=None):
     return {
         "feature_name": _FEATURE_ID,
@@ -134,19 +113,6 @@ def _make_feature_detail(owner="go", stages=None):
         "init_pr_url": None,
         "stages": stages if stages is not None else {},
     }
-
-
-def _make_read_document(status_content="", tasks_content=_TASKS_MD):
-    """Return a side_effect for read_document (ts-only git path) that dispatches by path suffix."""
-
-    def _read_doc(gh_owner, gh_repo, branch, path, github_token):
-        if path.endswith("tasks.md"):
-            return {"content": tasks_content, "sha": _TASKS_MD_SHA}
-        if path.endswith("status.yaml"):
-            return {"content": status_content, "sha": _STATUS_SHA}
-        return {"content": "", "sha": None}
-
-    return _read_doc
 
 
 def _load_approve_mod():
@@ -169,175 +135,10 @@ def _load_approve_mod():
 
 
 # ---------------------------------------------------------------------------
-# _find_open_prs / _merge_pr / _ensure_docs_on_base
+# Shared helper for tasks-approve handle() tests
 #
-# These are generic GitHub PR-merge helpers used by the ts/git approval path
-# (via document_repo elsewhere). They're no longer called from the go pipeline
-# (go features have no init PR to merge — workflow-backend stopped creating
-# one), but remain in module for potential ts-side reuse and stay covered here
-# as standalone units.
-# ---------------------------------------------------------------------------
-
-
-class TestFindOpenPrs:
-    def test_calls_github_api_with_correct_params(self):
-        mod = _load_approve_mod()
-
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = [
-            {"number": 1, "html_url": "https://github.com/x/y/pull/1"}
-        ]
-
-        with patch("requests.get", return_value=mock_resp) as mock_get:
-            result = mod._find_open_prs(
-                _OWNER, _REPO, _FEATURE_BRANCH, _BASE_BRANCH, _GITHUB_TOKEN
-            )
-
-        assert len(result) == 1
-        assert result[0]["number"] == 1
-        params = mock_get.call_args[1]["params"]
-        assert params["state"] == "open"
-        assert _FEATURE_BRANCH in params["head"]
-        assert params["base"] == _BASE_BRANCH
-
-    def test_returns_empty_list_when_no_prs(self):
-        mod = _load_approve_mod()
-
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = []
-
-        with patch("requests.get", return_value=mock_resp):
-            result = mod._find_open_prs(
-                _OWNER, _REPO, _FEATURE_BRANCH, _BASE_BRANCH, _GITHUB_TOKEN
-            )
-
-        assert result == []
-
-    def test_raises_on_http_error(self):
-        mod = _load_approve_mod()
-
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status.side_effect = Exception("403 Forbidden")
-
-        with patch("requests.get", return_value=mock_resp):
-            with pytest.raises(Exception, match="403"):
-                mod._find_open_prs(
-                    _OWNER, _REPO, _FEATURE_BRANCH, _BASE_BRANCH, _GITHUB_TOKEN
-                )
-
-
-class TestMergePr:
-    def test_calls_github_merge_api(self):
-        mod = _load_approve_mod()
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.raise_for_status = MagicMock()
-
-        with patch("requests.put", return_value=mock_resp) as mock_put:
-            mod._merge_pr(_OWNER, _REPO, 42, _GITHUB_TOKEN)
-
-        url = mock_put.call_args[0][0]
-        assert "pulls/42/merge" in url
-
-    def test_raises_on_405_not_mergeable(self):
-        mod = _load_approve_mod()
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 405
-        mock_resp.text = "Pull Request is not mergeable"
-
-        with patch("requests.put", return_value=mock_resp):
-            with pytest.raises(RuntimeError, match="not mergeable"):
-                mod._merge_pr(_OWNER, _REPO, 42, _GITHUB_TOKEN)
-
-    def test_raises_on_409_conflict(self):
-        mod = _load_approve_mod()
-
-        mock_resp = MagicMock()
-        mock_resp.status_code = 409
-        mock_resp.text = "Merge conflict"
-
-        with patch("requests.put", return_value=mock_resp):
-            with pytest.raises(RuntimeError, match="conflict"):
-                mod._merge_pr(_OWNER, _REPO, 42, _GITHUB_TOKEN)
-
-
-class TestEnsureDocsOnBase:
-    def _run(self, base_status, open_prs, merge_raises=None):
-        mod = _load_approve_mod()
-
-        merge_mock = MagicMock()
-        if merge_raises:
-            merge_mock.side_effect = merge_raises
-
-        with (
-            patch.object(mod, "_read_status_yaml_on_branch", return_value=base_status),
-            patch.object(mod, "_find_open_prs", return_value=open_prs),
-            patch.object(mod, "_merge_pr", merge_mock),
-        ):
-            result = mod._ensure_docs_on_base(
-                _OWNER,
-                _REPO,
-                _FEATURE_BRANCH,
-                _BASE_BRANCH,
-                f"docs/features/{_FEATURE_ID}/status.yaml",
-                _GITHUB_TOKEN,
-            )
-
-        return result, merge_mock
-
-    def test_skips_when_base_already_has_approved_docs(self):
-        base_status = {"stages": {"tasks": {"review_status": "approved"}}}
-        result, merge_mock = self._run(base_status=base_status, open_prs=[])
-        assert result is None
-        merge_mock.assert_not_called()
-
-    def test_merges_single_open_pr(self):
-        open_prs = [{"number": 5, "html_url": "https://github.com/x/y/pull/5"}]
-        result, merge_mock = self._run(base_status=None, open_prs=open_prs)
-        assert result is None
-        merge_mock.assert_called_once_with(_OWNER, _REPO, 5, _GITHUB_TOKEN)
-
-    def test_returns_error_on_zero_prs(self):
-        result, _ = self._run(base_status=None, open_prs=[])
-        assert result is not None
-        assert "No open PR" in result
-        assert _FEATURE_BRANCH in result
-        assert _BASE_BRANCH in result
-
-    def test_returns_error_on_multiple_prs(self):
-        open_prs = [
-            {"number": 3, "html_url": "https://github.com/x/y/pull/3"},
-            {"number": 7, "html_url": "https://github.com/x/y/pull/7"},
-        ]
-        result, _ = self._run(base_status=None, open_prs=open_prs)
-        assert result is not None
-        assert "Multiple" in result
-        assert "#3" in result
-        assert "#7" in result
-
-    def test_returns_error_on_merge_failure(self):
-        open_prs = [{"number": 5, "html_url": "https://github.com/x/y/pull/5"}]
-        result, _ = self._run(
-            base_status=None, open_prs=open_prs, merge_raises=RuntimeError("conflict")
-        )
-        assert result is not None
-
-    def test_error_includes_rerun_guidance(self):
-        result, _ = self._run(base_status=None, open_prs=[])
-        assert "re-run" in result.lower() or "Re-run" in result
-
-
-# ---------------------------------------------------------------------------
-# Shared helper for go-tasks-approve handle() tests
-#
-# go features track status via get_feature_detail's "stages" field (DB-backed)
-# and read tasks.md from storage-service — no git access at all. read_document
-# / commit_to_branch / _commit_files are stubbed to raise if called, so any
-# accidental git touch fails the test loudly instead of silently mocking through.
+# Features track status via get_feature_detail's "stages" field (DB-backed)
+# and read tasks.md from storage-service.
 # ---------------------------------------------------------------------------
 
 
@@ -347,7 +148,6 @@ def _run_go_tasks_approve_handle(
     stages=None,
     tasks_content=_TASKS_MD,
     create_tasks_side_effect=None,
-    commit_files_sha=_COMMIT_SHA,
     activated_tasks=None,
     update_feature_stage_raises=None,
     owner="go",
@@ -359,9 +159,7 @@ def _run_go_tasks_approve_handle(
     if activated_tasks is None:
         activated_tasks = ["T1"]
 
-    monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
     monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-    monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
     update_mock = AsyncMock()
     if update_feature_stage_raises:
@@ -383,25 +181,11 @@ def _run_go_tasks_approve_handle(
     mod = _load_approve_mod()
 
     # Patch module-level imports in approve's namespace
-    mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
     mod.get_feature_detail = AsyncMock(return_value=_make_feature_detail(owner, stages))
     mod.update_feature_stage = update_mock
     mod.read_document_content = read_content_mock
-    mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
     mod._run_async_create_tasks = create_mock
     mod._activate_tasks_db = activate_mock
-
-    # go features must never touch git — fail loudly (not silently) if they do.
-    mod.read_document = MagicMock(
-        side_effect=AssertionError(
-            "git read_document must not be called for go features"
-        )
-    )
-    mod.commit_to_branch = MagicMock(
-        side_effect=AssertionError(
-            "git commit_to_branch must not be called for go features"
-        )
-    )
 
     result = mod.handle(
         stage="tasks",
@@ -654,15 +438,13 @@ class TestGoTasksApproveStepDMissingTasksMd:
 
 
 # ---------------------------------------------------------------------------
-# handle() — earlier stages for go owner: DB-only (behavior unchanged)
+# handle() — earlier stages: DB-only
 # ---------------------------------------------------------------------------
 
 
 class TestGoEarlierStagesDbOnly:
     def _run_handle(self, monkeypatch, *, stage, action="approve"):
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
-        monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
 
         stages = {
             stage: {
@@ -677,20 +459,11 @@ class TestGoEarlierStagesDbOnly:
         create_mock = MagicMock()
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
         mod.get_feature_detail = AsyncMock(
             return_value=_make_feature_detail("go", stages)
         )
         mod.update_feature_stage = update_mock
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         mod._run_async_create_tasks = create_mock
-        # go features must never touch git.
-        mod.read_document = MagicMock(
-            side_effect=AssertionError("git must not be touched for go features")
-        )
-        mod.commit_to_branch = MagicMock(
-            side_effect=AssertionError("git must not be touched for go features")
-        )
 
         result = mod.handle(
             stage=stage,

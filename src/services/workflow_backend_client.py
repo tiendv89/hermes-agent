@@ -326,6 +326,12 @@ async def get_workspace_context(
 
     Replaces plugins.db.get_workspace_context. workspace_id must be the
     workspace UUID (GET /api/workspaces/:id does not accept a slug).
+
+    Fetches the full repo list from GET /api/workspaces/:id/repos — the
+    workspace detail response itself only carries a single legacy
+    repo_url/management_repo_id pair, which silently hid every other repo
+    registered for the workspace (see ListWorkspaceRepos in
+    workflow-backend's internal/handler/workspace.go).
     """
     data = await _call(
         "GET",
@@ -336,7 +342,31 @@ async def get_workspace_context(
     )
     repo_url = data.get("repo_url") or ""
     management_repo_id = data.get("management_repo_id") or ""
-    repos = [{"id": management_repo_id, "github": repo_url}] if repo_url else []
+
+    try:
+        repo_rows = await _call(
+            "GET",
+            f"/api/workspaces/{workspace_id}/repos",
+            user_id=user_id,
+            org_id=org_id,
+        )
+    except Exception as exc:
+        logger.warning(
+            "get_workspace_context: /repos lookup failed for %r, falling back "
+            "to the single legacy repo_url field: %s", workspace_id, exc,
+        )
+        repo_rows = None
+
+    if repo_rows:
+        repos = [
+            {"id": row.get("repo_id"), "github": row.get("repo_url"), "base_branch": row.get("base_branch")}
+            for row in repo_rows
+        ]
+        management_row = next((row for row in repo_rows if row.get("is_management_repo")), None)
+        management_repo_id = (management_row or {}).get("repo_id") or management_repo_id
+    else:
+        repos = [{"id": management_repo_id, "github": repo_url}] if repo_url else []
+
     return {"management_repo": management_repo_id, "repos": repos}
 
 

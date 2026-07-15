@@ -85,7 +85,7 @@ def _make_fake_ssc(*, read_return=None, write_return=None, error=None):
             self.reason_code = reason_code
             self.status = status
 
-    fake = types.ModuleType("plugins.storage_service_client")
+    fake = types.ModuleType("plugins.clients.storage_service_client")
     fake.StorageServiceError = _Error
 
     if error is not None:
@@ -99,7 +99,7 @@ def _make_fake_ssc(*, read_return=None, write_return=None, error=None):
             return_value=write_return or {"ok": True, "version_id": _VERSION_ID}
         )
 
-    sys.modules["plugins.storage_service_client"] = fake
+    sys.modules["plugins.clients.storage_service_client"] = fake
     return fake
 
 
@@ -211,7 +211,7 @@ class TestValidatePath:
         _ensure_plugins_pkg()
         _make_fake_ssc()
         _setup_fake_edit_module()
-        fake_ssc = sys.modules["plugins.storage_service_client"]
+        fake_ssc = sys.modules["plugins.clients.storage_service_client"]
         mod = _load_module_file(
             "plugins.tools.file_ops", REPO_ROOT / "plugins" / "tools" / "file_ops.py"
         )

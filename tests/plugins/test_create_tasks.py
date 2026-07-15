@@ -3,8 +3,6 @@ Covers:
   - _relay_create_tasks_reason_code: feature_not_tasks_approved, tasks_already_exist,
     missing_config, empty_tasks, unknown code
   - handle(): missing context → error
-  - handle(): missing GITHUB_TOKEN → error
-  - handle(): management repo resolution failure → error
   - handle(): tasks.md read failure → error
   - handle(): tasks.md missing (empty content) → error
   - handle(): success path → ok=True with "Tasks created successfully"
@@ -62,13 +60,8 @@ def _clear_env(monkeypatch):
 # Constants
 # ---------------------------------------------------------------------------
 
-_GITHUB_TOKEN = "ghp_test"
 _WORKSPACE_ID = "ws-test"
 _FEATURE_ID = "my-feature"
-_OWNER = "testorg"
-_REPO = "testws"
-_BASE_BRANCH = "main"
-_FEATURE_BRANCH = "feature/my-feature"
 
 _TASKS_MD = """\
 # Tasks
@@ -82,24 +75,6 @@ _TASKS_MD = """\
 
 ## T1 — First task
 """
-
-
-def _make_workspace_context():
-    return {
-        "management_repo": _REPO,
-        "repos": [{"id": _REPO, "github": f"https://github.com/{_OWNER}/{_REPO}"}],
-    }
-
-
-def _make_feature_detail():
-    return {
-        "feature_name": _FEATURE_ID,
-        "title": "My Feature",
-        "stage": "tasks",
-        "status": "ready_for_implementation",
-        "owner": "go",
-        "init_pr_url": None,
-    }
 
 
 def _load_create_tasks_mod():
@@ -147,9 +122,6 @@ def _run_create_tasks_handle(
 
     Patches are applied directly on the loaded module's namespace.
     """
-    monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-    monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
     create_mock = MagicMock(return_value=create_tasks_return or {"tasks": []})
     if create_tasks_side_effect is not None:
         create_mock.side_effect = create_tasks_side_effect
@@ -157,30 +129,16 @@ def _run_create_tasks_handle(
     mod = _load_create_tasks_mod()
 
     # Patch module-level imports in create_tasks's namespace via handle()'s inline imports.
-    # We need to patch the modules that handle() imports inline.
 
     # Patch plugins.context
     ctx_mock = MagicMock()
     ctx_mock.get_workspace_id.return_value = context_workspace_id
     ctx_mock.get_feature_id.return_value = context_feature_id
+    ctx_mock.get_org_id.return_value = "org-1"
+    ctx_mock.get_user_id.return_value = "user-1"
     sys.modules["plugins.context"] = ctx_mock
 
-    # Patch plugins.document_repo (git path — unused by the default owner="go"
-    # feature detail below, since tasks.md for go lives in storage-service).
-    doc_repo_mock = MagicMock()
-    if read_document_raises:
-        doc_repo_mock.read_document.side_effect = read_document_raises
-    else:
-        content = (
-            read_document_content
-            if read_document_content is not None
-            else tasks_content
-        )
-        doc_repo_mock.read_document.return_value = {"content": content, "sha": "sha123"}
-    sys.modules["plugins.document_repo"] = doc_repo_mock
-
-    # Patch plugins.storage_service_client — go-owned features (the default
-    # here) read tasks.md from storage-service, not git.
+    # Patch plugins.clients.storage_service_client — tasks.md is read from storage-service.
     storage_mock = MagicMock()
     if read_document_raises:
         storage_mock.read_document_content.side_effect = read_document_raises
@@ -194,30 +152,16 @@ def _run_create_tasks_handle(
             "content": content,
             "version_id": "v1",
         }
-    sys.modules["plugins.storage_service_client"] = storage_mock
+    sys.modules["plugins.clients.storage_service_client"] = storage_mock
 
-    # Patch plugins.tools.approve — provides _resolve_status_branch_and_path and
-    # _run_async_create_tasks
+    # Patch plugins.tools.approve — provides _run_async_create_tasks
     approve_mock = MagicMock()
-    approve_mock._resolve_status_branch_and_path.return_value = (
-        _FEATURE_BRANCH,
-        f"docs/features/{_FEATURE_ID}/status.yaml",
-    )
     approve_mock._run_async_create_tasks = create_mock
     sys.modules["plugins.tools.approve"] = approve_mock
 
-    # Patch plugins.tools.artifacts — provides _resolve_management_repo
-    artifacts_mock = MagicMock()
-    artifacts_mock._resolve_management_repo.return_value = (_OWNER, _REPO)
-    sys.modules["plugins.tools.artifacts"] = artifacts_mock
-
-    # Patch src.services.workflow_backend_client — provides WorkflowBackendError and
-    # the workspace/feature lookups load_feature_tasks_md() runs via run_async().
+    # Patch src.services.workflow_backend_client — provides WorkflowBackendError.
     wbc_mock = MagicMock()
     wbc_mock.WorkflowBackendError = _WorkflowBackendError
-    wbc_mock.get_workspace_context.return_value = _make_workspace_context()
-    wbc_mock.get_feature_detail.return_value = _make_feature_detail()
-    wbc_mock.run_async.side_effect = lambda coro: coro
     sys.modules["src"] = MagicMock()
     sys.modules["src.services"] = MagicMock()
     sys.modules["src.services.workflow_backend_client"] = wbc_mock
@@ -273,7 +217,6 @@ class TestRelayCreateTasksReasonCode:
 
 class TestHandleMissingContext:
     def test_missing_workspace_and_feature_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         mod = _load_create_tasks_mod()
 
         ctx_mock = MagicMock()
@@ -286,7 +229,6 @@ class TestHandleMissingContext:
         assert "workspace_id" in result["error"] or "context" in result["error"]
 
     def test_missing_workspace_only_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         mod = _load_create_tasks_mod()
 
         ctx_mock = MagicMock()
@@ -298,7 +240,6 @@ class TestHandleMissingContext:
         assert result["ok"] is False
 
     def test_missing_feature_only_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
         mod = _load_create_tasks_mod()
 
         ctx_mock = MagicMock()
@@ -308,49 +249,6 @@ class TestHandleMissingContext:
 
         result = mod.handle(workspace_id="", feature_id="")
         assert result["ok"] is False
-
-    def test_missing_github_token_returns_error(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
-        mod = _load_create_tasks_mod()
-
-        ctx_mock = MagicMock()
-        ctx_mock.get_workspace_id.return_value = _WORKSPACE_ID
-        ctx_mock.get_feature_id.return_value = _FEATURE_ID
-        sys.modules["plugins.context"] = ctx_mock
-
-        result = mod.handle(workspace_id=_WORKSPACE_ID, feature_id=_FEATURE_ID)
-        assert result["ok"] is False
-        assert "GITHUB_TOKEN" in result["error"]
-
-
-class TestHandleManagementRepoFailure:
-    def test_repo_resolution_failure_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-        mod = _load_create_tasks_mod()
-
-        ctx_mock = MagicMock()
-        ctx_mock.get_workspace_id.return_value = _WORKSPACE_ID
-        ctx_mock.get_feature_id.return_value = _FEATURE_ID
-        sys.modules["plugins.context"] = ctx_mock
-
-        # Only replace the leaf module — plugins.tools.approve (imported for real
-        # below) needs the real src/src.services packages to resolve its own
-        # src.services.approval_notifications import.
-        wbc_mock = MagicMock()
-        wbc_mock.WorkflowBackendError = _WorkflowBackendError
-        wbc_mock.get_workspace_context.side_effect = RuntimeError("workflow-backend offline")
-        sys.modules["src.services.workflow_backend_client"] = wbc_mock
-
-        artifacts_mock = MagicMock()
-        artifacts_mock._resolve_management_repo.side_effect = ValueError("no repo")
-        sys.modules["plugins.tools.artifacts"] = artifacts_mock
-
-        result = mod.handle(workspace_id=_WORKSPACE_ID, feature_id=_FEATURE_ID)
-        assert result["ok"] is False
-        assert (
-            "management repo" in result["error"].lower()
-            or "Could not" in result["error"]
-        )
 
 
 # ---------------------------------------------------------------------------

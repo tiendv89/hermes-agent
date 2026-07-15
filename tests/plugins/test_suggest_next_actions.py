@@ -339,7 +339,7 @@ class TestToolRegistration:
         # which has no heavy dependencies, so it's fine to import for real here.
         stub_context = _make_stub_module("plugins.context", {})
         stub_hooks = _make_stub_module("plugins.hooks", {"inject_context": lambda **_: None})
-        stub_mcp = _make_stub_module("plugins.mcp_client", {})
+        stub_mcp = _make_stub_module("plugins.clients.mcp_client", {})
 
         # Individual tool modules — return minimal stubs.
         def _stub_tool(name, schema=None, handle=None):
@@ -354,12 +354,15 @@ class TestToolRegistration:
         stub_tools_pkg = _make_stub_module("plugins.tools", {})
         sys.modules["plugins.context"] = stub_context
         sys.modules["plugins.hooks"] = stub_hooks
-        sys.modules["plugins.mcp_client"] = stub_mcp
+        sys.modules["plugins.clients.mcp_client"] = stub_mcp
         sys.modules["plugins.tools"] = stub_tools_pkg
 
         tool_names = [
-            "workspace", "feature", "artifacts", "edit", "tasks", "gitnexus",
+            "workspace", "feature", "artifacts", "edit", "file_ops", "read",
+            "read_workspace_file", "list_documents", "tasks", "gitnexus",
             "rag", "skills", "approval", "approve", "tasks_write",
+            "create_tasks", "parse_tasks", "github_pr_context",
+            "github_pr_review", "lookup_feature", "init_feature",
         ]
         for tname in tool_names:
             stub = _stub_tool(tname)
@@ -373,6 +376,12 @@ class TestToolRegistration:
         sys.modules["plugins.tools.artifacts"].handle_write_technical_design = lambda **_: {}
         sys.modules["plugins.tools.edit"].EDIT_DOCUMENT_SCHEMA = {"description": "", "parameters": {}}
         sys.modules["plugins.tools.edit"].handle_edit_document = lambda **_: {}
+        sys.modules["plugins.tools.file_ops"].WRITE_FILE_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.file_ops"].handle_write_file = lambda **_: {}
+        sys.modules["plugins.tools.file_ops"].EDIT_FILE_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.file_ops"].handle_edit_file = lambda **_: {}
+        sys.modules["plugins.tools.read"].READ_FILE_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.read"].handle_read_file = lambda **_: {}
         sys.modules["plugins.tools.tasks"].handle = lambda **_: {}
         sys.modules["plugins.tools.approval"].handle = lambda **_: {}
         sys.modules["plugins.tools.approve"].handle = lambda **_: {}
@@ -382,6 +391,9 @@ class TestToolRegistration:
         sys.modules["plugins.tools.skills"].handle = lambda **_: {}
         sys.modules["plugins.tools.skills"].check_available = lambda **_: False
         sys.modules["plugins.tools.skills"].SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.github_pr_context"].check_available = lambda **_: False
+        sys.modules["plugins.tools.github_pr_review"].check_available = lambda **_: False
+        sys.modules["plugins.tools.lookup_feature"].check_available = lambda **_: False
 
         # Load the real suggest_next_actions into sys.modules first.
         sna_mod, *_ = _load_suggest_next_actions_isolated()

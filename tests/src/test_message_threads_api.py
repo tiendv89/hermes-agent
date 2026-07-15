@@ -168,8 +168,7 @@ async def test_post_thread_reply_success():
     published: list = []
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.message_threads.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.message_threads.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.message_threads.resolve_mentions", return_value=[]), \
          patch("src.api.routers.message_threads.append_message", _fake_append), \
@@ -224,8 +223,7 @@ async def test_post_thread_reply_explicit_inner_reply_to():
     session = _mock_session()
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.message_threads.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.message_threads.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.message_threads.resolve_mentions", return_value=[]), \
          patch("src.api.routers.message_threads.append_message", _fake_append), \
@@ -274,8 +272,7 @@ async def test_post_thread_reply_sse_payload_includes_thread_fields():
     session = _mock_session()
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.message_threads.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.message_threads.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.message_threads.resolve_mentions", return_value=[]), \
          patch("src.api.routers.message_threads.append_message", _fake_append), \
@@ -327,7 +324,7 @@ async def test_post_thread_reply_nested_thread_rejected():
     session = _mock_session()
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)):
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))):
 
         request = MagicMock()
         identity = MagicMock()
@@ -361,7 +358,7 @@ async def test_post_thread_reply_root_message_not_found():
     session = _mock_session()
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)):
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))):
 
         request = MagicMock()
         identity = MagicMock()
@@ -420,8 +417,10 @@ async def test_post_thread_reply_non_member_forbidden():
     session = _mock_session(user_id="owner-99")  # different owner
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=False)), \
-         patch("src.api.routers.message_threads.is_org_member", AsyncMock(return_value=False)):
+         patch(
+             "src.api.routers.message_threads.authorize_thread_access",
+             AsyncMock(side_effect=HTTPException(status_code=403, detail="Not a member of this thread.")),
+         ):
 
         request = MagicMock()
         identity = MagicMock()
@@ -481,7 +480,7 @@ async def test_post_thread_reply_non_numeric_message_id():
     session = _mock_session()
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)):
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))):
 
         request = MagicMock()
         identity = MagicMock()
@@ -514,7 +513,7 @@ async def test_post_thread_reply_root_message_wrong_session():
     session = _mock_session(session_id="sess-1")
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)):
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))):
 
         request = MagicMock()
         identity = MagicMock()
@@ -551,14 +550,14 @@ async def test_post_thread_reply_agent_mention_triggers_dispatch():
 
     schedule_called = []
     session = _mock_session(kind="thread")
+    session.model = "gpt-4"  # no server-side default model — the session must carry one
 
     async def _fake_append(db_, session_id, role, content, author_id=None,
                            thread_root_id=None, reply_to_message_id=None, **kw):
         return 500
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.message_threads.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.message_threads.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.message_threads.resolve_mentions", return_value=[{"mentioned_id": "agent", "mentioned_kind": "agent"}]), \
          patch("src.api.routers.message_threads.append_message", _fake_append), \
@@ -567,7 +566,6 @@ async def test_post_thread_reply_agent_mention_triggers_dispatch():
          patch("src.api.routers.message_threads.author_for", AsyncMock(return_value=None)), \
          patch("src.api.routers.message_threads.get_bus") as mock_bus, \
          patch("src.api.routers.message_threads.get_messages_as_conversation", AsyncMock(return_value=[])), \
-         patch("src.api.routers.message_threads.default_model", AsyncMock(return_value="gpt-4")), \
          patch("src.api.routers.message_threads.resolve_model", AsyncMock(return_value={"model": "gpt-4", "provider": None, "api_key": None, "base_url": None})), \
          patch("src.api.routers.message_threads.update_session_model", AsyncMock()), \
          patch("src.api.routers.message_threads.schedule_agent_turn", AsyncMock(side_effect=lambda **kw: schedule_called.append(kw))):
@@ -611,8 +609,7 @@ async def test_post_thread_reply_channel_bare_message_no_dispatch():
         return 501
 
     with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.message_threads.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.message_threads.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.message_threads.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.message_threads.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.message_threads.resolve_mentions", return_value=[]), \
          patch("src.api.routers.message_threads.append_message", _fake_append), \
@@ -852,8 +849,7 @@ async def test_send_message_passes_reply_to_message_id():
     session = _mock_session()
 
     with patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.messages.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.messages.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.messages.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.messages.resolve_mentions", return_value=[]), \
          patch("src.api.routers.messages.append_message", _fake_append), \
@@ -893,8 +889,7 @@ async def test_send_message_invalid_reply_to_message_id():
     session = _mock_session()
 
     with patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.messages.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.messages.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.messages.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.messages.resolve_mentions", return_value=[]):
 
@@ -932,8 +927,7 @@ async def test_send_message_without_reply_to_message_id_unaffected():
     session = _mock_session()
 
     with patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.messages.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.messages.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.messages.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.messages.resolve_mentions", return_value=[]), \
          patch("src.api.routers.messages.append_message", _fake_append), \
@@ -983,8 +977,7 @@ async def test_send_message_sse_payload_includes_reply_fields():
     session = _mock_session()
 
     with patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)), \
-         patch("src.api.routers.messages.is_member", AsyncMock(return_value=True)), \
-         patch("src.api.routers.messages.get_workspace_organization_id", AsyncMock(return_value="")), \
+         patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, ""))), \
          patch("src.api.routers.messages.mention_candidates", AsyncMock(return_value=[])), \
          patch("src.api.routers.messages.resolve_mentions", return_value=[]), \
          patch("src.api.routers.messages.append_message", _fake_append), \

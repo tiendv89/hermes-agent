@@ -1,9 +1,9 @@
 """Shared GitHub PR client for hermes-agent.
 
-Extends the auth/header pattern from ``document_repo.py`` to implementation-repo
-PR endpoints (today's document_repo.py usage is management-repo-only: spec/task
-doc reads/writes).  All functions are synchronous and use the ``requests``
-library already present as a hermes-agent dependency.
+Implements GitHub REST API auth/header handling for implementation-repo PR
+endpoints (PR review: diff, comments, checks, posting reviews). All functions
+are synchronous and use the ``requests`` library already present as a
+hermes-agent dependency.
 
 Exported functions are consumed by ``plugins/tools/github_pr_context.py`` and
 (in T2) ``plugins/tools/github_pr_review.py``.

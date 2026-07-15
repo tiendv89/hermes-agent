@@ -7,25 +7,13 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import re
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
-
+from typing import Any, Dict
 
 from ..validation import _validate_id
-from ..document_repo import (
-    branch_exists,
-    ensure_feature_branch,
-)
-from ..storage_service_client import StorageServiceError, write_document_content
+from plugins.clients.storage_service_client import StorageServiceError, write_document_content
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_TIMEOUT = 30
-_GITHUB_API_URL = "https://api.github.com"
-_GITHUB_SSH_RE = re.compile(r"git@github\.com:([^/]+)/([^\.]+?)(?:\.git)?$")
-_GITHUB_HTTPS_RE = re.compile(r"https://github\.com/([^/]+)/([^/]+?)(?:\.git)?$")
 
 # Canonical feature-doc templates the generated artifacts must follow. Bundled
 # under plugins/skills/templates/feature/ (a copy of agent-workflow/templates).
@@ -165,106 +153,6 @@ WRITE_TD_SCHEMA: Dict[str, Any] = {
 
 
 # ---------------------------------------------------------------------------
-# GitHub helpers — used by other modules (read.py, edit.py, approve.py, etc.)
-# ---------------------------------------------------------------------------
-
-
-def _parse_github_owner_repo(github_url: str) -> Tuple[str, str]:
-    m = _GITHUB_SSH_RE.match(github_url.strip()) or _GITHUB_HTTPS_RE.match(
-        github_url.strip()
-    )
-    if m:
-        return m.group(1), m.group(2)
-    raise ValueError(f"Cannot parse GitHub owner/repo from URL: {github_url!r}")
-
-
-def _management_repo_from_env() -> Optional[Tuple[str, str]]:
-    """Env fallback for the management repo when the workspace context has no
-    github source configured. Accepts a git URL or a plain ``owner/repo``.
-
-    Set ``MANAGEMENT_REPO_GITHUB`` to unblock document writes when the
-    workflow-backend DB has no ``workspace_github_sources.repo_url`` row yet.
-    """
-    env_repo = os.environ.get("MANAGEMENT_REPO_GITHUB", "").strip()
-    if not env_repo:
-        return None
-    try:
-        return _parse_github_owner_repo(env_repo)
-    except ValueError:
-        owner, _, repo = env_repo.partition("/")
-        repo = repo[:-4] if repo.endswith(".git") else repo
-        if owner and repo and "/" not in repo:
-            return owner, repo
-    return None
-
-
-def _resolve_management_repo(workspace_context: Dict[str, Any]) -> Tuple[str, str]:
-    management_repo_id: Optional[str] = workspace_context.get("management_repo")
-    repos: list = workspace_context.get("repos", [])
-
-    if management_repo_id:
-        for repo in repos:
-            if isinstance(repo, dict) and repo.get("id") == management_repo_id:
-                if repo.get("github"):
-                    return _parse_github_owner_repo(repo["github"])
-
-    for repo in repos:
-        if (
-            isinstance(repo, dict)
-            and "management" in repo.get("id", "")
-            and repo.get("github")
-        ):
-            return _parse_github_owner_repo(repo["github"])
-
-    env_fallback = _management_repo_from_env()
-    if env_fallback is not None:
-        return env_fallback
-
-    raise ValueError(
-        f"Could not resolve management repo: the workspace has no github source "
-        f"configured (management_repo={management_repo_id!r}, repos={repos!r}). "
-        f"Configure the workspace's repo in the workflow-backend, or set "
-        f"MANAGEMENT_REPO_GITHUB (a git URL or 'owner/repo') to override."
-    )
-
-
-# ---------------------------------------------------------------------------
-# Branch resolution helper — used by read.py, edit.py, and other modules
-# ---------------------------------------------------------------------------
-
-
-def _resolve_document_branch(
-    gh_owner: str,
-    gh_repo: str,
-    feature_id: str,
-    init_pr_url: Optional[str],
-    base_branch: str,
-    github_token: str,
-) -> Tuple[str, Optional[str]]:
-    """Return (target_branch, known_pr_url) for a document write.
-
-    Decision logic (backward-compatible):
-    - init_pr_url non-null + init branch exists  → commit to feature/<slug>-init;
-                                                    return (init branch, init_pr_url)
-    - init_pr_url non-null + branch gone (merged) → commit to feature/<slug>;
-                                                    return (feature branch, None)
-    - init_pr_url null (pre-existing feature)     → commit to feature/<slug> directly;
-                                                    return (feature branch, None)
-
-    All git branches use the feature *slug* (feature_id here), never the UUID.
-    """
-    slug = feature_id
-    init_branch = f"feature/{slug}-init"
-    feature_branch = f"feature/{slug}"
-
-    if init_pr_url and branch_exists(gh_owner, gh_repo, init_branch, github_token):
-        return init_branch, init_pr_url
-
-    ensure_feature_branch(gh_owner, gh_repo, slug, base_branch, github_token)
-    return feature_branch, None
-
-
-# ---------------------------------------------------------------------------
 # Internal write pipeline
 # ---------------------------------------------------------------------------
 
@@ -274,12 +162,12 @@ def _coerce_content(content: Any) -> str:
 
     The tool schema declares ``content`` as a string, but over the MCP path the
     model occasionally passes a structured JSON object instead of markdown. That
-    dict would otherwise reach ``str.encode`` in document_repo and raise
+    dict would otherwise reach ``str.encode`` in storage_service_client and raise
     ``'dict' object has no attribute 'encode'``.
 
     An empty dict/list (``{}``, ``[]``) is a model mistake — the model called
     the tool without generating actual content. We raise ValueError so the
-    caller returns an error rather than committing useless bytes to GitHub.
+    caller returns an error rather than writing useless bytes to storage-service.
     """
     if isinstance(content, str):
         return content

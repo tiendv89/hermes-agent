@@ -24,7 +24,6 @@ Each parsed row maps 1:1 onto the workflow-backend `CreateTaskItem` contract:
 from __future__ import annotations
 
 import logging
-import os
 import re
 from typing import Any, Dict, List
 
@@ -189,9 +188,7 @@ def handle(
                     "tasks.md can be read from the current feature."
                 ),
             }
-        github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-
-        loaded = load_feature_tasks_md(wid, fid, github_token)
+        loaded = load_feature_tasks_md(wid, fid)
         if not loaded.get("ok"):
             return {"ok": False, "error": loaded.get("error", "Could not read tasks.md.")}
         content = loaded.get("tasks_md", "")

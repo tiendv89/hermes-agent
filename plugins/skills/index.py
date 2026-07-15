@@ -1,15 +1,13 @@
 """Skill index — local bundle loader.
 
 Loadable skills are bundled with the gateway under ``plugins/skills/``
-(``technical_skills/``, ``workflow_skills/`` and ``shared.md`` — a copy of the
-agent-workflow ``claude/`` tree). The index is built once by walking those
-directories at startup and cached for the lifetime of the process. No network
-access or GitHub token is required.
+(``technical_skills/`` and ``shared.md``). The index is built once by walking
+that directory at startup and cached for the lifetime of the process. No
+network access or GitHub token is required.
 
 Buckets
 -------
 * Knowledge skills  — every ``technical_skills/*/SKILL.md`` (is_authoring=False)
-* Workflow skills   — every ``workflow_skills/*/SKILL.md`` (is_authoring=True)
 
 Every bundled skill is loadable via ``load_skill`` — the tool only
 returns the skill's guidance text, so even skills whose *actions* are handled
@@ -32,13 +30,12 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
-# Root of the bundled skills (this package directory holds technical_skills/,
-# workflow_skills/ and shared.md — a copy of the agent-workflow claude/ tree).
+# Root of the bundled skills (this package directory holds technical_skills/
+# and shared.md).
 _BUNDLE_ROOT = Path(__file__).resolve().parent
 
-# Logical path prefixes used for SkillEntry.path (cosmetic labels).
+# Logical path prefix used for SkillEntry.path (cosmetic label).
 _TECHNICAL_SKILLS_PREFIX = "technical_skills"
-_WORKFLOW_SKILLS_PREFIX = "workflow_skills"
 
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
 _DESC_RE = re.compile(r"^description:\s*(.+)$", re.MULTILINE)
@@ -117,7 +114,7 @@ def _collect_references(skill_dir: Path) -> Dict[str, str]:
     return refs
 
 
-def _index_skill(skill_dir: Path, *, is_authoring: bool) -> Optional[SkillEntry]:
+def _index_skill(skill_dir: Path) -> Optional[SkillEntry]:
     """Build a SkillEntry from a skill directory, or None if it has no SKILL.md
     with a frontmatter description."""
     content = _read(skill_dir / "SKILL.md")
@@ -129,12 +126,10 @@ def _index_skill(skill_dir: Path, *, is_authoring: bool) -> Optional[SkillEntry]
         logger.debug("skills: no description in frontmatter for %s — skipping", skill_dir.name)
         return None
 
-    prefix = _WORKFLOW_SKILLS_PREFIX if is_authoring else _TECHNICAL_SKILLS_PREFIX
     entry = SkillEntry(
         name=skill_dir.name,
         description=description,
-        path=f"{prefix}/{skill_dir.name}",
-        is_authoring=is_authoring,
+        path=f"{_TECHNICAL_SKILLS_PREFIX}/{skill_dir.name}",
     )
     entry.body = content
     entry.references = _collect_references(skill_dir)
@@ -142,7 +137,7 @@ def _index_skill(skill_dir: Path, *, is_authoring: bool) -> Optional[SkillEntry]
 
 
 def _build_index_from_bundle(root: Path) -> Dict[str, SkillEntry]:
-    """Walk the bundled claude/ tree and build the loadable-skill index."""
+    """Walk the bundled skills tree and build the loadable-skill index."""
     index: Dict[str, SkillEntry] = {}
 
     technical_dir = root / "technical_skills"
@@ -150,25 +145,11 @@ def _build_index_from_bundle(root: Path) -> Dict[str, SkillEntry]:
         for skill_dir in sorted(technical_dir.iterdir()):
             if not skill_dir.is_dir():
                 continue
-            entry = _index_skill(skill_dir, is_authoring=False)
+            entry = _index_skill(skill_dir)
             if entry is not None:
                 index[entry.name] = entry
 
-    workflow_dir = root / "workflow_skills"
-    if workflow_dir.is_dir():
-        for skill_dir in sorted(workflow_dir.iterdir()):
-            if not skill_dir.is_dir():
-                continue
-            entry = _index_skill(skill_dir, is_authoring=True)
-            if entry is not None:
-                index[entry.name] = entry
-
-    logger.info(
-        "skills: index built from bundle — %d skills (%d knowledge, %d workflow)",
-        len(index),
-        sum(1 for e in index.values() if not e.is_authoring),
-        sum(1 for e in index.values() if e.is_authoring),
-    )
+    logger.info("skills: index built from bundle — %d skills", len(index))
     return index
 
 

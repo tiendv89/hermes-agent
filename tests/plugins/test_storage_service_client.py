@@ -8,6 +8,7 @@ workspace-root (feature_id="") paths.
 """
 
 from __future__ import annotations
+from plugins.clients import storage_service_client as ssc
 
 import sys
 from pathlib import Path
@@ -18,7 +19,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
-from plugins import storage_service_client as ssc  # noqa: E402
 
 _BASE_URL = "http://storage-service.test"
 _TOKEN = "test-token"

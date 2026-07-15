@@ -21,9 +21,7 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     GET  /threads                                          — list caller's workspace threads (T9)
     POST /threads/{id}/messages/{msg_id}/replies           — post thread reply (chat-reply-and-thread)
     GET  /threads/{id}/messages/{msg_id}/replies           — get thread replies (chat-reply-and-thread)
-    PUT  /features/{feature_id}/document                   — documents (human save)
     GET  /tools                                            — tools + skills registry
-    POST /features/{feature_id}/stage-transition           — stages (approve/reject/reopen)
     GET  /channels                                         — channels (team chat)
     POST /channels                                         — channels
     DELETE /channels/{id}                                  — channels
@@ -41,14 +39,12 @@ from src.api.routers import (
     channels,
     chat,
     dms,
-    documents,
     members,
     message_saves,
     message_threads,
     messages,
     models,
     sessions,
-    stages,
     stream,
     threads,
     tools,
@@ -63,9 +59,7 @@ router.include_router(messages.router)
 router.include_router(message_saves.router)
 router.include_router(message_threads.router)
 router.include_router(stream.router)
-router.include_router(documents.router)
 router.include_router(tools.router)
-router.include_router(stages.router)
 router.include_router(channels.router)
 router.include_router(threads.router)
 router.include_router(members.router)

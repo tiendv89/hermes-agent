@@ -7,7 +7,7 @@ description: Code-graph intelligence via GitNexus. Use for structural code looku
 
 GitNexus structural code intelligence is exposed through a **single tool, `query_gitnexus`**, with a `tool=` selector and a `repo=` argument. (There is no `mcp__gitnexus__*` tool namespace — always call `query_gitnexus`.) It operates on a pre-built AST + call-graph index and answers questions that grep and file reads cannot: "what calls this function", "what breaks if I delete this", "trace this execution path end-to-end."
 
-**GitNexus is the source of truth for which repos exist.** Discover the repo from `list_repos`; it does NOT need to be registered in `workspace.yaml`.
+**GitNexus is the source of truth for which repos exist.** Discover the repo from `list_repos`.
 
 ### Tool reference
 
@@ -35,7 +35,6 @@ All operations are issued as `query_gitnexus(tool="<op>", ...)`:
    - The question is about raw file content, not code structure (e.g. reading a config file, checking a comment).
 3. **Never open an entire file** just to find a symbol when GitNexus can answer it directly.
 4. **Never skip GitNexus** when the tool is available and the question is structural.
-5. **Never block on `workspace.yaml`** — if `list_repos` shows the repo, query it.
 
 ### When GitNexus is available
 

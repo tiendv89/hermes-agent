@@ -279,62 +279,6 @@ async def test_is_supported_returns_false_for_unknown_model():
 
 
 @pytest.mark.asyncio
-async def test_default_model_returns_catalog_default(monkeypatch):
-    """default_model returns the catalog row with is_default=True."""
-    monkeypatch.delenv("HERMES_MODEL", raising=False)
-    from src.api.model_catalog import default_model
-
-    db = _fake_db()
-    with patch("src.db.store.get_default_catalog_model", new=AsyncMock(return_value=_CATALOG["claude-sonnet-4-6"])):
-        result = await default_model(db)
-
-    assert result == "claude-sonnet-4-6"
-
-
-@pytest.mark.asyncio
-async def test_default_model_env_override_wins_when_active(monkeypatch):
-    """HERMES_MODEL env override wins when the named model is active in the catalog."""
-    monkeypatch.setenv("HERMES_MODEL", "claude-opus-4-8")
-    from src.api.model_catalog import default_model
-
-    db = _fake_db()
-    with patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=_CATALOG["claude-opus-4-8"])):
-        result = await default_model(db)
-
-    assert result == "claude-opus-4-8"
-
-
-@pytest.mark.asyncio
-async def test_default_model_env_override_ignored_when_inactive(monkeypatch):
-    """HERMES_MODEL env override is ignored when the model is inactive; catalog default is used."""
-    monkeypatch.setenv("HERMES_MODEL", "old-model")
-    from src.api.model_catalog import default_model
-
-    db = _fake_db()
-    # get_catalog_model called for the env override (inactive), then get_default_catalog_model
-    with (
-        patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=_INACTIVE)),
-        patch("src.db.store.get_default_catalog_model", new=AsyncMock(return_value=_CATALOG["claude-sonnet-4-6"])),
-    ):
-        result = await default_model(db)
-
-    assert result == "claude-sonnet-4-6"
-
-
-@pytest.mark.asyncio
-async def test_default_model_fallback_when_no_catalog_default(monkeypatch):
-    """default_model falls back to _FALLBACK_MODEL_ID when catalog has no default row."""
-    monkeypatch.delenv("HERMES_MODEL", raising=False)
-    from src.api.model_catalog import default_model, _FALLBACK_MODEL_ID
-
-    db = _fake_db()
-    with patch("src.db.store.get_default_catalog_model", new=AsyncMock(return_value=None)):
-        result = await default_model(db)
-
-    assert result == _FALLBACK_MODEL_ID
-
-
-@pytest.mark.asyncio
 async def test_resolve_model_anthropic(monkeypatch):
     """resolve_model returns correct anthropic credentials for an active model."""
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-anthropic-key")
@@ -368,29 +312,36 @@ async def test_resolve_model_deepseek(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_resolve_model_falls_back_for_unknown_id(monkeypatch):
-    """resolve_model falls back to the catalog default for an unknown model_id."""
-    monkeypatch.delenv("HERMES_MODEL", raising=False)
+async def test_resolve_model_raises_for_unknown_id():
+    """resolve_model raises ValueError for an unknown model_id — there is no
+    server-side default/fallback to fall back to."""
     from src.api.model_catalog import resolve_model
 
     db = _fake_db()
+    with patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=None)):
+        with pytest.raises(ValueError, match="Unknown or inactive model"):
+            await resolve_model(db, "nonexistent-model-xyz")
 
-    # First call: unknown model, returns None; second call: catalog default
-    side_effects = [None, _CATALOG["claude-sonnet-4-6"]]
-    idx = {"i": 0}
 
-    async def _get_catalog_model(db_, model_id: str):
-        row = side_effects[idx["i"]]
-        idx["i"] += 1
-        return row
+@pytest.mark.asyncio
+async def test_resolve_model_raises_for_inactive_id():
+    """resolve_model raises ValueError for a model that exists but is inactive."""
+    from src.api.model_catalog import resolve_model
 
-    with (
-        patch("src.db.store.get_catalog_model", new=AsyncMock(side_effect=_get_catalog_model)),
-        patch("src.db.store.get_default_catalog_model", new=AsyncMock(return_value=_CATALOG["claude-sonnet-4-6"])),
-    ):
-        result = await resolve_model(db, "nonexistent-model-xyz")
+    db = _fake_db()
+    with patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=_INACTIVE)):
+        with pytest.raises(ValueError, match="Unknown or inactive model"):
+            await resolve_model(db, "old-model")
 
-    assert result["model"] == "claude-sonnet-4-6"
+
+@pytest.mark.asyncio
+async def test_resolve_model_raises_for_empty_id():
+    """resolve_model raises ValueError when model_id is empty."""
+    from src.api.model_catalog import resolve_model
+
+    db = _fake_db()
+    with pytest.raises(ValueError, match="model is required"):
+        await resolve_model(db, "")
 
 
 # ---------------------------------------------------------------------------

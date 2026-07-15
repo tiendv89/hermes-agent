@@ -15,8 +15,7 @@ Guard error relay (server-side guard from T3 / workflow-backend):
 from __future__ import annotations
 
 import logging
-import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
@@ -81,98 +80,36 @@ SCHEMA: Dict[str, Any] = {
 def load_feature_tasks_md(
     workspace_id: str,
     feature_id: str,
-    github_token: str,
 ) -> Dict[str, Any]:
-    """Read the current feature's tasks.md.
-
-    For go-owned features, tasks.md lives in storage-service (no git branch
-    exists for them — workflow-backend no longer creates an init branch/PR at
-    feature creation for go). For ts-owned features, reads from the management
-    repo feature branch as before.
+    """Read the current feature's tasks.md from storage-service.
 
     Shared by the backup /create-tasks tool and the parse_tasks tool so both
-    resolve the branch and read the document the same way.
+    read the document the same way.
 
     Returns ``{"ok": True, "tasks_md": <content>}`` or
     ``{"ok": False, "error": <message>}``.
     """
     from ..context import get_org_id, get_user_id
-    from ..document_repo import read_document
-    from ..storage_service_client import read_document_content
-    from .approve import _resolve_status_branch_and_path
-    from .artifacts import _resolve_management_repo
-    from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
+    from plugins.clients.storage_service_client import read_document_content
 
-    # Capture identity on this (calling) thread — run_async may bridge onto a
-    # different thread, where thread-local context is unset.
     caller_user_id = get_user_id()
     caller_org_id = get_org_id()
 
-    feature_name: Optional[str] = None
-    init_pr_url: Optional[str] = None
-    owner: Optional[str] = None
     try:
-        detail = run_async(get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id))
-        feature_name = detail.get("feature_name")
-        init_pr_url = detail.get("init_pr_url")
-        owner = detail.get("owner")
-    except Exception as exc:
-        logger.debug("load_feature_tasks_md: could not fetch feature_detail: %s", exc)
-
-    if owner == "go":
-        try:
-            result = read_document_content(
-                workspace_id, feature_id, "tasks.md",
-                user_id=caller_user_id, org_id=caller_org_id,
-            )
-        except Exception as exc:
-            return {
-                "ok": False,
-                "error": f"Could not read tasks.md from storage-service: {exc}",
-            }
-        content = result.get("content", "")
-        if not content:
-            return {
-                "ok": False,
-                "error": f"tasks.md not found in storage-service for feature {feature_id!r}.",
-            }
-        return {"ok": True, "tasks_md": content}
-
-    if not github_token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not set in the environment."}
-
-    try:
-        workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
-        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
-    except Exception as exc:
-        return {"ok": False, "error": f"Could not resolve management repo: {exc}"}
-
-    base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-
-    branch, _status_path = _resolve_status_branch_and_path(
-        gh_owner, gh_repo, feature_id, feature_name, init_pr_url, base_branch, github_token
-    )
-
-    doc_dir = feature_name or feature_id
-    try:
-        tasks_md_result = read_document(
-            gh_owner, gh_repo, branch, f"docs/features/{doc_dir}/tasks.md", github_token
+        result = read_document_content(
+            workspace_id, feature_id, "tasks.md",
+            user_id=caller_user_id, org_id=caller_org_id,
         )
-        content = tasks_md_result.get("content", "")
     except Exception as exc:
         return {
             "ok": False,
-            "error": f"Could not read tasks.md from branch {branch!r}: {exc}",
+            "error": f"Could not read tasks.md from storage-service: {exc}",
         }
-
+    content = result.get("content", "")
     if not content:
         return {
             "ok": False,
-            "error": (
-                f"tasks.md not found on branch {branch!r} at "
-                f"docs/features/{doc_dir}/tasks.md. "
-                "Ensure the feature has a valid tasks.md."
-            ),
+            "error": f"tasks.md not found in storage-service for feature {feature_id!r}.",
         }
     return {"ok": True, "tasks_md": content}
 
@@ -199,9 +136,7 @@ def handle(
             ),
         }
 
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-
-    loaded = load_feature_tasks_md(wid, fid, github_token)
+    loaded = load_feature_tasks_md(wid, fid)
     if not loaded.get("ok"):
         return {"ok": False, "error": loaded.get("error", "Could not read tasks.md.")}
 

@@ -27,7 +27,7 @@ import os
 import time
 from typing import Any, Dict, List, Optional
 
-from ..mcp_client import call_mcp_tool, coerce_text
+from plugins.clients.mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
 

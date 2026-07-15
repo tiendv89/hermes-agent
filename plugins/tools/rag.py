@@ -6,7 +6,7 @@ import logging
 import os
 from typing import Any, Dict
 
-from ..mcp_client import call_mcp_tool, coerce_text
+from plugins.clients.mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
 

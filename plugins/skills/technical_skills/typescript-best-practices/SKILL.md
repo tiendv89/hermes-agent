@@ -125,7 +125,7 @@ type RequireExactlyOne<T, Keys extends keyof T = keyof T> =
 
 ### No hardcoded workflow artifact paths
 
-Any string that names a workflow-specific file, directory, or path segment (`"workspace.yaml"`, `"docs/features"`, `"tasks"`, `"tasks.md"`, `"logs"`, `"technical_skills"`, `"SKILL.md"`, etc.) **must not** appear as a literal anywhere in source code. Instead:
+Any string that names a workflow-specific file, directory, or path segment (`"docs/features"`, `"tasks"`, `"tasks.md"`, `"logs"`, `"technical_skills"`, `"SKILL.md"`, etc.) **must not** appear as a literal anywhere in source code. Instead:
 
 1. Define the string as a named export in a dedicated constants/paths module (e.g. `src/paths.ts`).
 2. Import and use the named constant or path-builder helper everywhere.

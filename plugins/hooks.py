@@ -115,70 +115,6 @@ def _build_skills_block(
     return "\n".join(lines)
 
 
-def _read_init_pr_context(
-    feature_name: str,
-    init_pr_url: str,
-    gh_owner: str,
-    gh_repo: str,
-    github_token: str,
-) -> str | None:
-    """Read status.yaml + existing docs from the init branch and return a formatted block.
-
-    Called only when the feature has an active init PR so the agent knows the
-    current scaffold state before writing product-spec, technical-design, or
-    calling approve_feature.
-    """
-    try:
-        from .document_repo import branch_exists, read_document
-    except Exception:
-        return None
-
-    init_branch = f"feature/{feature_name}-init"
-    if not branch_exists(gh_owner, gh_repo, init_branch, github_token):
-        return None
-
-    lines = [f"## Init PR context (branch: {init_branch}, PR: {init_pr_url})"]
-
-    doc_files = [
-        ("status.yaml", f"docs/features/{feature_name}/status.yaml"),
-        ("product-spec.md", f"docs/features/{feature_name}/product-spec.md"),
-        ("technical-design.md", f"docs/features/{feature_name}/technical-design.md"),
-    ]
-
-    any_content = False
-    any_error = False
-    for label, path in doc_files:
-        try:
-            result = read_document(gh_owner, gh_repo, init_branch, path, github_token)
-            content = (result.get("content") or "").strip()
-            if content:
-                any_content = True
-                lines.append(f"\n### {label}\n```\n{content}\n```")
-        except Exception as exc:
-            any_error = True
-            logger.warning(
-                "inject_context: failed to read %s from init branch %s: %s",
-                path, init_branch, exc,
-            )
-            continue
-
-    if not any_content:
-        if any_error:
-            # Distinguish "genuinely empty branch" from "fetch failed" — asserting
-            # emptiness here when a read errored risks the agent overwriting real
-            # existing content it believes doesn't exist (see the "don't overwrite"
-            # instruction appended at the end of inject_context).
-            lines.append(
-                "(Could not read one or more init-branch documents due to a fetch "
-                "error — this does NOT mean the branch is empty. Re-check with "
-                "read_file before assuming no content exists.)"
-            )
-        else:
-            lines.append("(No documents committed to the init branch yet.)")
-
-    return "\n".join(lines)
-
-
 def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
     """Build a workspace/feature context block and return it for injection.
 
@@ -312,39 +248,6 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                     parts.append(f"owner: {f['owner']}")
                 if f.get("next_action"):
                     parts.append(f"next_action: {f['next_action']}")
-                if f.get("init_pr_url") and f.get("feature_name"):
-                    parts.append(f"init_pr_url: {f['init_pr_url']}")
-
-                # Inject init PR document context so the agent knows the current
-                # scaffold state before writing or approving any document.
-                github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-                if github_token and f.get("init_pr_url") and f.get("feature_name"):
-                    try:
-                        from .tools.workspace import handle as _get_ws
-                        from .tools.artifacts import _resolve_management_repo
-
-                        ws_ctx = _get_ws(workspace_id=workspace_id)
-                        if ws_ctx.get("ok"):
-                            gh_owner, gh_repo = _resolve_management_repo(
-                                ws_ctx["workspace"]
-                            )
-                            init_block = _read_init_pr_context(
-                                feature_name=f["feature_name"],
-                                init_pr_url=f["init_pr_url"],
-                                gh_owner=gh_owner,
-                                gh_repo=gh_repo,
-                                github_token=github_token,
-                            )
-                            if init_block:
-                                parts.append(init_block)
-                    except Exception as _exc:
-                        logger.warning("inject_context: init PR read failed: %s", _exc)
-                        parts.append(
-                            "note: could not load this feature's init-PR document "
-                            "context this turn (fetch error) — do not assume the "
-                            "init branch is empty; re-check with read_file "
-                            "before writing or approving documents."
-                        )
 
             from .tools.tasks import handle as get_tasks
 

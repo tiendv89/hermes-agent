@@ -1,8 +1,7 @@
 """HTTP client for storage-service document/image read (service-to-service).
 
-hermes-agent calls storage-service directly (no BFF) to read/write documents
-for go-owned features, and to download chat-attached images. ts-owned
-features continue to use document_repo (git).
+hermes-agent calls storage-service directly (no BFF) to read/write feature
+and workspace documents, and to download chat-attached images.
 
 Configuration (env vars):
   STORAGE_SERVICE_URL    Base URL of storage-service, e.g. http://storage-service:8090.

@@ -128,9 +128,6 @@ async def test_is_org_admin_admin_role():
     with patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}):
         with patch("aiohttp.ClientSession", return_value=mock_session):
             from src.services import user_service_client
-            # Reload to pick up env var
-            import importlib
-            importlib.reload(user_service_client)
             result = await user_service_client.is_org_admin("org_1", "user_a")
     assert result is True
 
@@ -152,8 +149,6 @@ async def test_is_org_admin_member_role():
     with patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}):
         with patch("aiohttp.ClientSession", return_value=mock_session):
             from src.services import user_service_client
-            import importlib
-            importlib.reload(user_service_client)
             result = await user_service_client.is_org_admin("org_1", "user_b")
     assert result is False
 
@@ -174,8 +169,6 @@ async def test_get_org_role_404_returns_none():
     with patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}):
         with patch("aiohttp.ClientSession", return_value=mock_session):
             from src.services import user_service_client
-            import importlib
-            importlib.reload(user_service_client)
             role = await user_service_client.get_org_role("org_1", "user_x")
     assert role is None
 
@@ -308,7 +301,7 @@ async def test_delete_channel_admin_success_publishes_event():
         resp = client.delete("/api/v1/channels/chan_abc")
     assert resp.status_code == 204
     assert len(published_events) == 1
-    assert published_events[0] == ("chan_abc", {"event": "channel.deleted", "channel_id": "chan_abc"})
+    assert published_events[0] == ("chan_abc", {"event": "channel.deleted", "data": {"session_id": "chan_abc"}})
 
 
 @pytest.mark.asyncio

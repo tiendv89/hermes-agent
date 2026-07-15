@@ -56,13 +56,10 @@ def _clear_env(monkeypatch):
 # Constants
 # ---------------------------------------------------------------------------
 
-_GITHUB_TOKEN = "ghp_test_e2e"
 _WORKSPACE_ID = "ws-e2e"
 _FEATURE_ID = "e2e-feature"
 _OWNER = "testorg"
 _REPO = "testws"
-_BASE_BRANCH = "main"
-_FEATURE_BRANCH = "feature/e2e-feature"
 _ACTOR = "agent@e2e.test"
 
 _TASKS_MD = """\
@@ -279,10 +276,6 @@ def _load_create_tasks_mod():
     return mod
 
 
-def _make_open_pr(number=1):
-    return {"number": number, "html_url": f"https://github.com/{_OWNER}/{_REPO}/pull/{number}"}
-
-
 def _setup_create_tasks_sys_modules(
     *,
     create_mock,
@@ -302,42 +295,23 @@ def _setup_create_tasks_sys_modules(
     ctx_mock.get_agent_loop.return_value = None
     sys.modules["plugins.context"] = ctx_mock
 
-    doc_repo_mock = MagicMock()
-    doc_repo_mock.read_document.side_effect = AssertionError(
-        "git read_document must not be called for go features"
-    )
-    sys.modules["plugins.document_repo"] = doc_repo_mock
-
-    # go-owned features (the default here — see _make_feature_detail) read
-    # tasks.md from storage-service, not git.
+    # tasks.md is read from storage-service.
     storage_mock = MagicMock()
     storage_mock.read_document_content.return_value = {
         "content": tasks_content,
         "version_id": "v1",
     }
-    sys.modules["plugins.storage_service_client"] = storage_mock
+    sys.modules["plugins.clients.storage_service_client"] = storage_mock
 
     approve_mock = MagicMock()
-    approve_mock._resolve_status_branch_and_path.return_value = (
-        _FEATURE_BRANCH,
-        f"docs/features/{_FEATURE_ID}/status.yaml",
-    )
     approve_mock._run_async_create_tasks = create_mock
     sys.modules["plugins.tools.approve"] = approve_mock
-
-    artifacts_mock = MagicMock()
-    artifacts_mock._resolve_management_repo.return_value = (_OWNER, _REPO)
-    sys.modules["plugins.tools.artifacts"] = artifacts_mock
-
-    async def _fake_get_workspace_context(*_a, **_kw):
-        return _make_workspace_context()
 
     async def _fake_get_feature_detail(*_a, **_kw):
         return _make_feature_detail()
 
     wbc_mock = MagicMock()
     wbc_mock.WorkflowBackendError = wbc_error_class
-    wbc_mock.get_workspace_context = _fake_get_workspace_context
     wbc_mock.get_feature_detail = _fake_get_feature_detail
     wbc_mock.run_async = _real_run_async
     sys.modules["src.services.workflow_backend_client"] = wbc_mock
@@ -356,39 +330,23 @@ class TestE2EFullPipeline:
     """
 
     def _approve_stage_go(self, monkeypatch, stage, stages):
-        """Run approve.handle() for a go feature at the given stage with mocked deps.
-
-        go features never touch git — read_document/commit_to_branch are
-        stubbed to raise if called, so any accidental git touch fails loudly.
-        """
+        """Run approve.handle() for the given stage with mocked deps."""
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
 
         update_mock = AsyncMock()
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
         mod.get_feature_detail = AsyncMock(
             return_value=_make_feature_detail(stage=stage, stages=stages)
         )
         mod.update_feature_stage = update_mock
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
-        mod.read_document = MagicMock(
-            side_effect=AssertionError("git must not be touched for go features")
-        )
-        mod.commit_to_branch = MagicMock(
-            side_effect=AssertionError("git must not be touched for go features")
-        )
 
-        with patch(
-            "plugins.tools.tasks_write._commit_files",
-            side_effect=AssertionError("git must not be touched for go features"),
-        ):
-            result = mod.handle(
-                stage=stage,
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
+        result = mod.handle(
+            stage=stage,
+            action="approve",
+            workspace_id=_WORKSPACE_ID,
+            feature_id=_FEATURE_ID,
+        )
 
         return result, update_mock
 
@@ -425,24 +383,12 @@ class TestE2EFullPipeline:
         update_mock.assert_called_once()
 
     def test_write_tasks_go_branch_no_git(self, monkeypatch):
-        """write_tasks for go features writes tasks.md to storage-service — no git."""
+        """write_tasks writes tasks.md to storage-service — no git."""
         write_content_mock = MagicMock(return_value={"version_id": "v1"})
 
         with (
             patch("plugins.tools.gitnexus.list_indexed_repos", return_value=None),
-            patch(
-                "plugins.tools.tasks_write.get_feature_detail",
-                return_value={
-                    "feature_name": _FEATURE_ID,
-                    "init_pr_url": None,
-                    "owner": "go",
-                },
-            ),
             patch("plugins.tools.tasks_write.write_document_content", write_content_mock),
-            patch(
-                "plugins.tools.tasks_write._commit_files",
-                side_effect=AssertionError("git must not be touched for go features"),
-            ),
         ):
             from plugins.tools.tasks_write import handle as write_tasks_handle
 
@@ -468,7 +414,7 @@ class TestE2EFullPipeline:
         assert result.get("commit_sha") is None
 
     def test_tasks_stage_approve_runs_db_and_task_creation(self, monkeypatch):
-        """Tasks-stage approve (go): DB update, then create/activate tasks — no git."""
+        """Tasks-stage approve: DB update, then create/activate tasks."""
         monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
 
         update_mock = AsyncMock()
@@ -479,32 +425,20 @@ class TestE2EFullPipeline:
         )
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
         mod.get_feature_detail = AsyncMock(
             return_value=_make_feature_detail(stages=_STAGES_TASKS_DRAFT)
         )
         mod.update_feature_stage = update_mock
         mod.read_document_content = read_content_mock
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         mod._run_async_create_tasks = create_tasks_mock
         mod._activate_tasks_db = activate_mock
-        mod.read_document = MagicMock(
-            side_effect=AssertionError("git must not be touched for go features")
-        )
-        mod.commit_to_branch = MagicMock(
-            side_effect=AssertionError("git must not be touched for go features")
-        )
 
-        with patch(
-            "plugins.tools.tasks_write._commit_files",
-            side_effect=AssertionError("git must not be touched for go features"),
-        ):
-            result = mod.handle(
-                stage="tasks",
-                action="approve",
-                workspace_id=_WORKSPACE_ID,
-                feature_id=_FEATURE_ID,
-            )
+        result = mod.handle(
+            stage="tasks",
+            action="approve",
+            workspace_id=_WORKSPACE_ID,
+            feature_id=_FEATURE_ID,
+        )
 
         assert result["ok"] is True, result.get("error")
         # tasks.md read from storage-service
@@ -531,7 +465,6 @@ class TestE2EFullPipeline:
         activated = ["T1", "T2"]
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
         mod.get_feature_detail = AsyncMock(
             return_value=_make_feature_detail(stages=_STAGES_TASKS_DRAFT)
         )
@@ -539,7 +472,6 @@ class TestE2EFullPipeline:
         mod.read_document_content = MagicMock(
             return_value={"content": _TASKS_MD, "version_id": "v1"}
         )
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         mod._run_async_create_tasks = MagicMock(return_value={"tasks": []})
         mod._activate_tasks_db = MagicMock(return_value=activated)
 
@@ -594,7 +526,6 @@ class TestE2EResumableApproveAfterDbUpdateFailure:
         sys.modules["src.services.workflow_backend_client"] = wbc_stub
 
         mod = _load_approve_mod()
-        mod.get_workspace_context = AsyncMock(return_value=_make_workspace_context())
         mod.get_feature_detail = AsyncMock(
             return_value=_make_feature_detail(stages=stages or _STAGES_TASKS_DRAFT)
         )
@@ -602,7 +533,6 @@ class TestE2EResumableApproveAfterDbUpdateFailure:
         mod.read_document_content = MagicMock(
             return_value={"content": _TASKS_MD, "version_id": "v1"}
         )
-        mod._resolve_management_repo = MagicMock(return_value=(_OWNER, _REPO))
         mod._run_async_create_tasks = create_tasks_side_effect
         mod._activate_tasks_db = MagicMock(return_value=[])
 
@@ -687,9 +617,6 @@ class TestE2EResumableApproveAfterDbUpdateFailure:
 
 def _run_create_tasks_handle(monkeypatch, *, create_mock, tasks_content=_TASKS_MD):
     """Run create_tasks.handle() with all dependencies mocked via sys.modules."""
-    monkeypatch.setenv("GITHUB_TOKEN", _GITHUB_TOKEN)
-    monkeypatch.setenv("MANAGEMENT_REPO_BASE_BRANCH", _BASE_BRANCH)
-
     mod = _load_create_tasks_mod()
     _setup_create_tasks_sys_modules(create_mock=create_mock, tasks_content=tasks_content)
     result = mod.handle(workspace_id=_WORKSPACE_ID, feature_id=_FEATURE_ID)

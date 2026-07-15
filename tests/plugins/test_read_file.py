@@ -123,7 +123,7 @@ def _make_fake_ssc(*, read_return=None, error=None):
             self.reason_code = reason_code
             self.status = status
 
-    fake = types.ModuleType("plugins.storage_service_client")
+    fake = types.ModuleType("plugins.clients.storage_service_client")
     fake.StorageServiceError = _Error
     if error is not None:
         fake.read_document_content = MagicMock(side_effect=error)
@@ -133,7 +133,7 @@ def _make_fake_ssc(*, read_return=None, error=None):
             return_value=read_return or {"content": "", "version_id": None}
         )
         fake.write_document_content = MagicMock(return_value={"ok": True, "version_id": _VERSION_ID})
-    sys.modules["plugins.storage_service_client"] = fake
+    sys.modules["plugins.clients.storage_service_client"] = fake
     return fake
 
 

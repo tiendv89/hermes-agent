@@ -2,7 +2,7 @@
 export
 PORT   ?= 8000
 
-.PHONY: help submodules update-submodules install lint run dev
+.PHONY: help submodules update-submodules install lint test run dev
 help:
 	@echo "Usage: make <target>"
 	@echo ""
@@ -10,11 +10,21 @@ help:
 	@echo "  update-submodules  Pull submodules to latest upstream and commit"
 	@echo "  install            Install dependencies (gateway + vendored hermes-agent)"
 	@echo "  lint               Run ruff over the project (vendor excluded)"
+	@echo "  test               Run the test suite"
 	@echo "  dev                Start with auto-reload"
 	@echo "  run                Start in production mode"
 
 lint:
 	uvx ruff check .
+
+test:
+	env -u WORKFLOW_BACKEND_URL -u WORKFLOW_BACKEND_SERVICE_TOKEN \
+	    -u USER_SERVICE_URL -u USER_SERVICE_TOKEN \
+	    -u STORAGE_SERVICE_URL -u STORAGE_SERVICE_TOKEN \
+	    -u NOTIFICATION_SERVICE_URL -u NOTIFICATION_SERVICE_TOKEN \
+	    -u GITHUB_TOKEN -u GATEWAY_SERVICE_TOKEN \
+	    -u GITNEXUS_MCP_URL -u RAG_MCP_URL -u FIRECRAWL_API_KEY \
+	    uv run pytest tests/ -q
 
 submodules:
 	scripts/sync-submodules.sh

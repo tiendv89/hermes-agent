@@ -69,7 +69,8 @@ def _inject_mock_run_agent():
         "plugins",
         "plugins.context",
         "plugins.skills",
-        "plugins.storage_service_client",
+        "plugins.clients",
+        "plugins.clients.storage_service_client",
     ):
         if _mod_name not in sys.modules:
             sys.modules[_mod_name] = types.ModuleType(_mod_name)
@@ -88,13 +89,17 @@ def _inject_mock_run_agent():
     if not hasattr(skills, "get_shared_rules"):
         skills.get_shared_rules = lambda: None  # type: ignore[attr-defined]
 
-    ssc = sys.modules["plugins.storage_service_client"]
+    clients_pkg = sys.modules["plugins.clients"]
+    if not hasattr(plugins_pkg, "clients"):
+        plugins_pkg.clients = clients_pkg  # type: ignore[attr-defined]
+
+    ssc = sys.modules["plugins.clients.storage_service_client"]
     if not hasattr(ssc, "download_image"):
         ssc.download_image = MagicMock(  # type: ignore[attr-defined]
             return_value={"data": b"", "content_type": "application/octet-stream"}
         )
-    if not hasattr(plugins_pkg, "storage_service_client"):
-        plugins_pkg.storage_service_client = ssc  # type: ignore[attr-defined]
+    if not hasattr(clients_pkg, "storage_service_client"):
+        clients_pkg.storage_service_client = ssc  # type: ignore[attr-defined]
 
 
 def _parse_sse_events(body: bytes) -> list:
@@ -164,10 +169,6 @@ async def test_stream_chat_returns_sse_events(stream_chat_app):
         patch("src.api.routers.chat.touch_session", AsyncMock()),
         patch("src.api.routers.chat.update_session_model", AsyncMock()),
         patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
-        patch(
-            "src.api.routers.chat.default_model",
-            AsyncMock(return_value="claude-sonnet-4-6"),
-        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=stream_chat_app),
@@ -291,7 +292,7 @@ async def test_stream_chat_with_image_ids_downloads_and_injects_local_path(
     sys.modules["run_agent"].AIAgent = _CapturingMockAIAgent  # type: ignore[attr-defined]
 
     mock_download = MagicMock(return_value={"data": b"fake-png-bytes", "content_type": "image/png"})
-    monkeypatch.setattr(sys.modules["plugins.storage_service_client"], "download_image", mock_download)
+    monkeypatch.setattr(sys.modules["plugins.clients.storage_service_client"], "download_image", mock_download)
 
     session_mock = MagicMock()
     session_mock.title = "existing title"
@@ -315,10 +316,6 @@ async def test_stream_chat_with_image_ids_downloads_and_injects_local_path(
         patch("src.api.routers.chat.touch_session", AsyncMock()),
         patch("src.api.routers.chat.update_session_model", AsyncMock()),
         patch("src.api.routers.chat.resolve_model", AsyncMock(return_value=_resolved)),
-        patch(
-            "src.api.routers.chat.default_model",
-            AsyncMock(return_value="claude-sonnet-4-6"),
-        ),
         patch("src.api.scope_guard.is_out_of_scope", return_value=False),
     ):
         async with AsyncClient(
@@ -347,7 +344,7 @@ async def test_stream_chat_with_image_ids_downloads_and_injects_local_path(
     assert "What is in this picture?" in call["message"]
     assert "vision_analyze" in call["message"]
     assert str(tmp_path) in call["message"]
-    assert call["enabled_toolsets"] == ["workflow", "vision"]
+    assert call["enabled_toolsets"] == ["workflow", "web", "clarify", "vision"]
 
     # The downloaded temp file must be cleaned up once the turn finishes.
     chat_images_dir = tmp_path / "cache" / "chat_images"

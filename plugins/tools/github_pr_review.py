@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from ..github_pr_client import (
+from plugins.clients.github_pr_client import (
     parse_pr_url,
     post_issue_comment,
     post_pr_review,

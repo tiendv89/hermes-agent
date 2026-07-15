@@ -41,7 +41,14 @@ sys.path.insert(0, str(REPO_ROOT))
 # ---------------------------------------------------------------------------
 
 def _ensure_plugins_context() -> None:
-    if "plugins.context" in sys.modules:
+    # Other test files (e.g. test_stream_chat.py, test_cancel.py) stub
+    # sys.modules["plugins.context"] with a bare types.ModuleType() that only
+    # carries a few attributes they need. Since sys.modules is process-global,
+    # such a stub can already be cached here by the time this file is
+    # collected — checking for the module's presence alone isn't enough, we
+    # need the real module with get_user_id/get_org_id.
+    existing = sys.modules.get("plugins.context")
+    if existing is not None and hasattr(existing, "get_user_id"):
         return
     ctx_path = REPO_ROOT / "plugins" / "context.py"
     spec = importlib.util.spec_from_file_location("plugins.context", ctx_path)
@@ -58,6 +65,17 @@ def _ensure_plugins_context() -> None:
 
 
 _ensure_plugins_context()
+
+
+@pytest.fixture(autouse=True)
+def _plugins_context_is_real():
+    # Other test files replace sys.modules["plugins.context"] with a stub
+    # while they run (execution happens after collection, so the module-level
+    # call above can't protect against a later swap). Re-assert before every
+    # test in this file so patch("plugins.context.get_user_id", ...) always
+    # resolves against the real module.
+    _ensure_plugins_context()
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -506,6 +524,24 @@ def _fake_request_session(fake_resp):
     return fake_session
 
 
+def _fake_request_session_by_url_suffix(by_suffix: dict):
+    """A fake aiohttp.ClientSession whose .request(...) returns a different
+    fake response depending on the requested URL's suffix — for endpoints
+    that make more than one distinct call per invocation."""
+    fake_session = MagicMock()
+
+    def _pick(method, url, **_kw):
+        for suffix, resp in by_suffix.items():
+            if url.endswith(suffix):
+                return resp
+        raise AssertionError(f"no fake response configured for URL: {url}")
+
+    fake_session.request = MagicMock(side_effect=_pick)
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=False)
+    return fake_session
+
+
 def _fake_response(status, body):
     fake_resp = MagicMock()
     fake_resp.status = status
@@ -613,12 +649,69 @@ class TestCall:
 
 class TestGetWorkspaceContext:
     @pytest.mark.asyncio
-    async def test_shapes_response(self, monkeypatch):
+    async def test_merges_full_repo_list_from_repos_endpoint(self, monkeypatch):
+        """GET /repos returns every registered repo, not just the legacy
+        single repo_url/management_repo_id pair on the workspace detail
+        response — get_workspace_context must surface all of them."""
         mod = _import_call_helpers()
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
 
-        fake_resp = _fake_response(
+        workspace_resp = _fake_response(
+            200,
+            {
+                "success": True,
+                "data": {
+                    "management_repo_id": "mgmt-repo",
+                    "repo_url": "https://github.com/org/mgmt-repo",
+                },
+            },
+        )
+        repos_resp = _fake_response(
+            200,
+            {
+                "success": True,
+                "data": [
+                    {
+                        "id": "row-1",
+                        "repo_id": "mgmt-repo",
+                        "repo_url": "https://github.com/org/mgmt-repo",
+                        "base_branch": "main",
+                        "is_management_repo": True,
+                    },
+                    {
+                        "id": "row-2",
+                        "repo_id": "hermes-agent",
+                        "repo_url": "https://github.com/org/hermes-agent",
+                        "base_branch": "main",
+                        "is_management_repo": False,
+                    },
+                ],
+            },
+        )
+        with patch(
+            "src.services.workflow_backend_client.aiohttp.ClientSession",
+            return_value=_fake_request_session_by_url_suffix(
+                {"/repos": repos_resp, "/workspaces/ws-1": workspace_resp}
+            ),
+        ):
+            result = await mod.get_workspace_context("ws-1", user_id="u", org_id="o")
+
+        assert result["management_repo"] == "mgmt-repo"
+        assert result["repos"] == [
+            {"id": "mgmt-repo", "github": "https://github.com/org/mgmt-repo", "base_branch": "main"},
+            {"id": "hermes-agent", "github": "https://github.com/org/hermes-agent", "base_branch": "main"},
+        ]
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_legacy_repo_url_when_repos_call_fails(self, monkeypatch):
+        """If the /repos lookup itself fails, fall back to the single legacy
+        repo_url/management_repo_id pair rather than returning nothing."""
+        mod = _import_call_helpers()
+        monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
+        monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        workspace_resp = _fake_response(
             200,
             {
                 "success": True,
@@ -628,9 +721,12 @@ class TestGetWorkspaceContext:
                 },
             },
         )
+        repos_resp = _fake_response(500, {"success": False, "error": {"code": "INTERNAL"}})
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
-            return_value=_fake_request_session(fake_resp),
+            return_value=_fake_request_session_by_url_suffix(
+                {"/repos": repos_resp, "/workspaces/ws-1": workspace_resp}
+            ),
         ):
             result = await mod.get_workspace_context("ws-1", user_id="u", org_id="o")
 
@@ -640,17 +736,20 @@ class TestGetWorkspaceContext:
         }
 
     @pytest.mark.asyncio
-    async def test_no_repo_url_gives_empty_repos(self, monkeypatch):
+    async def test_no_repo_url_and_empty_repos_list_gives_empty_repos(self, monkeypatch):
         mod = _import_call_helpers()
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
 
-        fake_resp = _fake_response(
+        workspace_resp = _fake_response(
             200, {"success": True, "data": {"management_repo_id": "mgmt-repo", "repo_url": ""}}
         )
+        repos_resp = _fake_response(200, {"success": True, "data": []})
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
-            return_value=_fake_request_session(fake_resp),
+            return_value=_fake_request_session_by_url_suffix(
+                {"/repos": repos_resp, "/workspaces/ws-1": workspace_resp}
+            ),
         ):
             result = await mod.get_workspace_context("ws-1", user_id="u", org_id="o")
 

@@ -23,7 +23,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from ..github_pr_client import (
+from plugins.clients.github_pr_client import (
     compare_refs,
     get_check_runs,
     get_file_at_ref,

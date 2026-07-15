@@ -118,9 +118,9 @@ the request text alone — ground it in the actual repositories.
 
 Required steps before the write tool is called:
 
-0. **Read the product spec from git (FIRST, before writing a technical design).**
-   Call `read_file(document="product_spec")`. It reads the management repo's
-   feature branch directly, so it returns the spec even when it is unmerged and
+0. **Read the product spec from storage-service (FIRST, before writing a technical design).**
+   Call `read_file(document="product_spec")`. It reads storage-service
+   directly, so it returns the spec even when it is unapproved and
    not yet indexed by RAG. Ground the design in the spec's actual scope — do NOT
    infer scope from RAG, the request text, or sibling features. If it returns
    `exists: false`, stop and tell the human the spec is missing instead of
@@ -137,11 +137,11 @@ Required steps before the write tool is called:
    (e.g. `query="NotificationBell", tool="query", repo="voyager-interface"`),
    not JSON.
 
-**The repo universe comes from GitNexus `list_repos`, not from `workspace.yaml`.**
-If `list_repos` shows the repo you need (even if it is not listed in
-`workspace.yaml` or the injected `repos:` line), query it directly. Do NOT block
-the design on a repo being "registered in `workspace.yaml`" — that registration
-is irrelevant to what you can look up. Use what you find to name real repos,
+**The repo universe comes from GitNexus `list_repos`, not from the injected `repos:` context line.**
+If `list_repos` shows the repo you need (even if it is not in the injected
+`repos:` line from workflow-backend), query it directly. Do NOT block the
+design on a repo being "registered" in workflow-backend — that registration is
+irrelevant to what you can look up. Use what you find to name real repos,
 files, tables, and symbols in the document instead of guessing.
 
 **If RAG and GitNexus genuinely return nothing** (the symbols truly are not
@@ -157,13 +157,13 @@ This applies in interactive sessions and agent runtime alike.
 
 ## Task structure rules
 
-- Tasks are stored as one YAML file per task under `docs/features/<feature_id>/tasks/`
-- Subtasks are recorded inside the parent task file as checklist/log entries
+- Task state lives in workflow-backend's Postgres store (`workspace_tasks`), one row per task
+- Subtasks are recorded inside the parent task's narrative (`tasks.md`) as checklist/log entries
 - Subtasks do not have their own lifecycle status
-- Task lifecycle status exists only at the task file level
+- Task lifecycle status exists only at the task row level
 - One task changes one repository only
 - If a logical change requires edits in two repos (e.g. move a file to repo A and update a reference in repo B), split it into two tasks — one per repo — with the second depending on the first
-- `repo` must be one of the repo names returned by GitNexus `query_gitnexus(tool="list_repos")` — NOT a name from `workspace.yaml` (the injected `repos:` line is the management repo only). Determine each task's repo by querying GitNexus for the symbols/files it touches and using the repo that actually contains them; never guess the repo from the feature title.
+- `repo` must be one of the repo names returned by GitNexus `query_gitnexus(tool="list_repos")` — NOT a name from the injected `repos:` context line. Determine each task's repo by querying GitNexus for the symbols/files it touches and using the repo that actually contains them; never guess the repo from the feature title.
 - Every task must define:
   - `status`
   - `depends_on`
@@ -176,7 +176,7 @@ Valid transitions only — skipping a step is a rule violation:
 
 ```
 todo → ready                  (auto-ready rule, applied by whoever marks the last dependency done)
-ready → in_progress           (start-implementation only)
+ready → in_progress           (orchestrator claim only)
 in_progress → in_review       (agent or human, after work is complete)
 in_progress → blocked         (agent, when blocked)
 in_review → reviewing         (orchestrator, on reviewer dispatch claim — first-push-wins)
@@ -198,16 +198,15 @@ any → cancelled               (human only)
 - `todo → in_progress` is **never valid** — a task must pass through `ready` first.
 - `start-implementation` must hard-stop if the task status is not `ready`.
 - **Unblock target rule**: when a human resolves a block, the target status depends on how far the task had progressed. If `pr.url` is set, reset to `in_review` — the PR already exists and the agent should resume review work. If `pr.url` is null, reset to `ready` — the task has not yet produced a PR and must be re-claimed. Never reset a task to `ready` once a PR has been opened.
-- **Change-requested claim rule**: `change_requested → in_progress` uses the same first-push-wins claim protocol as `ready → in_progress`. The fix agent commits the claim to the management repo task branch before beginning implementation. If the push is rejected (non-fast-forward), the agent must stop — another fix agent won the claim.
-- **Reviewer-dispatch claim rule**: `in_review → reviewing` (and `review_incomplete → reviewing` for retries) uses the same first-push-wins claim protocol as other agent claims. The orchestrator writes a `reviewer_started` log entry and sets status to `reviewing` atomically in the claim commit. The `reviewing` status itself is the duplicate-claim guard — once a task is `reviewing`, other orchestrator instances will not dispatch a second reviewer for the same task.
+- **Claim/dispatch mechanics are the orchestrator's concern, not hermes-agent's.** `ready → in_progress`, `change_requested → in_progress`, `in_review → reviewing`, and `review_incomplete → reviewing` are all claimed atomically by the orchestrator against workflow-backend so two agents can never win the same claim; hermes-agent's own tools do not implement or need to reason about that mechanism — its responsibility ends at creating and approving tasks (see `create_tasks` / `approve_feature`).
 - **Review-passed holding rule**: after a `passed` verdict the task is set to `review_passed`, **not** back to `in_review`. This intentionally deviates from the approved technical design (which specified `reviewing → in_review`): resetting to `in_review` would allow `findReviewableTasks` to dispatch a fresh reviewer while waiting for the impl PR to merge, creating a duplicate-dispatch window. `review_passed` closes that window — it is excluded from `findReviewableTasks` and exists solely as a holding state. The in_review PR poll continues to watch the PR; when GitHub reports `merged: true`, `handleMergedPrs` writes `review_passed → done`.
-- **Review-incomplete retry rule**: `review_incomplete → reviewing` uses the same first-push-wins claim protocol as reviewer dispatch. After `MAX_REVIEW_INCOMPLETES` failures the orchestrator escalates directly to `blocked` instead of retrying.
+- **Review-incomplete retry rule**: after `MAX_REVIEW_INCOMPLETES` failures the orchestrator escalates directly to `blocked` instead of retrying.
 
 ![Task Status Workflow](docs/task-workflow.png)
 
 ## Task log rules
 
-- Every task state change should be recorded in the task file `log`
+- Every task state change should be recorded in the task's `log`
 - Both humans and agents append task log entries when they mutate task state
 - Marking a task `done` requires a human log entry
 - **Timestamp rule**: every log entry `at:` field must use a real local timestamp with timezone offset obtained at the time of the action via `date +%Y-%m-%dT%H:%M:%S%z`. Hardcoded or placeholder timestamps (e.g. `00:00:00Z`) are not acceptable.
@@ -224,30 +223,20 @@ The following `action` values are defined for task log entries:
 
 | Action | Set by | Meaning |
 |---|---|---|
-| `created` | human / tech-lead | task file created during breakdown |
+| `created` | human / tech-lead | task created during breakdown |
 | `ready` | auto-ready rule | task eligible for execution |
-| `claimed` | agent / runtime | status set to `in_progress`, claim commit pushed |
+| `claimed` | agent / runtime | status set to `in_progress` (claimed via the orchestrator) |
 | `rag_pre_flight` | runtime | RAG context injected before executor spawn |
 | `started` | agent | executor work phase begun |
 | `work_phase_complete` | agent | intermediate work phase finished |
 | `blocked` | agent | task set to `blocked` with reason |
-| `reviewer_started` | reviewer agent | Audit-only. Written alongside the `reviewing` status claim commit. The orchestrator must never read this entry to make a dispatch decision; use `task.status === "reviewing"` instead. |
-| `fix_started` | fix agent | Audit-only. Written alongside the `in_progress` status claim commit for fix runs. The orchestrator must never read this entry to make a dispatch decision; use `task.status === "in_progress"` instead. |
+| `reviewer_started` | reviewer agent | Audit-only. Written alongside the `reviewing` status claim. The orchestrator must never read this entry to make a dispatch decision; use `task.status === "reviewing"` instead. |
+| `fix_started` | fix agent | Audit-only. Written alongside the `in_progress` status claim for fix runs. The orchestrator must never read this entry to make a dispatch decision; use `task.status === "in_progress"` instead. |
 | `reviewer_complete` | reviewer agent | reviewer verdict applied — task mutated to `change_requested` (REQUEST_CHANGES) or `review_passed` (APPROVE; awaits impl PR merge) |
 | `review_blocked` | orchestrator | reviewer exited without a valid result — task transitioned to `review_incomplete` for retry; escalates to `blocked` after max attempts |
 | `retried` | orchestrator | max-turns block reset to `ready` for retry |
 | `done` | human or reviewer agent | task work accepted |
 | `cancelled` | human | task cancelled |
-
-## Task file scope
-
-An agent executing task T_x must only write to `T_x.yaml` in the management repo. Writing to any other task file (`T_y.yaml` where y ≠ x) is forbidden — even for valid reasons such as schema migrations, audit entries, or bulk updates.
-
-Cross-cutting changes to multiple task files must be:
-- Planned as a dedicated task with a single executor.
-- Executed with no concurrent runners touching any of the affected files.
-
-This rule preserves the concurrency model: each task YAML is an independent, contention-free write target. The moment an agent writes to a sibling task file, that guarantee breaks.
 
 ## Dependency rules
 
@@ -354,30 +343,17 @@ When a task spec includes a `### Figma` subsection, the Figma design is the sour
 - **Fidelity**: the implemented UI must match the Figma frames for layout, spacing, color tokens, typography, and all interactive states (default, hover, focus, disabled, error, loading). Deviations require an explicit note in the PR description.
 - **No orphan values**: every color, spacing, or typography value used in the implementation must map to a Figma variable or a codebase design token. Hardcoded hex or pixel values that exist in Figma are not acceptable.
 
-## Management repo
+## Task and document storage
 
-The management repo is the repository that stores the workspace's feature docs, task YAML files (`docs/features/<feature_id>/tasks/`), and `CLAUDE.md`. It is the authoritative record of task state and is separate from (or may overlap with) implementation repos.
+Feature documents (`product-spec.md`, `technical-design.md`, `tasks.md`) live in storage-service; task lifecycle state lives in workflow-backend's Postgres store. hermes-agent's own tools (`read_file`, `write_product_spec`, `write_technical_design`, `edit_document`, `approve_feature`, `create_tasks`) talk to those services directly over HTTP — there is no git commit, branch, or PR step in this layer.
 
 Rules:
-- Every workspace must declare exactly one management repo in `workspace.yaml` via `management_repo: <repo_id>`, where the value matches a `repos[].id` entry.
-- The management repo is a required field. Workflow skills that operate on task state must resolve it before proceeding.
-- **Claim commit rule**: before an agent begins implementation work in a target repo, it must commit and push the claim (status change to `in_progress` in `T_x.yaml`) to the management repo on the task's feature branch. If the push is rejected (non-fast-forward), the agent must stop — another agent won the claim.
-- The management repo commit is the canonical record of task ownership. Without it, the claim is not valid and the agent must not proceed with implementation.
-- Agents may only modify their own task file (`T_x.yaml`) in the management repo. See "Task file scope" rule.
-- **Branch merge rule**: when the human marks a task `done`, they must also open a PR on the management repo to merge the task's feature branch into `main`. This keeps `main` up-to-date with all terminal task states and prevents task state from living only on feature branches indefinitely. The `done` log entry and the management repo merge PR must happen together.
-- **Rebase-before-PR rule**: before opening a workspace PR (or pushing the final implementation branch for review), the task branch must be rebased onto its **PR base branch**:
-  - If the task's PR targets `feature/<feature_id>` (intra-feature task — the feature branch exists in the impl repo), rebase onto `origin/feature/<feature_id>`.
-  - If the task's PR targets `<base_branch>` directly, rebase onto `origin/<base_branch>`.
-  - `<base_branch>` is declared in `workspace.yaml` for each repo — do not assume `main`. This prevents duplicate commits from parallel tasks that merged while this task was in flight.
-- **Rebase-before-done rule**: before a workspace PR is merged (and a task marked `done`), the task branch must be rebased onto its PR base branch (see Rebase-before-PR rule above). A PR whose branch is not up-to-date with the base branch must not be merged — rebase it first, then merge. This applies to both the management repo PR and any implementation repo PR for the same task.
-- **Mergeable-before-close rule**: before the runtime merges the workspace PR, it checks whether the PR is in a mergeable state. If the PR is `CONFLICTING` (`mergeable: false`), the merge is skipped and a `workspace_pr_not_mergeable` event is emitted — the PR is left open. The task YAML remains `done`; only the workspace PR merge is deferred. If mergeability is `UNKNOWN` (GitHub has not finished computing it), the merge proceeds and any error is handled by the existing `workspace_pr_merge_failed` path. Operators must resolve the conflict on the feature branch and push before the next recovery cycle will retry.
-- **No direct push to main rule**: nothing may be committed directly to `main` on the management repo — not task state, not feature docs, not skill updates, not workspace initialisation, not any other change. Every write to the management repo must land on a feature branch and be merged via PR. This applies to agents, workflow skills (`init-feature`, `approve-feature`, `init-workspace`, etc.), and humans alike. No exceptions.
-- **Dependency unblock rule**: whenever a task is marked `done`, immediately check every other task in the same feature whose `depends_on` list includes the just-completed task. For each such task where all `depends_on` entries are now `done`, transition its status from `todo` to `ready` and append a `ready` log entry. This must happen in the same commit as the `done` update.
-- **Task branch rule**: every commit to the management repo during task execution must land on the task's feature branch, not on `main`. Before committing, follow the **branch checkout + sync protocol** below. This rule applies to all management repo writes during a task — claim commits, status updates, log entries, and log file flushes.
+- **Dependency unblock rule**: whenever a task is marked `done`, immediately check every other task in the same feature whose `depends_on` list includes the just-completed task. For each such task where all `depends_on` entries are now `done`, transition its status from `todo` to `ready` and append a `ready` log entry.
+- Task claiming and dispatch (who gets to work a `ready` task, reviewer assignment, etc.) belong entirely to the external orchestrator — see the note under Task status transition rules above. hermes-agent's tools create tasks (`create_tasks`) and advance/approve stages (`approve_feature`); they do not claim or execute them.
 
 ## Branch checkout + sync protocol
 
-This protocol applies before any commit to **both the management repo and implementation repos** during task execution. Run it whenever switching to or working on a feature branch.
+This protocol applies before any commit to an **implementation repo** during task execution — the actual code changes for a task. Run it whenever switching to or working on a feature branch.
 
 ### Step 1 — Ensure you are on the feature branch
 
@@ -404,8 +380,6 @@ To check whether the feature branch exists:
 git fetch origin
 git show-ref --verify --quiet refs/remotes/origin/feature/<feature_id> && echo "exists" || echo "absent"
 ```
-
-**For the management repo** — always create from `main` (task branches in the management repo are always rooted at `main`).
 
 ### Step 2 — Pull latest from origin
 
@@ -453,17 +427,15 @@ git rebase origin/<pr_base_branch>
 
 Where `<pr_base_branch>` is:
 - `feature/<feature_id>` — if this is an intra-feature task (i.e., `origin/feature/<feature_id>` exists in the impl repo and the task's PR will target it).
-- `<base_branch>` from `workspace.yaml` — for standalone tasks whose PR targets the repo's main integration branch directly.
+- `<base_branch>` — the repo's registered base branch (from workspace context) — for standalone tasks whose PR targets the repo's main integration branch directly.
 
-Do not hardcode `main`. Always resolve from `workspace.yaml` and check for the feature branch first.
+Do not hardcode `main`. Always resolve the repo's base branch from workspace context and check for the feature branch first.
 
 This keeps history linear and ensures the task branch includes all prior work from sibling tasks that have already merged into the feature branch.
 
 ### Scope
 
-This protocol applies to:
-- The **management repo** — before every task state write (claim, status update, log entry, log flush).
-- **Implementation repos** — before every implementation commit during task execution.
+This protocol applies to implementation repos, before every implementation commit during task execution.
 
 ## Git / SSH rules
 
@@ -485,52 +457,8 @@ if either fails:
 On hard-stop, report the exact output of the failing check and wait for the user to
 resolve it (e.g. push, stash, or explicitly confirm discard) before proceeding.
 
-This rule applies to every repo touched in the workflow — implementation repos,
-management repos, and the workflow repo itself.
-
-## Pre-push checks rule
-
-Before pushing any branch, run all tests and lint checks. Do not push if any tests fail or lint errors exist.
-
-- Detect the test runner from the project (`package.json`, `Makefile`, `go.mod`, `pytest.ini`, etc.). Do not assume a specific runner.
-- Run the full test suite, not a subset.
-- Run the project's lint step (`eslint`, `golangci-lint`, `ruff check`, `flake8`, etc.) and fix all errors. Warnings are acceptable; errors are not.
-- **Go projects**: `golangci-lint run` is mandatory before every commit — zero errors required. Install: `go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest`
-- Fix any failures and re-run until clean before pushing.
-
-## Test-before-PR rule
-
-- **Always run the full test suite before opening a PR.** This applies to every task, every workflow, every agent context.
-- Use whatever test commands the implementation repo specifies — check the README, `package.json`, `Makefile`, `go.mod`, or equivalent build config. Do not assume a specific test runner or language.
-- All tests must pass before invoking `pr-create`. Fix any failures and re-run until clean.
-- **Default (interactive runs):** do not open a PR for failing tests. Hard-stop, set `status: blocked`, write `blocked_reason: tests_failed`, surface to the user.
-- **Agent-runtime exception (`AGENT_RUNTIME=1`):** if tests cannot be made to pass after **3 attempts**, the agent **must still open a draft PR** documenting the failed attempt, and write `result.json` with `terminal_status: blocked, blocked_reason: tests_failed, pr_url: <URL>`. Rationale: in agent-runtime mode the PR is the durable handover — without it, the next agent has no branch to inherit and the failed attempt is invisible. The orchestrator routes the blocked result to a fix agent / reviewer on the next cycle. This carve-out is product-vision sanctioned (revised D5 in the orchestrator design); do not read the default rule as forbidding it.
-
-## PR creation rule
-
-- **Do not use `gh` CLI to create pull requests.** Use the `pr-create` skill instead.
-- `pr-create` uses the GitHub REST API via `curl` with `GITHUB_TOKEN` from project `.env` — this avoids requiring `gh` to be installed on the host or in agent containers.
-- Any workflow skill or agent that needs to open a PR must invoke `pr-create` rather than calling `gh pr create` directly.
-- `GITHUB_TOKEN` is required in project `.env` for PR creation. If missing, `pr-create` falls back to `~/.config/gh/hosts.yml`.
-
-## PR title convention
-
-PR titles must follow the format:
-
-```
-<type>(<featureId>/T<n>): <short description>
-```
-
-Examples:
-- `feat(task-branch-lifecycle/T1): taskBranchName helper + BlockedContext schema`
-- `fix(agent-runtime-hardening/T3): correct Dockerfile claude CLI install path`
-
-Rules:
-- `<type>` follows conventional commits (`feat`, `fix`, `chore`, `refactor`, `docs`, etc.)
-- `<featureId>` is the feature directory name under `docs/features/`
-- `T<n>` is the task ID
-- Description is lowercase, imperative, no trailing period
-- Keep the full title under 72 characters
+This rule applies to every repo touched in the workflow — implementation repos
+and the workflow repo itself.
 
 ## Shared environment resolution rule
 
@@ -554,11 +482,11 @@ See `tasks.md`'s `### Required skills` subsection as the source of truth for per
 
 ## Narrative / state split
 
-Task YAML files (`tasks/T<n>.yaml`) contain only machine-mutable state: `status`, `depends_on`, `blocked_reason`, `branch`, `execution`, `pr`, `log`. Agents read and write these files.
+Each task's machine-mutable state — `status`, `depends_on`, `blocked_reason`, `branch`, `execution`, `pr`, `log` — lives in workflow-backend's Postgres store, one row per task.
 
 Logical intent — description, subtasks, required skills, model overrides — lives in `tasks.md`. This file is authored by humans (or the tech-lead skill) and stays stable during implementation. Agents read it but do not modify it except to check off subtask items.
 
-This split isolates git-push contention: multiple agents can mutate separate task YAMLs in parallel without conflicting on a shared narrative file.
+This split isolates write contention: multiple agents can mutate separate task rows in parallel without conflicting on a shared narrative file.
 
 ## Product-spec phase write boundary
 
@@ -567,7 +495,7 @@ During the `product_spec` stage, agents must not write or modify any file outsid
 If workspace-level changes are discovered as needed (e.g. missing repo entries, config typos, new skills, rule updates), the agent must **stop and list them explicitly for the human** instead of applying them. The human decides whether to apply them before or after the product spec is approved.
 
 Examples of changes that must be surfaced, not applied:
-- Edits to `workspace.yaml`, `CLAUDE.md`, `.env`, `.env.template`
+- Edits to `CLAUDE.md`, `.env`, `.env.template`
 - Creating or modifying skills under `claude/technical_skills/`
 - Registering new repos or roles
 - Any file outside `docs/features/<feature_id>/product-spec.md`
@@ -592,6 +520,8 @@ Edit the project-specific section of `CLAUDE.md` directly — the content above 
 
 ### Uncertain
 If it is not clear whether the change is common or workspace-specific, **stop and ask the human** before making any edit.
+
+`CLAUDE.md` is a storage-service document (a workspace-root file), not a git file — see `sync-workspace-rules` for how it is kept in sync with the shared rules.
 
 ## Shell command permission policy
 
@@ -669,7 +599,7 @@ This rule applies in both interactive sessions and agent runtime. Its purpose is
 
 When the `query_gitnexus` tool is available, use it for structural code questions before falling back to grep or file reads. It is a single tool with a `tool=` selector (NOT separate `mcp__gitnexus__*` tools) plus a `repo=` argument.
 
-**GitNexus is the source of truth for which repos exist.** Discover repos from GitNexus — do NOT rely on `workspace.yaml` or the injected `repos:` list to decide what you can query. A repo being indexed in GitNexus is sufficient; it does not need to be registered in `workspace.yaml`.
+**GitNexus is the source of truth for which repos exist.** Discover repos from GitNexus — do NOT rely on the injected `repos:` context line to decide what you can query. A repo being indexed in GitNexus is sufficient; it does not need to be separately registered.
 
 **Lookup order:**
 1. `query_gitnexus(tool="list_repos")` — FIRST, to see which repos are indexed and pick the target repo name (e.g. `voyager-interface`).
@@ -700,27 +630,35 @@ Every document folder — a feature's `docs/features/<feature_id>/` folder and w
 **For best performance, combine the two — don't treat one as a strict fallback of the other:**
 1. **`query_rag` first, for discovery.** It's a fast semantic search across every indexed document in the org/workspace, so it's the cheapest way to find *which* document(s) are relevant when you don't already know the exact path — no need to enumerate features or guess filenames.
 2. **Then read the full file** for anything RAG surfaced that you're going to rely on: `read_file` / `read_file` for a feature's canonical docs (`product_spec`, `technical_design`, `status`) or any other file in its folder, or `read_workspace_file` for a workspace-root document. RAG returns ranked *chunks/excerpts*, not the complete current file — don't ground a design, an edit, or an answer in a chunk alone when the full, current document is one more call away.
-3. **Skip straight to the read tools (no RAG call) when you already know the exact path** — e.g. you're re-reading a document you just wrote, or the design-phase context-gathering rule above sends you to `read_file(document="product_spec")` first specifically because it may be unmerged and not yet indexed.
+3. **Skip straight to the read tools (no RAG call) when you already know the exact path** — e.g. you're re-reading a document you just wrote, or the design-phase context-gathering rule above sends you to `read_file(document="product_spec")` first specifically because it may be unapproved and not yet indexed.
 4. **Fall back to reading directly, bypassing RAG, only when RAG is unavailable** — unconfigured/unreachable (`query_rag` reports no `RAG_MCP_URL` or an error) — or returns nothing for a document you have reason to believe exists. Use `list_documents` (below) to browse the folder tree when you don't know the exact path and RAG can't help you find it.
 
-**Walking the document folder tree.** Use `list_documents` to browse a workspace's or feature's document folder the way you would a local filesystem — call it with no `path` to see the workspace root's immediate folders/files, then call again with a returned folder path to descend, e.g. `path="docs/features/my-feature"`. This is go-owned/storage-service scoped only: ts-owned feature documents live in git and won't appear in this listing — use `read_file` directly for those, there is no folder-listing tool for the git-backed path yet.
+**Walking the document folder tree.** Use `list_documents` to browse a workspace's or feature's document folder the way you would a local filesystem — call it with no `path` to see the workspace root's immediate folders/files, then call again with a returned folder path to descend, e.g. `path="docs/features/my-feature"`.
 
-**"Workspace context" requests need documents too, not just repos.** `get_workspace_context` only returns the management repo and registered implementation repos (from `workspace.yaml`) — it has no visibility into uploaded documents. When the user asks about "workspace context" or "what's in this workspace," don't answer from `get_workspace_context` alone: also call `list_documents` (no `path`, for the workspace root) to surface uploaded workspace-root files and feature document folders, and use `query_rag` when the user's question points at specific content rather than just a listing. Present both the repo/management info and the document listing together.
+**"Workspace context" requests need documents too, not just repos.**`get_workspace_context` returns the workspace's implementation repos from workflow-backend's own record, and it has no visibility into uploaded documents. When the user asks about "workspace context" or "what's in this workspace," don't answer from `get_workspace_context` alone:
+- Call `list_documents` (no `path`, for the workspace root) to surface uploaded workspace-root files and feature document folders — check for a workspace summary/overview document there (e.g. an `overview.md` or similarly named file) and read it if present.
+- Call `query_rag` when the user's question points at specific content rather than just a listing.
+- Present the repo info, the document listing, and any summary document content together.
 
-## status.yaml — feature-branch fields
+## No invented slash-commands (IMPORTANT)
 
-The `status.yaml` file in each feature directory tracks both stage-level review state and
-orchestrator-managed branch/drift metadata. The following fields are written and read by the
-orchestrator; they are not present in hand-authored status files until the orchestrator creates them.
+There is no slash-command parser in this product. When telling the human what
+to do next — in your own prose, not just `suggest_next_actions` CTAs — never
+write things like "say `/approve-tech-design`" or "run `/start-implementation`".
+These look like real commands but are not: there is no skill or handler behind
+them, and if the human actually types one back it is submitted as a plain chat
+message that you then have to interpret from scratch. Describe the next step
+in plain language instead (e.g. "tell me to approve the technical design," or
+just call the tool yourself when the human confirms) — the only real actions
+are the registered tools (`approve_feature`, `create_tasks`, etc.) and the
+skills that actually exist in the bundle.
 
-| Field | Type | Written by | Description |
-|---|---|---|---|
-| `feature_branch` | string | orchestrator (Feature Branch Lifecycle Manager, T8) | Branch name for the feature, e.g. `feature/{feature_id}`. Written once on first orchestrator run; never overwritten. |
-| `feature_branch_base_sha` | string | orchestrator (Feature Branch Lifecycle Manager, T8) | `git merge-base` SHA at the time the feature branch was created from the base branch. Used by the drift daemon to detect base-branch divergence. Never overwritten after initial write. |
-| `handoff_pr_url` | string or null | orchestrator (Handoff Trigger) | URL of the management repo feature branch PR (`feature/{feature_id}` → `main`). Set when the Handoff Trigger fires; `null` until then. |
-| `impl_feature_prs` | list | orchestrator (Handoff Trigger, autonomous-feature-reviewer T2) | Implementation repo feature branch PRs opened by the Handoff Trigger. Each entry: `repo` (matches `workspace.yaml repos[].id`), `url` (GitHub PR URL), `status` (`"open"` \| `"merged"`). Absent until handoff; if absent, Feature Done Watcher checks only `handoff_pr_url`. |
-| `drift_detected` | boolean | autonomous-feature-reviewer daemon | `true` when the drift daemon detects that the base branch has advanced past `feature_branch_base_sha`. Reset to `false` once the feature branch is rebased. |
-| `drift_reason` | string or null | autonomous-feature-reviewer daemon | Human-readable description of the detected drift (e.g. conflicting commit SHA and summary). `null` when `drift_detected` is `false`. |
+This cuts both ways: if the human types something slash-shaped that names a
+real tool (e.g. `/tool_name`, `/tool-name`, `/tool name`), treat the leading
+slash and any hyphen/underscore/space variation as pure formatting, not a
+distinct command. Match it against the actual registered tool names and call
+the one it refers to; do not treat it as an unrecognized command or ask the
+human to reformat it.
 
 ## Suggesting next actions
 
@@ -735,7 +673,14 @@ After delivering your main response, you MAY call `suggest_next_actions` with
   next step exists.
 - Never suggest more than 3 options.
 - `action_text` must be the literal text that will be submitted as the user's
-  next message (e.g. "/approve-product-spec").
+  next message. Use plain natural language that maps to a real tool call,
+  e.g. `"Approve the product spec"` (→ `approve_feature(stage="product_spec")`)
+  or `"Approve the technical design"` (→ `approve_feature(stage="technical_design")`).
+  **Never invent a slash-command-looking string** (e.g. `/approve-tech-design`,
+  `/start-implementation`) — there is no command parser for these; they are
+  not real, they do not exist as skills, and typing one back just resubmits
+  that literal text as an ordinary chat message. Only `approve_feature`,
+  `create_tasks`, and the other registered tools are real actions.
 - `button_label` is the human-facing button text (3–4 words max, ≤ 20 chars).
 
 ## Scope — final reminder (IMPORTANT)

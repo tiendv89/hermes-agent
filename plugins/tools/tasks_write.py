@@ -11,7 +11,7 @@ import re
 from typing import Any, Dict, List
 
 from ..skills import get_index
-from ..storage_service_client import StorageServiceError, write_document_content
+from plugins.clients.storage_service_client import StorageServiceError, write_document_content
 from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ SCHEMA: Dict[str, Any] = {
         "content — never infer tasks from RAG or the request text. "
         "Each task's 'repo' MUST be a real repo name from query_gitnexus(tool='list_repos'); "
         "determine it by querying GitNexus for the symbols/files the task touches and using the "
-        "repo that contains them — do NOT guess the repo from the feature title or use workspace.yaml. "
+        "repo that contains them — do NOT guess the repo from the feature title. "
         "If the technical design leaves the breakdown itself ambiguous — unclear task ownership "
         "(agent vs. human), unclear sequencing/dependencies, or a scope split GitNexus can't "
         "resolve — use the clarify tool to ask the user before writing, rather than guessing "

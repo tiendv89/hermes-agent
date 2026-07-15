@@ -7,7 +7,7 @@ Covers:
   - handle: missing feature_ref returns ok=False
   - handle: invalid feature_ref characters return ok=False
   - handle: DB unavailable returns ok=False
-  - handle: synopsis extracted from product-spec.md when GITHUB_TOKEN is set
+  - handle: synopsis extracted from product-spec.md via storage-service
   - handle: synopsis fetch failure is silent (graceful degradation)
   - check_available: returns True for non-feature sessions with workflow DB
   - check_available: returns False when feature_id is set (feature-scoped session)
@@ -304,10 +304,9 @@ class TestHandleLookupFeature:
         # Must always use the workspace from context, not a caller-supplied one.
         assert mock_fn.call_args.args == ("correct-workspace", "my-feat")
 
-    def test_synopsis_extracted_when_github_token_set(self, monkeypatch):
+    def test_synopsis_extracted_from_storage_service(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-9", "ws-1", "")
@@ -321,16 +320,11 @@ class TestHandleLookupFeature:
             "owner": None,
             "init_pr_url": None,
         }
-        fake_doc = {"content": "# Title\n\nThis is the feature synopsis.", "sha": "abc"}
+        fake_doc = {"content": "# Title\n\nThis is the feature synopsis.", "version_id": "v1"}
 
         with (
             patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)),
-            patch("src.services.workflow_backend_client.get_workspace_context", AsyncMock(return_value={"management_repo": "mgmt", "repos": []})),
-            patch(
-                "plugins.tools.artifacts._resolve_management_repo",
-                return_value=("owner", "repo"),
-            ),
-            patch("plugins.document_repo.read_document", return_value=fake_doc),
+            patch("plugins.clients.storage_service_client.read_document_content", return_value=fake_doc),
         ):
             from plugins.tools.lookup_feature import handle
 
@@ -339,7 +333,7 @@ class TestHandleLookupFeature:
         assert result["ok"] is True
         assert result["synopsis"] == "This is the feature synopsis."
 
-    def test_synopsis_empty_when_no_github_token(self, monkeypatch):
+    def test_synopsis_empty_when_storage_service_returns_nothing(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
         import plugins.context as ctx
@@ -355,7 +349,13 @@ class TestHandleLookupFeature:
             "owner": None,
             "init_pr_url": None,
         }
-        with patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)):
+        with (
+            patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)),
+            patch(
+                "plugins.clients.storage_service_client.read_document_content",
+                return_value={"content": "", "version_id": None},
+            ),
+        ):
             from plugins.tools.lookup_feature import handle
 
             result = handle(feature_ref="my-feat")
@@ -366,7 +366,6 @@ class TestHandleLookupFeature:
     def test_synopsis_failure_is_silent(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
         import plugins.context as ctx
 
         ctx.set_context("sess-lookup-11", "ws-1", "")
@@ -383,8 +382,8 @@ class TestHandleLookupFeature:
         with (
             patch("src.services.workflow_backend_client.get_feature_detail", AsyncMock(return_value=fake_detail)),
             patch(
-                "src.services.workflow_backend_client.get_workspace_context",
-                AsyncMock(side_effect=RuntimeError("network error")),
+                "plugins.clients.storage_service_client.read_document_content",
+                side_effect=RuntimeError("network error"),
             ),
         ):
             from plugins.tools.lookup_feature import handle

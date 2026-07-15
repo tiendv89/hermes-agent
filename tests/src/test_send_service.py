@@ -270,7 +270,7 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
     session.kind = "thread"
     session.feature_id = "feat-1"
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     # Members mock
     members_result = MagicMock()
@@ -283,11 +283,11 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=42)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -339,16 +339,16 @@ async def test_send_message_forwards_image_ids_to_schedule_agent_turn():
     session.kind = "thread"
     session.feature_id = "feat-1"
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=42)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -397,16 +397,16 @@ async def test_send_message_without_image_ids_defaults_to_empty_list():
     session.kind = "thread"
     session.feature_id = "feat-1"
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=42)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -454,11 +454,12 @@ async def test_send_message_channel_bare_no_agent():
     session.kind = "channel"
     session.feature_id = ""
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=10)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
@@ -504,16 +505,16 @@ async def test_send_message_feature_thread_bare_triggers():
     session.kind = "thread"
     session.feature_id = "feat-xyz"
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=7)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -543,7 +544,7 @@ async def test_send_message_feature_thread_bare_triggers():
 async def test_send_message_not_member_returns_403():
     """Caller who is neither owner nor member gets 403."""
     _inject_stub_modules()
-    from fastapi import FastAPI
+    from fastapi import FastAPI, HTTPException
     from httpx import ASGITransport, AsyncClient
     from src.api.routers.messages import router as messages_router
 
@@ -564,7 +565,10 @@ async def test_send_message_not_member_returns_403():
 
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.messages.authorize_thread_access",
+            AsyncMock(side_effect=HTTPException(status_code=403, detail="Not a member of this thread.")),
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -785,11 +789,12 @@ async def test_send_message_dm_bare_no_agent():
     session.kind = "dm"
     session.feature_id = ""
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=20)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
@@ -835,16 +840,16 @@ async def test_send_message_dm_explicit_agent_triggers():
     session.kind = "dm"
     session.feature_id = ""
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=21)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -976,16 +981,16 @@ async def test_send_message_channel_top_level_agent_mention_opens_thread():
     session.kind = "channel"
     session.feature_id = ""
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=100)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -1037,16 +1042,16 @@ async def test_send_message_dm_top_level_agent_mention_opens_thread():
     session.kind = "dm"
     session.feature_id = ""
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=200)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(
@@ -1098,16 +1103,16 @@ async def test_send_message_feature_thread_top_level_agent_stays_flat():
     session.kind = "thread"
     session.feature_id = "feat-abc"
     session.workspace_id = "ws-1"
-    session.model = None
+    session.model = "test-model"  # no server-side default model — the session must carry one
 
     _model = {"model": "test-model", "provider": None, "api_key": None, "base_url": None}
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=300)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),
-        patch("src.api.routers.messages.default_model", AsyncMock(return_value="test-model")),
         patch("src.api.routers.messages.resolve_model", AsyncMock(return_value=_model)),
         patch("src.api.routers.messages.update_session_model", AsyncMock()),
         patch(

@@ -19,6 +19,7 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -394,7 +395,10 @@ async def test_stream_non_member_returns_403():
 
     with (
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.stream.authorize_thread_access",
+            AsyncMock(side_effect=HTTPException(status_code=403, detail="Not a member of this thread.")),
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -483,7 +487,8 @@ async def test_stream_owner_can_connect_and_receives_events():
 
     with (
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.stream.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.stream.add_member", AsyncMock()),
         patch("src.api.routers.stream.get_messages_since", AsyncMock(return_value=[])),
     ):
         asyncio.create_task(_send_and_terminate())
@@ -556,7 +561,8 @@ async def test_stream_replays_since_messages():
 
     with (
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.stream.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.stream.add_member", AsyncMock()),
         patch(
             "src.api.routers.stream.get_messages_since", AsyncMock(return_value=missed)
         ) as mock_since,
@@ -630,7 +636,8 @@ async def test_typing_published_not_persisted():
 
     with (
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
+        patch("src.api.routers.stream.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.stream.add_member", AsyncMock()),
         patch("src.api.routers.stream.get_bus", return_value=fake_bus),
     ):
         async with AsyncClient(
@@ -676,7 +683,10 @@ async def test_typing_non_member_returns_403():
 
     with (
         patch("src.api.routers.stream.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.stream.is_member", AsyncMock(return_value=False)),
+        patch(
+            "src.api.routers.stream.authorize_thread_access",
+            AsyncMock(side_effect=HTTPException(status_code=403, detail="Not a member of this thread.")),
+        ),
     ):
         async with AsyncClient(
             transport=ASGITransport(app=app), base_url="http://test"
@@ -776,8 +786,9 @@ async def test_send_message_publishes_to_bus():
 
     with (
         patch("src.api.routers.messages.get_session", AsyncMock(return_value=session)),
-        patch("src.api.routers.messages.is_member", AsyncMock(return_value=False)),
-        patch("src.api.routers.messages.list_members", AsyncMock(return_value=[])),
+        patch("src.api.routers.messages.authorize_thread_access", AsyncMock(return_value=(True, "org-1"))),
+        patch("src.api.routers.messages.add_member", AsyncMock()),
+        patch("src.api.routers.messages.mention_candidates", AsyncMock(return_value=[])),
         patch("src.api.routers.messages.append_message", AsyncMock(return_value=55)),
         patch("src.api.routers.messages.persist_mentions", AsyncMock()),
         patch("src.api.routers.messages.touch_session", AsyncMock()),

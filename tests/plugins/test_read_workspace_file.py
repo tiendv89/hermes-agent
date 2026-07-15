@@ -131,7 +131,7 @@ class TestHandleReadWorkspaceFile:
         import plugins.context as ctx
 
         ctx.set_context("sess-7", "ws-1", "")
-        from plugins.storage_service_client import StorageServiceError
+        from plugins.clients.storage_service_client import StorageServiceError
 
         with patch(
             "plugins.tools.read_workspace_file.read_document_content",

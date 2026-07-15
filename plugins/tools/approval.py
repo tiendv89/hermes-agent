@@ -2,13 +2,12 @@
 
 Surfaces an Approve/Reject/Re-open control card for the human; writes nothing.
 The agent calls this to signal that a stage is ready for human review.
-The actual state mutation happens via POST /api/v1/features/{id}/stage-transition.
+The actual state mutation happens via the approve_feature tool.
 """
 
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -41,57 +40,24 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def _read_review_status(feature_id: str, stage: str) -> str:
-    """Return the current review_status for *stage* from status.yaml on the feature branch.
+def _read_review_status(workspace_id: str, feature_id: str, stage: str) -> str:
+    """Return the current review_status for *stage* from workflow-backend's feature detail.
 
-    Returns ``"draft"`` when the file or stage key is absent, ``"unknown"`` on errors.
+    Returns ``"draft"`` when the stage key is absent, ``"unknown"`` on errors.
     """
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    workspace_id = os.environ.get("WORKSPACE_ID", "").strip()
-    if not github_token or not workspace_id:
+    if not workspace_id:
         return "unknown"
 
     try:
-        import yaml
-
         from ..context import get_org_id, get_user_id
-        from ..document_repo import branch_exists, read_document
-        from .artifacts import _resolve_management_repo
-        from src.services.workflow_backend_client import get_feature_detail, get_workspace_context, run_async
+        from src.services.workflow_backend_client import get_feature_detail, run_async
 
-        # Capture identity on this (calling) thread — run_async may bridge
-        # onto a different thread, where thread-local context is unset.
         caller_user_id = get_user_id()
         caller_org_id = get_org_id()
 
-        workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
-        owner, repo = _resolve_management_repo(workspace_context)
-
-        # All git artifacts are slug-keyed. Resolve the slug and prefer the
-        # init branch when the init PR is still open.
-        slug = feature_id
-        init_pr_url = None
-        try:
-            detail = run_async(get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id))
-            slug = detail.get("feature_name") or feature_id
-            init_pr_url = detail.get("init_pr_url")
-        except Exception:
-            pass
-
-        path = f"docs/features/{slug}/status.yaml"
-        branch = f"feature/{slug}"
-        if init_pr_url:
-            init_branch = f"feature/{slug}-init"
-            if branch_exists(owner, repo, init_branch, github_token):
-                branch = init_branch
-
-        result = read_document(owner, repo, branch, path, github_token)
-        if not result["content"]:
-            return "draft"
-
-        status_data = yaml.safe_load(result["content"])
+        detail = run_async(get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id))
         return (
-            status_data.get("stages", {})
+            (detail.get("stages") or {})
             .get(stage, {})
             .get("review_status", "draft")
         ) or "draft"
@@ -101,9 +67,10 @@ def _read_review_status(feature_id: str, stage: str) -> str:
 
 
 def handle(stage: str, feature_id: str = "", **_: Any) -> Dict[str, Any]:
-    from ..context import get_feature_id
+    from ..context import get_feature_id, get_workspace_id
 
     fid = feature_id or get_feature_id()
+    wid = get_workspace_id()
     if not fid:
         return {
             "ok": False,
@@ -116,7 +83,7 @@ def handle(stage: str, feature_id: str = "", **_: Any) -> Dict[str, Any]:
             "error": f"Invalid stage {stage!r}. Must be one of {sorted(_VALID_STAGES)}.",
         }
 
-    review_status = _read_review_status(fid, stage)
+    review_status = _read_review_status(wid, fid, stage)
     return {
         "ok": True,
         "approval_request": {

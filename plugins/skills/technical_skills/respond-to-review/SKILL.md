@@ -323,7 +323,7 @@ The orchestrator reads this and writes `conflict_state: resolved` to the task YA
 ## Hard rules (both modes)
 
 1. **Write result.json to `$RESULT_PATH` before exit.** Mandatory — a text-only response without it is a failure.
-2. **Do not modify the task YAML or any management-repo file.** The orchestrator owns workflow state.
+2. **Do not modify task state directly.** The orchestrator owns workflow state.
 3. **Stay in scope.** Spec docs (product-spec, technical-design, tasks.md) are the source of truth. If a review comment contradicts the spec, log the conflict in result.json `notes` and do not silently comply.
 4. **Code 127 (missing tool)** → write `{"terminal_status": "blocked", "blocked_reason": "missing_tool"}` and exit. Do not try to install system tools.
 5. **No --force without `--force-with-lease`.** Especially in B.4 — guards against clobbering concurrent pushes.

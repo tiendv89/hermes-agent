@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict
 
-from ..storage_service_client import StorageServiceError, read_document_content
+from plugins.clients.storage_service_client import StorageServiceError, read_document_content
 from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)

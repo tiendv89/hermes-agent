@@ -44,26 +44,26 @@ def _clean_modules():
 
 class TestParsePrUrl:
     def test_valid_url(self):
-        from plugins.github_pr_client import parse_pr_url
+        from plugins.clients.github_pr_client import parse_pr_url
         owner, repo, num = parse_pr_url("https://github.com/acme/my-repo/pull/42")
         assert owner == "acme"
         assert repo == "my-repo"
         assert num == 42
 
     def test_valid_url_http(self):
-        from plugins.github_pr_client import parse_pr_url
+        from plugins.clients.github_pr_client import parse_pr_url
         owner, repo, num = parse_pr_url("http://github.com/org/repo/pull/1")
         assert owner == "org"
         assert repo == "repo"
         assert num == 1
 
     def test_invalid_url_raises(self):
-        from plugins.github_pr_client import parse_pr_url
+        from plugins.clients.github_pr_client import parse_pr_url
         with pytest.raises(ValueError, match="Invalid GitHub PR URL"):
             parse_pr_url("https://example.com/not-a-pr")
 
     def test_missing_pull_number_raises(self):
-        from plugins.github_pr_client import parse_pr_url
+        from plugins.clients.github_pr_client import parse_pr_url
         with pytest.raises(ValueError):
             parse_pr_url("https://github.com/owner/repo/issues/5")
 
@@ -122,7 +122,7 @@ class TestHandleDiff:
         mock_resp = MagicMock()
         mock_resp.text = "diff --git a/foo.py b/foo.py\n+line"
         mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="diff", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -149,7 +149,7 @@ class TestHandleFiles:
             {"filename": "a.py", "status": "modified", "additions": 5, "deletions": 2, "changes": 7}
         ]
         mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="files", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -184,7 +184,7 @@ class TestHandleMetadata:
             "updated_at": "2026-01-02T00:00:00Z",
         }
         mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="metadata", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -224,7 +224,7 @@ class TestHandleComments:
             call_count[0] += 1
             return resp
 
-        with patch("plugins.github_pr_client.requests.get", side_effect=fake_get):
+        with patch("plugins.clients.github_pr_client.requests.get", side_effect=fake_get):
             from plugins.tools.github_pr_context import handle
             result = handle(action="comments", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -251,7 +251,7 @@ class TestHandleReviews:
             }
         ]
         mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="reviews", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -288,7 +288,7 @@ class TestHandleChecks:
         }
         responses = iter([meta_resp, checks_resp])
 
-        with patch("plugins.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
             from plugins.tools.github_pr_context import handle
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -320,8 +320,8 @@ class TestHandleChecks:
         }
         responses = iter([meta_resp, checks_resp])
 
-        with patch("plugins.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
-            with patch("plugins.github_pr_client.time.sleep"):  # don't actually sleep
+        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+            with patch("plugins.clients.github_pr_client.time.sleep"):  # don't actually sleep
                 from plugins.tools.github_pr_context import handle
                 result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -349,7 +349,7 @@ class TestHandleChecks:
             ]
         }
         responses = iter([meta_resp, checks_resp])
-        with patch("plugins.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
             from plugins.tools.github_pr_context import handle
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -371,7 +371,7 @@ class TestHandleChecks:
         checks_resp.raise_for_status = MagicMock()
         checks_resp.json.return_value = {"check_runs": []}
         responses = iter([meta_resp, checks_resp])
-        with patch("plugins.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
             from plugins.tools.github_pr_context import handle
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -398,7 +398,7 @@ class TestHandleCommits:
                 "html_url": "https://..."
             }
         ]
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="commits", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
@@ -424,7 +424,7 @@ class TestHandleCompare:
             "commits": [],
             "files": [],
         }
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(
                 action="compare", owner="o", repo="r",
@@ -469,7 +469,7 @@ class TestHandleFileAtRef:
             "content": content_b64 + "\n",
             "html_url": "https://...",
         }
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(
                 action="file_at_ref", owner="o", repo="r",
@@ -511,7 +511,7 @@ class TestHandleListPrs:
                 "html_url": "https://...", "created_at": "c", "updated_at": "u",
             }
         ]
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="list_prs", owner="o", repo="r")
         assert result["ok"] is True
@@ -537,7 +537,7 @@ class TestApiErrorPropagation:
         from requests import HTTPError
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = HTTPError("404 Not Found")
-        with patch("plugins.github_pr_client.requests.get", return_value=mock_resp):
+        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
             result = handle(action="metadata", pr_url="https://github.com/o/r/pull/999")
         assert result["ok"] is False

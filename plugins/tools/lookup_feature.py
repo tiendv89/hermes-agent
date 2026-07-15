@@ -8,7 +8,6 @@ from product-spec.md. Never exposes write paths.
 from __future__ import annotations
 
 import logging
-import os
 from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
@@ -77,7 +76,6 @@ def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
     from src.services.workflow_backend_client import (
         check_workflow_available,
         get_feature_detail,
-        get_workspace_context,
         run_async,
     )
 
@@ -120,32 +118,16 @@ def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
         "synopsis": "",
     }
 
-    github_token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not github_token:
-        return result
-
     try:
-        from ..document_repo import read_document
-        from .artifacts import _resolve_management_repo
+        from plugins.clients.storage_service_client import read_document_content
 
-        feature_name = detail.get("feature_name") or feature_ref
-        workspace_context = run_async(get_workspace_context(workspace_id, user_id=caller_user_id, org_id=caller_org_id))
-        gh_owner, gh_repo = _resolve_management_repo(workspace_context)
-        base_branch = os.environ.get("MANAGEMENT_REPO_BASE_BRANCH", "main")
-        path = f"docs/features/{feature_name}/product-spec.md"
-
-        for branch in (
-            f"feature/{feature_name}",
-            f"feature/{feature_name}-init",
-            base_branch,
-        ):
-            try:
-                doc = read_document(gh_owner, gh_repo, branch, path, github_token)
-                if doc.get("content"):
-                    result["synopsis"] = _extract_synopsis(doc["content"])
-                    break
-            except Exception:
-                continue
+        result_doc = read_document_content(
+            workspace_id, feature_ref, "product_spec.md",
+            user_id=caller_user_id, org_id=caller_org_id,
+        )
+        content = result_doc.get("content", "")
+        if content:
+            result["synopsis"] = _extract_synopsis(content)
     except Exception as exc:
         logger.debug("workflow_lookup_feature: synopsis fetch failed: %s", exc)
 

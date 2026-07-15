@@ -17,8 +17,7 @@ SCHEMA: Dict[str, Any] = {
     "description": (
         "Load a skill's full guidance on demand — returns the named skill's "
         "SKILL.md body plus any reference files. Use when you need detailed "
-        "best-practices or workflow instructions; pick a name from the skill "
-        "index injected in context (technical or workflow skills)."
+        "best-practices; pick a name from the skill index injected in context."
     ),
     "parameters": {
         "type": "object",
@@ -27,7 +26,7 @@ SCHEMA: Dict[str, Any] = {
                 "type": "string",
                 "description": (
                     "Name of the skill to load (e.g. 'python-best-practices', "
-                    "'typescript-best-practices', 'tech-lead', 'init-feature'). "
+                    "'typescript-best-practices'). "
                     "Use the skill index (injected in system context) to find available names."
                 ),
             },

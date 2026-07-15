@@ -136,7 +136,7 @@ class TestApproveHappyPath:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
@@ -151,7 +151,7 @@ class TestApproveHappyPath:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
@@ -172,7 +172,7 @@ class TestRequestChangesHappyPath:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="REQUEST_CHANGES", body=body)
 
@@ -196,7 +196,7 @@ class TestRequestChangesHappyPath:
                 return comment_resp
             return review_resp
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=fake_post):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=fake_post):
             from plugins.tools.github_pr_review import handle
             result = handle(
                 pr_url=_PR_URL,
@@ -228,7 +228,7 @@ class TestSelfReviewPath:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
@@ -244,7 +244,7 @@ class TestSelfReviewPath:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="REQUEST_CHANGES", body=_BODY)
 
@@ -265,7 +265,7 @@ class TestStep6bNon422Fatal:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
@@ -279,7 +279,7 @@ class TestStep6bNon422Fatal:
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
@@ -303,7 +303,7 @@ class TestStep6aFailure:
             "500 Server Error", response=bad_resp
         )
 
-        with patch("plugins.github_pr_client.requests.post", return_value=bad_resp):
+        with patch("plugins.clients.github_pr_client.requests.post", return_value=bad_resp):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
@@ -314,7 +314,7 @@ class TestStep6aFailure:
         monkeypatch.setenv("GITHUB_TOKEN", "tok")
         import requests as req_lib
 
-        with patch("plugins.github_pr_client.requests.post", side_effect=req_lib.ConnectionError("timeout")):
+        with patch("plugins.clients.github_pr_client.requests.post", side_effect=req_lib.ConnectionError("timeout")):
             from plugins.tools.github_pr_review import handle
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 

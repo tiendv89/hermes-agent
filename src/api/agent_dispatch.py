@@ -659,7 +659,7 @@ def _run_agent_turn(
             import mimetypes
 
             import hermes_constants
-            from plugins import storage_service_client
+            from plugins.clients import storage_service_client
 
             image_cache_dir = hermes_constants.get_hermes_home() / "cache" / "chat_images"
             try:
