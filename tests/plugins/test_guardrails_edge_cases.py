@@ -587,7 +587,7 @@ class TestConcurrentSessionG10Isolation:
         for t in threads:
             t.join(timeout=15)
 
-        assert not errors, f"Thread errors:\n" + "\n".join(errors)
+        assert not errors, "Thread errors:\n" + "\n".join(errors)
         for i, r in enumerate(results):
             assert r.get("own_allowed"), f"worker-{i}: own workspace should be allowed"
             assert r.get("other_blocked"), (
