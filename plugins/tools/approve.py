@@ -469,7 +469,7 @@ def handle(
             return {
                 "ok": False,
                 "error": (
-                    f"Step d (create tasks): "
+                    "Step d (create tasks): "
                     + format_unresolved_error(resolution["unresolved"])
                 ),
                 "failed_step": "d",
