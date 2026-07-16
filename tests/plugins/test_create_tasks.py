@@ -68,10 +68,10 @@ _TASKS_MD = """\
 
 ## Index
 
-| ID | Title | Repo | Depends On | Actor |
-|----|-------|------|------------|-------|
-| T1 | First task | hermes-agent | — | agent |
-| T2 | Second task | hermes-agent | T1 | agent |
+| ID | Title | Repo | Depends On | Actor | Model |
+|----|-------|------|------------|-------|-------|
+| T1 | First task | hermes-agent | — | agent | Claude Sonnet 4.6 |
+| T2 | Second task | hermes-agent | T1 | agent | Claude Sonnet 4.6 |
 
 ## T1 — First task
 """
@@ -117,6 +117,8 @@ def _run_create_tasks_handle(
     context_feature_id=_FEATURE_ID,
     read_document_raises=None,
     read_document_content=None,
+    resolution_ok=True,
+    resolution_unresolved=None,
 ):
     """Run handle() with all external calls mocked.
 
@@ -158,6 +160,31 @@ def _run_create_tasks_handle(
     approve_mock = MagicMock()
     approve_mock._run_async_create_tasks = create_mock
     sys.modules["plugins.tools.approve"] = approve_mock
+
+    # Patch plugins.tools.model_resolution — provides resolve_task_models.
+    # Default: returns ok=True with the tasks passed through (no real API call).
+    resolution_mock = MagicMock()
+    if resolution_ok:
+        # Pass tasks through, adding a stub model_id for agent tasks.
+        def _resolve(workspace_id, tasks, *, user_id="", org_id=""):
+            resolved = []
+            for t in tasks:
+                tc = dict(t)
+                if tc.get("actor_type") == "agent" and tc.get("model"):
+                    tc["model_id"] = "model-uuid-stub"
+                resolved.append(tc)
+            return {"ok": True, "tasks": resolved}
+        resolution_mock.resolve_task_models = _resolve
+        resolution_mock.format_unresolved_error = MagicMock(return_value="unresolved error")
+    else:
+        unresolved = resolution_unresolved or [
+            {"task_name": "T1", "display_name": "Bad Model", "valid_alternatives": ["Claude Sonnet 4.6"]}
+        ]
+        resolution_mock.resolve_task_models = MagicMock(
+            return_value={"ok": False, "unresolved": unresolved}
+        )
+        resolution_mock.format_unresolved_error = MagicMock(return_value="unresolved error msg")
+    sys.modules["plugins.tools.model_resolution"] = resolution_mock
 
     # Patch src.services.workflow_backend_client — provides WorkflowBackendError.
     wbc_mock = MagicMock()

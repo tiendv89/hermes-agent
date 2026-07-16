@@ -2,10 +2,10 @@
 
 Grammar under test (go features), strict and positional:
 
-    | ID | Title | Repo | Depends On | Actor |
+    | ID | Title | Repo | Depends On | Actor | Model |
 
 Parsed rows map onto the workflow-backend CreateTaskItem contract:
-    name, title, repo, depends_on, actor_type.
+    name, title, repo, depends_on, actor_type, model.
 """
 
 from __future__ import annotations
@@ -47,8 +47,25 @@ def _load_parse_tasks():
 _MOD = _load_parse_tasks()
 parse = _MOD.parse_tasks_index
 
-
+# Six-column sample (configure-executor-types-model-policies grammar).
 _SAMPLE = """\
+# Tasks — demo
+
+## Index
+
+| ID | Title | Repo | Depends On | Actor | Model |
+|----|-------|------|------------|-------|-------|
+| T1 | Thread `user_id` into context | hermes-agent | — | agent | Claude Sonnet 4.6 |
+| T2 | Stop at `tasks.md` | hermes-agent | — | human |  |
+| T3 | Server-side guard | workflow-backend | — | either |  |
+| T4 | Service client | hermes-agent | T1 | agent | Claude Opus 4.8 |
+| T5 | Approve orchestration | hermes-agent | T2, T3, T4 | agent | Claude Haiku 4.5 |
+
+## T1 — Thread user_id
+"""
+
+# Five-column sample (pre-feature format, must return [] after grammar change).
+_SAMPLE_5COL = """\
 # Tasks — demo
 
 ## Index
@@ -57,11 +74,6 @@ _SAMPLE = """\
 |----|-------|------|------------|-------|
 | T1 | Thread `user_id` into context | hermes-agent | — | agent |
 | T2 | Stop at `tasks.md` | hermes-agent | — | human |
-| T3 | Server-side guard | workflow-backend | — | either |
-| T4 | Service client | hermes-agent | T1 | agent |
-| T5 | Approve orchestration | hermes-agent | T2, T3, T4 | agent |
-
-## T1 — Thread user_id
 """
 
 
@@ -104,18 +116,18 @@ class TestParseTasksIndex:
     def test_invalid_actor_defaults_to_agent(self):
         md = (
             "## Index\n\n"
-            "| ID | Title | Repo | Depends On | Actor |\n"
-            "|----|-------|------|------------|-------|\n"
-            "| T1 | Task | my-repo | — | robot |\n"
+            "| ID | Title | Repo | Depends On | Actor | Model |\n"
+            "|----|-------|------|------------|-------|-------|\n"
+            "| T1 | Task | my-repo | — | robot |  |\n"
         )
         assert parse(md)[0]["actor_type"] == "agent"
 
     def test_blank_actor_defaults_to_agent(self):
         md = (
             "## Index\n\n"
-            "| ID | Title | Repo | Depends On | Actor |\n"
-            "|----|-------|------|------------|-------|\n"
-            "| T1 | Task | my-repo | — |  |\n"
+            "| ID | Title | Repo | Depends On | Actor | Model |\n"
+            "|----|-------|------|------------|-------|-------|\n"
+            "| T1 | Task | my-repo | — |  |  |\n"
         )
         assert parse(md)[0]["actor_type"] == "agent"
 
@@ -138,9 +150,9 @@ class TestParseTasksIndex:
     def test_header_case_insensitive(self):
         md = (
             "## Index\n\n"
-            "| id | title | repo | depends on | actor |\n"
-            "|----|-------|------|------------|-------|\n"
-            "| T1 | Task | my-repo | — | agent |\n"
+            "| id | title | repo | depends on | actor | model |\n"
+            "|----|-------|------|------------|-------|-------|\n"
+            "| T1 | Task | my-repo | — | agent | Claude Sonnet 4.6 |\n"
         )
         assert len(parse(md)) == 1
 
@@ -149,6 +161,72 @@ class TestParseTasksIndex:
         # The "## T1 — Thread user_id" section after the table must not be parsed.
         assert all(t["name"].startswith("T") for t in tasks)
         assert len(tasks) == 5
+
+    # -------------------------------------------------------------------------
+    # New tests for the 6th Model column
+    # -------------------------------------------------------------------------
+
+    def test_model_column_present_in_row(self):
+        """Every parsed row must have a 'model' key."""
+        tasks = parse(_SAMPLE)
+        for t in tasks:
+            assert "model" in t
+
+    def test_model_column_populated_for_agent_tasks(self):
+        tasks = parse(_SAMPLE)
+        t1 = next(t for t in tasks if t["name"] == "T1")
+        assert t1["model"] == "Claude Sonnet 4.6"
+
+    def test_model_column_blank_for_human_task(self):
+        tasks = parse(_SAMPLE)
+        t2 = next(t for t in tasks if t["name"] == "T2")
+        assert t2["model"] == ""
+
+    def test_model_column_blank_for_either_task(self):
+        tasks = parse(_SAMPLE)
+        t3 = next(t for t in tasks if t["name"] == "T3")
+        assert t3["model"] == ""
+
+    def test_model_column_different_values(self):
+        tasks = parse(_SAMPLE)
+        assert tasks[3]["model"] == "Claude Opus 4.8"
+        assert tasks[4]["model"] == "Claude Haiku 4.5"
+
+    def test_model_cell_stripped_of_whitespace(self):
+        md = (
+            "## Index\n\n"
+            "| ID | Title | Repo | Depends On | Actor | Model |\n"
+            "|----|-------|------|------------|-------|-------|\n"
+            "| T1 | Task | my-repo | — | agent |  Claude Sonnet 4.6  |\n"
+        )
+        tasks = parse(md)
+        assert tasks[0]["model"] == "Claude Sonnet 4.6"
+
+    def test_model_dash_normalised_to_empty(self):
+        """A '—' or '-' in the Model cell is normalised to empty string."""
+        md = (
+            "## Index\n\n"
+            "| ID | Title | Repo | Depends On | Actor | Model |\n"
+            "|----|-------|------|------------|-------|-------|\n"
+            "| T1 | Task | my-repo | — | agent | — |\n"
+            "| T2 | Task | my-repo | — | human | - |\n"
+        )
+        tasks = parse(md)
+        assert tasks[0]["model"] == ""
+        assert tasks[1]["model"] == ""
+
+    def test_stale_5_column_input_returns_empty(self):
+        """Pre-existing five-column tasks.md must return [] (backward-incompatible)."""
+        assert parse(_SAMPLE_5COL) == []
+
+    def test_stale_5_column_no_rows_parsed(self):
+        """Five-column header means header match fails → no rows parsed even if valid."""
+        md = (
+            "| ID | Title | Repo | Depends On | Actor |\n"
+            "|----|-------|------|------------|-------|\n"
+            "| T1 | Task | repo | — | agent |\n"
+        )
+        assert parse(md) == []
 
 
 class TestHandle:
@@ -162,3 +240,13 @@ class TestHandle:
         result = _MOD.handle(tasks_md="# Tasks\nno table")
         assert result["ok"] is False
         assert result["tasks"] == []
+
+    def test_handle_model_in_returned_tasks(self):
+        result = _MOD.handle(tasks_md=_SAMPLE)
+        assert result["ok"] is True
+        t1 = next(t for t in result["tasks"] if t["name"] == "T1")
+        assert t1["model"] == "Claude Sonnet 4.6"
+
+    def test_handle_stale_5_column_returns_error(self):
+        result = _MOD.handle(tasks_md=_SAMPLE_5COL)
+        assert result["ok"] is False

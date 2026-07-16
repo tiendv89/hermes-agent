@@ -633,6 +633,70 @@ async def create_feature(
     )
 
 
+async def get_workspace_repo_by_slug(
+    workspace_id: str,
+    repo_slug: str,
+    *,
+    user_id: str | None = None,
+    org_id: str | None = None,
+) -> str | None:
+    """Return the workspace_repos UUID for a given repo_id text slug, or None.
+
+    Calls GET /api/workspaces/{workspace_id}/repos and finds the row whose
+    ``repo_id`` field matches ``repo_slug``. Returns the row's UUID ``id``, or
+    None when no matching row is found or the endpoint is unavailable.
+    """
+    try:
+        rows = await _call(
+            "GET",
+            f"/api/workspaces/{workspace_id}/repos",
+            user_id=user_id,
+            org_id=org_id,
+        )
+    except Exception:
+        return None
+    if not rows:
+        return None
+    for row in (rows if isinstance(rows, list) else []):
+        if row.get("repo_id") == repo_slug:
+            return row.get("id") or None
+    return None
+
+
+async def get_implementation_candidates(
+    workspace_id: str,
+    repo_id: str,
+    *,
+    user_id: str | None = None,
+    org_id: str | None = None,
+) -> Dict[str, Any]:
+    """Fetch implementation-phase model candidates for a workspace repo.
+
+    Calls:
+      GET /api/workspaces/{workspaceId}/model-policies/candidates
+          ?phase=implementation&repo={repoId}
+
+    ``repo_id`` is the ``workspace_repos.id`` UUID (not the text slug).
+
+    Returns the full candidates response dict:
+      {
+        "candidates": [{"id": "...", "model_id": "...", "display_name": "..."}],
+        "suggested_model_id": "<uuid or null>",
+        "suggested_reason": "tag_match|workspace_default|none",
+        "ambiguous_tag_matches": [...]
+      }
+
+    Raises WorkflowBackendError on any non-2xx HTTP response or misconfiguration.
+    """
+    from urllib.parse import quote
+
+    path = (
+        f"/api/workspaces/{workspace_id}/model-policies/candidates"
+        f"?phase=implementation&repo={quote(repo_id)}"
+    )
+    return await _call("GET", path, user_id=user_id, org_id=org_id)
+
+
 async def activate_ready_tasks(
     workspace_id: str,
     feature_id: str,

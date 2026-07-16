@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from plugins.clients.storage_service_client import read_document_content
 from ..validation import _validate_id
@@ -380,6 +380,7 @@ def handle(
 
     commit_sha = ""
     activated_tasks: list = []
+    model_confirmation: List[Dict[str, Any]] = []
 
     if _is_tasks_approve:
         # tasks-approve pipeline: status lives entirely in workflow-backend's
@@ -448,16 +449,52 @@ def handle(
                 "error": (
                     "Step d (create tasks): no tasks parsed from tasks.md. It must "
                     "contain an Index table with columns "
-                    "| ID | Title | Repo | Depends On | Actor | and at least one "
+                    "| ID | Title | Repo | Depends On | Actor | Model | and at least one "
                     "T<n> row. Fix tasks.md and re-run approve to retry."
                 ),
                 "failed_step": "d",
             }
 
+        # Confirmation preview + model resolution (product spec Goal 4 / §6a).
+        # Re-calls the candidates endpoint to resolve each agent-actor task's
+        # stored display name to a model_id UUID before sending to create_tasks.
+        # On any unresolved display name: abort step d and surface the failure so
+        # the user can correct the model selection in tasks.md and retry.
+        from .model_resolution import format_unresolved_error, resolve_task_models
+
+        resolution = resolve_task_models(
+            wid, tasks, user_id=caller_user_id or "", org_id=caller_org_id or ""
+        )
+        if not resolution["ok"]:
+            return {
+                "ok": False,
+                "error": (
+                    f"Step d (create tasks): "
+                    + format_unresolved_error(resolution["unresolved"])
+                ),
+                "failed_step": "d",
+                "unresolved_models": resolution["unresolved"],
+            }
+        resolved_tasks = resolution["tasks"]
+
+        # Build the confirmation preview for the response (every agent task with
+        # its resolved model display name — shown to the human before tasks are
+        # actually created, per product spec Goal 4).
+        model_confirmation: List[Dict[str, Any]] = [
+            {
+                "task_name": t["name"],
+                "title": t.get("title", ""),
+                "model": t.get("model", ""),
+                "model_id": t.get("model_id", ""),
+            }
+            for t in resolved_tasks
+            if t.get("actor_type") == "agent"
+        ]
+
         from src.services.workflow_backend_client import WorkflowBackendError as _WBE
 
         try:
-            _run_async_create_tasks(wid, fid, tasks)
+            _run_async_create_tasks(wid, fid, resolved_tasks)
         except _WBE as exc:
             if exc.reason_code == "tasks_already_exist":
                 logger.info(
@@ -517,7 +554,7 @@ def handle(
         except Exception:
             logger.exception("approve_feature: notify_stage_approved failed for feature %s", fid)
 
-    return {
+    result: Dict[str, Any] = {
         "ok": True,
         "feature_id": fid,
         "stage": stage,
@@ -529,3 +566,6 @@ def handle(
         "branch": None,
         "activated_tasks": activated_tasks,
     }
+    if model_confirmation:
+        result["model_confirmation"] = model_confirmation
+    return result
