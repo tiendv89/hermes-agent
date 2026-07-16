@@ -170,6 +170,54 @@ class TestWriteDocumentContentCreateOnMissing:
         mock_post.assert_not_called()
 
 
+class TestBuildHeadersBFFIdentity:
+    """_build_headers includes X-BFF-Identity when BFF_SIGNING_KEY is set."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        ssc._accessible_orgs_cache.clear()
+        yield
+        ssc._accessible_orgs_cache.clear()
+
+    def test_bff_identity_header_present_when_key_set(self, monkeypatch):
+        monkeypatch.setenv("BFF_SIGNING_KEY", "test-key")
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+        headers = ssc._build_headers(_TOKEN, "u1", "org-1")
+        assert "X-BFF-Identity" in headers
+
+    def test_bff_identity_header_absent_when_key_unset(self, monkeypatch):
+        monkeypatch.delenv("BFF_SIGNING_KEY", raising=False)
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+        headers = ssc._build_headers(_TOKEN, "u1", "org-1")
+        assert "X-BFF-Identity" not in headers
+
+    def test_bff_identity_header_contains_user_org(self, monkeypatch):
+        from plugins.auth.bff_identity import verify_bff_identity
+
+        monkeypatch.setenv("BFF_SIGNING_KEY", "test-key")
+        monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+        headers = ssc._build_headers(_TOKEN, "user-uuid-1", "org-uuid-1")
+        token = headers["X-BFF-Identity"]
+        claims = verify_bff_identity(token, key="test-key")
+        assert claims["user_id"] == "user-uuid-1"
+        assert claims["org_id"] == "org-uuid-1"
+
+    def test_bff_identity_header_includes_accessible_orgs(self, monkeypatch):
+        from plugins.auth.bff_identity import verify_bff_identity
+
+        monkeypatch.setenv("BFF_SIGNING_KEY", "test-key")
+        monkeypatch.setenv("USER_SERVICE_URL", "http://user-service.test")
+        ssc._accessible_orgs_cache.clear()
+        with patch(
+            "requests.get",
+            return_value=_resp(200, {"accessible_org_ids": ["org-a", "org-b"]}),
+        ):
+            headers = ssc._build_headers(_TOKEN, "u1", "org-a")
+
+        claims = verify_bff_identity(headers["X-BFF-Identity"], key="test-key")
+        assert sorted(claims["accessible_org_ids"]) == ["org-a", "org-b"]
+
+
 class TestBuildHeadersAccessibleOrgIds:
     """The bug this fixes: HasOrgAccess (storage-service's
     internal/middleware/auth.go) checks whether a document's owning
@@ -180,6 +228,7 @@ class TestBuildHeadersAccessibleOrgIds:
 
     def test_falls_back_to_org_id_when_lookup_unavailable(self, monkeypatch):
         monkeypatch.delenv("USER_SERVICE_URL", raising=False)
+        ssc._accessible_orgs_cache.clear()
         headers = ssc._build_headers(_TOKEN, "u1", "org-42")
         assert headers["X-Accessible-Org-Ids"] == "org-42"
 

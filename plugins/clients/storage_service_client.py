@@ -70,6 +70,8 @@ from urllib.parse import quote
 
 import requests
 
+from plugins.auth.bff_identity import sign_bff_identity
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30
@@ -150,13 +152,31 @@ def _resolve_config() -> tuple[str, str]:
 
 def _build_headers(token: str, user_id: str, org_id: str) -> Dict[str, str]:
     accessible = _get_accessible_org_ids(user_id) or ([org_id] if org_id else [])
-    return {
+    headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
         "X-User-Id": user_id or "",
         "X-Org-Id": org_id or "",
         "X-Accessible-Org-Ids": ",".join(accessible),
     }
+
+    signing_key = os.environ.get("BFF_SIGNING_KEY", "")
+    if signing_key:
+        try:
+            identity_header = sign_bff_identity(
+                {
+                    "user_id": user_id or "",
+                    "org_id": org_id or "",
+                    "accessible_org_ids": accessible,
+                    "platform_role": "",
+                },
+                key=signing_key,
+            )
+            headers["X-BFF-Identity"] = identity_header
+        except Exception:
+            logger.exception("storage_service_client: failed to sign BFF identity header")
+
+    return headers
 
 
 def _content_url(base_url: str, workspace_id: str, feature_id: str, path: str) -> str:
