@@ -245,6 +245,27 @@ def _write_artifact(
     caller_user_id = get_user_id()
     caller_org_id = get_org_id()
 
+    # Resolve feature_id to its canonical business-key UUID before writing.
+    # write_document_content keys the storage-service document by
+    # (workspace_id, feature_id, path); a session/tool caller may hand us the
+    # feature's slug instead of its UUID (both are accepted loosely upstream —
+    # see workflow_backend_client.get_feature_detail's docstring), and writing
+    # under the raw slug creates a SECOND document row at the same logical
+    # path instead of updating the one workflow-backend already provisioned
+    # under the UUID. Best-effort: on resolution failure, fall back to the
+    # raw feature_id rather than hard-failing the write.
+    slug = ""
+    try:
+        from src.services.workflow_backend_client import get_feature_detail, run_async
+
+        detail = run_async(
+            get_feature_detail(workspace_id, feature_id, user_id=caller_user_id, org_id=caller_org_id)
+        )
+        feature_id = detail.get("id") or feature_id
+        slug = detail.get("feature_name") or ""
+    except Exception as exc:
+        logger.warning("_write_artifact: could not resolve feature_detail: %s", exc)
+
     storage_path_map = {
         "product_spec": "product_spec.md",
         "technical_design": "tech_design.md",
@@ -258,6 +279,7 @@ def _write_artifact(
             content,
             user_id=caller_user_id,
             org_id=caller_org_id,
+            feature_slug=slug,
         )
     except StorageServiceError as exc:
         logger.warning("_write_artifact: storage-service error: %s", exc)

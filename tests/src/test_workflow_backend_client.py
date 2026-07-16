@@ -895,6 +895,7 @@ class TestGetFeatureDetailAndTasks:
             {
                 "success": True,
                 "data": {
+                    "id": "feat-1",
                     "feature_name": "my-feature",
                     "title": "My Feature",
                     "current_stage": "tasks",
@@ -914,6 +915,7 @@ class TestGetFeatureDetailAndTasks:
             result = await mod.get_feature_detail("ws-1", "feat-1", user_id="u", org_id="o")
 
         assert result == {
+            "id": "feat-1",
             "feature_name": "my-feature",
             "title": "My Feature",
             "stage": "tasks",
@@ -943,6 +945,7 @@ class TestGetFeatureDetailAndTasks:
                 {
                     "success": True,
                     "data": {
+                        "id": "resolved-uuid",
                         "feature_name": "my-slug",
                         "title": "My Feature",
                         "current_stage": "tasks",
@@ -971,6 +974,10 @@ class TestGetFeatureDetailAndTasks:
         ):
             result = await mod.get_feature_detail("ws-1", "my-slug", user_id="u", org_id="o")
 
+        # The caller passed a slug in, but the resolved "id" must be the
+        # canonical UUID — callers that key a storage-service write by this
+        # value would otherwise create a duplicate document under the slug.
+        assert result["id"] == "resolved-uuid"
         assert result["feature_name"] == "my-slug"
         assert "ws-1/features/my-slug" in captured_urls[0]
         assert "ws-1/features?name=my-slug" in captured_urls[1]

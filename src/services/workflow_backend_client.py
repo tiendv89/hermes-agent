@@ -494,6 +494,13 @@ async def get_feature_detail(
     UUID (the common case — resolved in a single round trip) or a feature_name
     slug (resolved via a name-search fallback on a 404, matching plugins.db's
     original "slug or UUID" acceptance).
+
+    The returned dict's "id" is always the canonical business-key UUID,
+    regardless of whether feature_id was passed in as that UUID or a slug —
+    callers that go on to key a storage-service document by feature_id (e.g.
+    write_document_content) must use this resolved value, not the raw input,
+    or a slug-vs-UUID mismatch silently creates a duplicate document row (see
+    write_document_content's docstring).
     """
     try:
         data = await _call(
@@ -515,6 +522,7 @@ async def get_feature_detail(
             not_found_message=f"Feature {feature_id!r} not found in workspace {workspace_id!r}",
         )
     return {
+        "id": data.get("id"),
         "feature_name": data.get("feature_name"),
         "title": data.get("title"),
         "stage": data.get("current_stage"),

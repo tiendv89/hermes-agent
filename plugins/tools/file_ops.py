@@ -189,6 +189,11 @@ def handle_write_file(
             )
             owner = detail.get("owner") or "ts"
             slug = detail.get("feature_name") or ""
+            # Use the resolved canonical UUID, not the raw (possibly-slug) fid —
+            # write_document_content keys the document by (wid, fid, path), and a
+            # slug/UUID mismatch here creates a duplicate document row instead of
+            # updating the existing one.
+            fid = detail.get("id") or fid
         except Exception as exc:
             logger.warning("write_file: could not fetch feature_detail: %s", exc)
             return {"ok": False, "error": f"Could not determine feature owner: {exc}"}
@@ -283,6 +288,11 @@ def handle_edit_file(
             )
             owner = detail.get("owner") or "ts"
             slug = detail.get("feature_name") or ""
+            # Use the resolved canonical UUID, not the raw (possibly-slug) fid —
+            # both read_document_content and write_document_content below key the
+            # document by (wid, fid, path), and a slug/UUID mismatch creates a
+            # duplicate document row instead of reading/updating the existing one.
+            fid = detail.get("id") or fid
         except Exception as exc:
             logger.warning("edit_file: could not fetch feature_detail: %s", exc)
             return {"ok": False, "error": f"Could not determine feature owner: {exc}"}

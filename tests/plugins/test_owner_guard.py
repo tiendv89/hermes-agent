@@ -48,8 +48,8 @@ def _make_workspace_context():
     }
 
 
-def _make_feature_detail(owner: str = "ts", stages: dict | None = None):
-    return {
+def _make_feature_detail(owner: str = "ts", stages: dict | None = None, id: str | None = None):
+    detail = {
         "feature_name": _FEATURE_ID,
         "title": "My Feature",
         "stage": "product_spec",
@@ -58,6 +58,9 @@ def _make_feature_detail(owner: str = "ts", stages: dict | None = None):
         "init_pr_url": None,
         "stages": stages if stages is not None else {},
     }
+    if id is not None:
+        detail["id"] = id
+    return detail
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +435,44 @@ class TestWriteProductSpecGoOwner:
             _PRODUCT_SPEC_CONTENT,
             user_id="user-1",
             org_id="org-1",
+            feature_slug=_FEATURE_ID,
+        )
+
+    def test_slug_feature_id_resolved_to_canonical_uuid(self):
+        """A caller passing the feature's slug (not its UUID) as feature_id must
+        not create a duplicate document — write_document_content should be
+        called with the resolved UUID from get_feature_detail, not the raw slug.
+        """
+        fake_ssc = _make_fake_ssc(write_return={"ok": True, "version_id": _VERSION_ID})
+        mod = _load_module_file(
+            "plugins.tools.artifacts", REPO_ROOT / "plugins" / "tools" / "artifacts.py"
+        )
+        _feature_uuid = "992495d6-bfa1-4fc1-9027-16df405274ee"
+        _patch_module_wbc(mod, _make_feature_detail(owner="go", id=_feature_uuid))
+        _inject_ssc_into_mod(mod, fake_ssc)
+
+        with _enter_patches(
+            patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
+            patch("plugins.context.get_feature_id", return_value=_FEATURE_ID),
+            patch("plugins.context.get_user_id", return_value="user-1"),
+            patch("plugins.context.get_org_id", return_value="org-1"),
+            patch("plugins.context.was_context_gathered", return_value=True),
+        ):
+            result = mod.handle_write_product_spec(
+                content=_PRODUCT_SPEC_CONTENT,
+                workspace_id=_WORKSPACE_ID,
+                feature_id=_FEATURE_ID,  # the slug, not the UUID
+            )
+
+        assert result["ok"] is True
+        fake_ssc.write_document_content.assert_called_once_with(
+            _WORKSPACE_ID,
+            _feature_uuid,
+            "product_spec.md",
+            _PRODUCT_SPEC_CONTENT,
+            user_id="user-1",
+            org_id="org-1",
+            feature_slug=_FEATURE_ID,
         )
 
     def test_go_owned_missing_config_returns_error(self):
@@ -503,6 +544,7 @@ class TestWriteTechnicalDesignGoOwner:
             _TD_CONTENT,
             user_id="user-1",
             org_id="org-1",
+            feature_slug=_FEATURE_ID,
         )
 
 
