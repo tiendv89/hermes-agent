@@ -57,7 +57,9 @@ class ReasonCode(str, Enum):
 class HandledException(Exception):
     """Raised when the guardrail firewall blocks a tool call with a LLM-visible refusal."""
 
-    def __init__(self, reason_code: str, tool_name: str, guardrail_id: str = "") -> None:
+    def __init__(
+        self, reason_code: str, tool_name: str, guardrail_id: str = ""
+    ) -> None:
         self.reason_code = reason_code
         self.tool_name = tool_name
         self.guardrail_id = guardrail_id
@@ -69,12 +71,14 @@ class HandledException(Exception):
 # ---------------------------------------------------------------------------
 
 # G11 — protected system prompt source paths
-SYSTEM_PROMPT_SOURCE_PATHS: frozenset[str] = frozenset({
-    "CLAUDE.md",
-    "HERMES.md",
-    "claude.md",
-    "hermes.md",
-})
+SYSTEM_PROMPT_SOURCE_PATHS: frozenset[str] = frozenset(
+    {
+        "CLAUDE.md",
+        "HERMES.md",
+        "claude.md",
+        "hermes.md",
+    }
+)
 
 # G8 — XSS patterns (pre-dispatch: block writes containing these)
 XSS_PATTERNS = [
@@ -122,7 +126,7 @@ DOWNLOAD_BLOCKED_PATTERNS = [
 ENV_DISCLOSURE_PATTERNS = [
     re.compile(r"\bprintenv\b", re.IGNORECASE),
     re.compile(r"(?:^|\s)env(?:\s|$)", re.IGNORECASE),  # `env` as standalone command
-    re.compile(r"\becho\s+\$\w+", re.IGNORECASE),        # echo $VAR
+    re.compile(r"\becho\s+\$\w+", re.IGNORECASE),  # echo $VAR
     re.compile(r"cat\s+\.env\b", re.IGNORECASE),
     re.compile(r"~?/\.aws/", re.IGNORECASE),
     re.compile(r"~?/\.ssh/\w+", re.IGNORECASE),
@@ -145,7 +149,9 @@ INTROSPECTION_PATTERNS = [
     re.compile(r"\byour\s+rules\b", re.IGNORECASE),
     re.compile(r"\brepeat\s+everything\s+above\b", re.IGNORECASE),
     re.compile(r"\bwhat\s+tools\s+do\s+you\s+have\b", re.IGNORECASE),
-    re.compile(r"\bshow\s+me\s+your\s+(?:tools|functions|prompt|instructions)\b", re.IGNORECASE),
+    re.compile(
+        r"\bshow\s+me\s+your\s+(?:tools|functions|prompt|instructions)\b", re.IGNORECASE
+    ),
     re.compile(r"\bprint\s+your\s+(?:prompt|instructions|rules)\b", re.IGNORECASE),
     re.compile(r"\blist\s+(?:all\s+)?your\s+(?:tools|functions)\b", re.IGNORECASE),
     re.compile(r"\byour\s+architecture\b", re.IGNORECASE),
@@ -154,51 +160,59 @@ INTROSPECTION_PATTERNS = [
 ]
 
 # G1 — deletion tool name keywords (future-proof guard; substring match since _ is a word char)
-_DELETION_KEYWORDS: frozenset[str] = frozenset({
-    "delete",
-    "remove",
-    "wipe",
-    "truncate",
-    "drop",
-    "purge",
-    "erase",
-    "destroy",
-})
+_DELETION_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "delete",
+        "remove",
+        "wipe",
+        "truncate",
+        "drop",
+        "purge",
+        "erase",
+        "destroy",
+    }
+)
 
 # Shell/terminal tool names (G2, G5 triggers)
-_SHELL_TOOL_NAMES: frozenset[str] = frozenset({
-    "terminal",
-    "shell",
-    "run_command",
-    "execute_command",
-    "bash",
-    "sh",
-    "run_bash",
-    "run_shell",
-})
+_SHELL_TOOL_NAMES: frozenset[str] = frozenset(
+    {
+        "terminal",
+        "shell",
+        "run_command",
+        "execute_command",
+        "bash",
+        "sh",
+        "run_bash",
+        "run_shell",
+    }
+)
 
 # Write tools subject to G8 (content sanitization) and G11 (system prompt protection)
-_WRITE_TOOLS: frozenset[str] = frozenset({
-    "write_file",
-    "edit_file",
-    "write_product_spec",
-    "write_technical_design",
-    "write_tasks",
-    "edit_document",
-})
+_WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "write_file",
+        "edit_file",
+        "write_product_spec",
+        "write_technical_design",
+        "write_tasks",
+        "edit_document",
+    }
+)
 
 # Read-path tools subject to G7 OOB stripping in sanitize_result
-_READ_TOOLS: frozenset[str] = frozenset({
-    "read_file",
-    "read_workspace_file",
-    "github_pr_context",
-    "query_rag",
-    "query_gitnexus",
-    "get_feature_state",
-    "get_workspace_context",
-    "get_tasks",
-    "list_documents",
-})
+_READ_TOOLS: frozenset[str] = frozenset(
+    {
+        "read_file",
+        "read_workspace_file",
+        "github_pr_context",
+        "query_rag",
+        "query_gitnexus",
+        "get_feature_state",
+        "get_workspace_context",
+        "get_tasks",
+        "list_documents",
+    }
+)
 
 # Guardrail display messages {reason_code: (guardrail_id, message)}
 _GUARDRAIL_MESSAGES: dict[str, tuple[str, str]] = {
@@ -292,7 +306,9 @@ def _check_G2_script(tool_name: str, arguments: dict[str, Any]) -> Optional[str]
     return None
 
 
-def _check_G3_env_disclosure(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G3_env_disclosure(
+    tool_name: str, arguments: dict[str, Any]
+) -> Optional[str]:
     """G3 — Block env variable and credential disclosure.
 
     For shell tools: scan the command argument.
@@ -425,6 +441,7 @@ def _check_G10_workspace(
         # Try thread-local fallback
         try:
             from plugins.context import get_workspace_id
+
             session_workspace_id = get_workspace_id() or ""
         except Exception:
             pass
@@ -440,7 +457,9 @@ def _check_G10_workspace(
     return None
 
 
-def _check_G11_system_prompt(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G11_system_prompt(
+    tool_name: str, arguments: dict[str, Any]
+) -> Optional[str]:
     """G11 — Block modification of system prompt source files (CLAUDE.md, HERMES.md)."""
     if tool_name not in _WRITE_TOOLS:
         return None
@@ -507,7 +526,10 @@ def check(
                 exc,
                 exc_info=True,
             )
-            return False, ReasonCode.DELETION_BLOCKED  # generic block on unexpected error
+            return (
+                False,
+                ReasonCode.DELETION_BLOCKED,
+            )  # generic block on unexpected error
 
         if reason_code is not None:
             logger.info(
@@ -560,8 +582,10 @@ def _sanitize_dict(data: dict[str, Any]) -> dict[str, Any]:
             result[key] = _sanitize_dict(value)
         elif isinstance(value, list):
             result[key] = [
-                _strip_oob_markers(v) if isinstance(v, str)
-                else _sanitize_dict(v) if isinstance(v, dict)
+                _strip_oob_markers(v)
+                if isinstance(v, str)
+                else _sanitize_dict(v)
+                if isinstance(v, dict)
                 else v
                 for v in value
             ]
@@ -611,6 +635,8 @@ def check_introspection(message: str) -> bool:
         return False
     for pattern in INTROSPECTION_PATTERNS:
         if pattern.search(text):
-            logger.info("guardrail G4: system introspection attempt detected: %r", text[:120])
+            logger.info(
+                "guardrail G4: system introspection attempt detected: %r", text[:120]
+            )
             return True
     return False
