@@ -55,6 +55,10 @@ SCHEMA: Dict[str, Any] = {
         "resolve — use the clarify tool to ask the user before writing, rather than guessing "
         "(interactive sessions only — skip clarify when AGENT_RUNTIME=1 and note the ambiguity "
         "in the task instead). "
+        "For every task with actor_type='agent', include a 'model' field with the chosen "
+        "implementation-phase model display name (e.g. 'Claude Sonnet 4.6'). Call this tool "
+        "without model values first to receive the candidate list per repo, then call again with "
+        "model selections filled in. Leave model blank for human/either tasks. "
         "Call this after technical_design is approved and you have designed the full task list."
     ),
     "parameters": {
@@ -65,7 +69,8 @@ SCHEMA: Dict[str, Any] = {
                 "description": (
                     "Ordered list of tasks. Each task must have an id (T1, T2, ...), "
                     "title, and optionally: repo, depends_on (list of task IDs), "
-                    "actor_type ('agent' | 'human' | 'either')."
+                    "actor_type ('agent' | 'human' | 'either'), "
+                    "model (display name for agent tasks, e.g. 'Claude Sonnet 4.6')."
                 ),
                 "items": {
                     "type": "object",
@@ -85,6 +90,16 @@ SCHEMA: Dict[str, Any] = {
                             "type": "string",
                             "enum": ["agent", "human", "either"],
                             "description": "Who executes this task. Defaults to 'agent'.",
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": (
+                                "Implementation-phase model display name for agent-actor "
+                                "tasks (e.g. 'Claude Sonnet 4.6'). Leave blank for "
+                                "human/either tasks. When omitted for agent tasks, the "
+                                "tool fetches candidates and returns them so you can "
+                                "choose before re-calling."
+                            ),
                         },
                     },
                     "required": ["id", "title"],
@@ -224,6 +239,132 @@ def handle(
     except ValueError as exc:
         return {"ok": False, "error": str(exc)}
 
+    # Model-candidate validation (§6a breakdown-time flow).
+    # For every agent-actor task, fetch candidates from the implementation-phase
+    # candidates endpoint and:
+    #   - If model is not provided: return candidates so the caller can present
+    #     them to the user and re-call with selections filled in.
+    #   - If model is provided but doesn't match any candidate: return an error
+    #     with valid alternatives.
+    #   - If candidates endpoint is unavailable: skip validation gracefully.
+    model_note = ""
+    model_candidates_needed: List[Dict[str, Any]] = []
+    model_validation_errors: List[Dict[str, Any]] = []
+
+    agent_tasks = [t for t in tasks if (t.get("actor_type") or "agent") == "agent"]
+    if agent_tasks:
+        try:
+            from src.services.workflow_backend_client import (
+                WorkflowBackendError,
+                get_implementation_candidates,
+                get_workspace_repo_by_slug,
+                run_async,
+            )
+
+            # Collect unique repos for agent tasks.
+            repos = {t.get("repo", "") for t in agent_tasks if t.get("repo")}
+            candidates_by_repo: Dict[str, Any] = {}
+            for repo_slug in repos:
+                try:
+                    repo_uuid = run_async(
+                        get_workspace_repo_by_slug(
+                            wid, repo_slug,
+                            user_id=caller_user_id or None,
+                            org_id=caller_org_id or None,
+                        )
+                    )
+                    if repo_uuid:
+                        resp = run_async(
+                            get_implementation_candidates(
+                                wid, repo_uuid,
+                                user_id=caller_user_id or None,
+                                org_id=caller_org_id or None,
+                            )
+                        )
+                        candidates_by_repo[repo_slug] = resp
+                except (WorkflowBackendError, Exception) as exc:
+                    logger.debug(
+                        "write_tasks: candidates fetch skipped for repo %r: %s",
+                        repo_slug, exc,
+                    )
+
+            # Validate each agent task's model selection against candidates.
+            for t in agent_tasks:
+                repo_slug = t.get("repo", "")
+                model_val = (t.get("model") or "").strip()
+                resp = candidates_by_repo.get(repo_slug)
+                if resp is None:
+                    # Candidates unavailable for this repo — skip validation.
+                    continue
+                candidates = resp.get("candidates") or []
+                if not model_val:
+                    # No model selected yet — collect candidates for suggestion.
+                    suggested_id = resp.get("suggested_model_id")
+                    ambiguous = resp.get("ambiguous_tag_matches") or []
+                    model_candidates_needed.append(
+                        {
+                            "task_id": t["id"],
+                            "repo": repo_slug,
+                            "candidates": candidates,
+                            "suggested_model_id": suggested_id,
+                            "suggested_reason": resp.get("suggested_reason", "none"),
+                            "ambiguous_tag_matches": ambiguous,
+                        }
+                    )
+                else:
+                    # Model selected — validate against candidate list.
+                    match = next(
+                        (c for c in candidates if c.get("display_name") == model_val),
+                        None,
+                    )
+                    if not match:
+                        valid_alts = [
+                            c.get("display_name", "") for c in candidates
+                            if c.get("display_name")
+                        ]
+                        model_validation_errors.append(
+                            {
+                                "task_id": t["id"],
+                                "model": model_val,
+                                "valid_alternatives": valid_alts,
+                            }
+                        )
+        except Exception as exc:
+            # Broad catch — candidates validation is best-effort; never block
+            # write_tasks when the endpoint is unavailable.
+            logger.debug("write_tasks: model validation skipped: %s", exc)
+            model_note = " (model validation skipped: candidates endpoint unavailable)"
+
+    if model_validation_errors:
+        parts = []
+        for e in model_validation_errors:
+            alts = ", ".join(f'"{a}"' for a in e["valid_alternatives"]) or "none available"
+            parts.append(
+                f"  - Task {e['task_id']}: model {e['model']!r} is not in the "
+                f"implementation policy. Valid alternatives: {alts}."
+            )
+        return {
+            "ok": False,
+            "error": (
+                "One or more agent tasks have an invalid model selection:\n"
+                + "\n".join(parts)
+                + "\nUpdate the model field(s) and re-call write_tasks."
+            ),
+            "model_validation_errors": model_validation_errors,
+        }
+
+    if model_candidates_needed:
+        return {
+            "ok": False,
+            "model_candidates_needed": True,
+            "error": (
+                "Model selection required for agent tasks. Choose a model from the "
+                "candidates list below for each task, then re-call write_tasks with "
+                "the model fields populated."
+            ),
+            "candidates_by_task": model_candidates_needed,
+        }
+
     try:
         result = write_document_content(
             wid,
@@ -253,5 +394,6 @@ def handle(
             "(via approve_feature(stage='tasks') or the backup /create-tasks command). "
             "Call approve_feature(stage='tasks') when ready to activate tasks."
             + repo_validation_note
+            + model_note
         ),
     }
