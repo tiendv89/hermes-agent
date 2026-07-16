@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from src.services.workflow_backend_client import check_workflow_available
 from .hooks import inject_context
+from .tools import guardrails as _guardrails
 from .tools import (
     workspace,
     feature,
@@ -148,11 +149,12 @@ def _guardrail_wrapper(handler: Any, tool_name: str, is_async: bool) -> Any:
     return _sync_guarded
 
 
-def _json_result_handler(handler: Any, is_async: bool) -> Any:
-    """Wrap a tool handler so its return value is JSON-stringified for the model.
+def _json_result_handler(handler: Any, is_async: bool, tool_name: str = "") -> Any:
+    """Wrap a tool handler so its return value is sanitized and JSON-stringified.
 
     Unpacks the positional args-dict from registry.dispatch into keyword
-    arguments before calling the handler, then JSON-encodes the return value.
+    arguments before calling the handler, then applies guardrail result
+    sanitization (G7 OOB marker stripping) and JSON-encodes the return value.
     The underlying ``handle()`` still returns its dict to direct callers
     (hooks, HTTP routes, unit tests) — only the registered tool handler is
     wrapped.
@@ -161,13 +163,17 @@ def _json_result_handler(handler: Any, is_async: bool) -> Any:
 
         @functools.wraps(handler)
         async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
-            return _as_tool_content(await handler(**_unpack_args(args, kwargs)))
+            result = await handler(**_unpack_args(args, kwargs))
+            result = _guardrails.sanitize_result(tool_name, result)
+            return _as_tool_content(result)
 
         return _async_wrapper
 
     @functools.wraps(handler)
     def _sync_wrapper(*args: Any, **kwargs: Any) -> str:
-        return _as_tool_content(handler(**_unpack_args(args, kwargs)))
+        result = handler(**_unpack_args(args, kwargs))
+        result = _guardrails.sanitize_result(tool_name, result)
+        return _as_tool_content(result)
 
     return _sync_wrapper
 
@@ -327,7 +333,7 @@ def register(ctx: Any) -> None:
         is_async = t.get("is_async", False)
         # Apply JSON-result wrapping first, then the pre-dispatch guardrail gate.
         # Order: AIAgent → _guardrail_wrapper → _json_result_handler → handler
-        json_handler = _json_result_handler(t["handler"], is_async)
+        json_handler = _json_result_handler(t["handler"], is_async, t["name"])
         guarded_handler = _guardrail_wrapper(json_handler, t["name"], is_async)
         ctx.register_tool(
             name=t["name"],

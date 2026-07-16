@@ -101,14 +101,22 @@ def _clean_modules():
     for k in keys:
         del sys.modules[k]
     # Also clean src stubs
-    src_keys = [k for k in sys.modules if k.startswith("src.db.store") or k.startswith("src.realtime")]
+    src_keys = [
+        k
+        for k in sys.modules
+        if k.startswith("src.db.store") or k.startswith("src.realtime")
+    ]
     for k in src_keys:
         del sys.modules[k]
     yield
     keys = [k for k in sys.modules if k.startswith("plugins")]
     for k in keys:
         del sys.modules[k]
-    src_keys = [k for k in sys.modules if k.startswith("src.db.store") or k.startswith("src.realtime")]
+    src_keys = [
+        k
+        for k in sys.modules
+        if k.startswith("src.db.store") or k.startswith("src.realtime")
+    ]
     for k in src_keys:
         del sys.modules[k]
 
@@ -196,9 +204,13 @@ class TestValidateSuggestions:
 
 class TestHandleHappyPath:
     def setup_method(self):
-        self.mod, self.fake_context, self.fake_store, self.fake_bus_module, self.fake_bus = (
-            _load_suggest_next_actions_isolated()
-        )
+        (
+            self.mod,
+            self.fake_context,
+            self.fake_store,
+            self.fake_bus_module,
+            self.fake_bus,
+        ) = _load_suggest_next_actions_isolated()
 
     def test_returns_status_ok(self):
         """Handle dispatches to the async path and returns ok.
@@ -313,16 +325,33 @@ class TestSchemaShape:
         assert items_schema["minItems"] == 1
 
     def test_category_enum_has_all_expected_values(self):
-        item_schema = self.mod.SCHEMA["parameters"]["properties"]["suggestions"]["items"]
+        item_schema = self.mod.SCHEMA["parameters"]["properties"]["suggestions"][
+            "items"
+        ]
         enum = item_schema["properties"]["category"]["enum"]
-        expected = {"Lifecycle", "Clarify", "Review", "Edit", "Action", "GitNexus", "RAG"}
+        expected = {
+            "Lifecycle",
+            "Clarify",
+            "Review",
+            "Edit",
+            "Action",
+            "GitNexus",
+            "RAG",
+        }
         assert set(enum) == expected
 
     def test_required_fields_present_in_item_schema(self):
-        item_schema = self.mod.SCHEMA["parameters"]["properties"]["suggestions"]["items"]
+        item_schema = self.mod.SCHEMA["parameters"]["properties"]["suggestions"][
+            "items"
+        ]
         required = set(item_schema["required"])
         assert {
-            "id", "title", "category", "description", "action_text", "button_label"
+            "id",
+            "title",
+            "category",
+            "description",
+            "action_text",
+            "button_label",
         } <= required
 
 
@@ -338,7 +367,9 @@ class TestToolRegistration:
         # check_workflow_available now comes from src.services.workflow_backend_client,
         # which has no heavy dependencies, so it's fine to import for real here.
         stub_context = _make_stub_module("plugins.context", {})
-        stub_hooks = _make_stub_module("plugins.hooks", {"inject_context": lambda **_: None})
+        stub_hooks = _make_stub_module(
+            "plugins.hooks", {"inject_context": lambda **_: None}
+        )
         stub_mcp = _make_stub_module("plugins.clients.mcp_client", {})
 
         # Individual tool modules — return minimal stubs.
@@ -357,12 +388,36 @@ class TestToolRegistration:
         sys.modules["plugins.clients.mcp_client"] = stub_mcp
         sys.modules["plugins.tools"] = stub_tools_pkg
 
+        # Stub guardrails (added by T3 — sanitize_result passthrough so __init__ loads).
+        stub_guardrails = _make_stub_module(
+            "plugins.tools.guardrails",
+            {"sanitize_result": lambda tool_name, result: result},
+        )
+        sys.modules["plugins.tools.guardrails"] = stub_guardrails
+        setattr(stub_tools_pkg, "guardrails", stub_guardrails)
+
         tool_names = [
-            "workspace", "feature", "artifacts", "edit", "file_ops", "read",
-            "read_workspace_file", "list_documents", "tasks", "gitnexus",
-            "rag", "skills", "approval", "approve", "tasks_write",
-            "create_tasks", "parse_tasks", "github_pr_context",
-            "github_pr_review", "lookup_feature", "init_feature",
+            "workspace",
+            "feature",
+            "artifacts",
+            "edit",
+            "file_ops",
+            "read",
+            "read_workspace_file",
+            "list_documents",
+            "tasks",
+            "gitnexus",
+            "rag",
+            "skills",
+            "approval",
+            "approve",
+            "tasks_write",
+            "create_tasks",
+            "parse_tasks",
+            "github_pr_context",
+            "github_pr_review",
+            "lookup_feature",
+            "init_feature",
         ]
         for tname in tool_names:
             stub = _stub_tool(tname)
@@ -370,17 +425,37 @@ class TestToolRegistration:
             setattr(stub_tools_pkg, tname, stub)
 
         # Also stub artifacts and edit with their multi-schema attributes.
-        sys.modules["plugins.tools.artifacts"].WRITE_SPEC_SCHEMA = {"description": "", "parameters": {}}
-        sys.modules["plugins.tools.artifacts"].WRITE_TD_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.artifacts"].WRITE_SPEC_SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
+        sys.modules["plugins.tools.artifacts"].WRITE_TD_SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
         sys.modules["plugins.tools.artifacts"].handle_write_product_spec = lambda **_: {}
-        sys.modules["plugins.tools.artifacts"].handle_write_technical_design = lambda **_: {}
-        sys.modules["plugins.tools.edit"].EDIT_DOCUMENT_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.artifacts"].handle_write_technical_design = (
+            lambda **_: {}
+        )
+        sys.modules["plugins.tools.edit"].EDIT_DOCUMENT_SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
         sys.modules["plugins.tools.edit"].handle_edit_document = lambda **_: {}
-        sys.modules["plugins.tools.file_ops"].WRITE_FILE_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.file_ops"].WRITE_FILE_SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
         sys.modules["plugins.tools.file_ops"].handle_write_file = lambda **_: {}
-        sys.modules["plugins.tools.file_ops"].EDIT_FILE_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.file_ops"].EDIT_FILE_SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
         sys.modules["plugins.tools.file_ops"].handle_edit_file = lambda **_: {}
-        sys.modules["plugins.tools.read"].READ_FILE_SCHEMA = {"description": "", "parameters": {}}
+        sys.modules["plugins.tools.read"].READ_FILE_SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
         sys.modules["plugins.tools.read"].handle_read_file = lambda **_: {}
         sys.modules["plugins.tools.tasks"].handle = lambda **_: {}
         sys.modules["plugins.tools.approval"].handle = lambda **_: {}
@@ -390,9 +465,16 @@ class TestToolRegistration:
         sys.modules["plugins.tools.rag"].check_available = lambda **_: False
         sys.modules["plugins.tools.skills"].handle = lambda **_: {}
         sys.modules["plugins.tools.skills"].check_available = lambda **_: False
-        sys.modules["plugins.tools.skills"].SCHEMA = {"description": "", "parameters": {}}
-        sys.modules["plugins.tools.github_pr_context"].check_available = lambda **_: False
-        sys.modules["plugins.tools.github_pr_review"].check_available = lambda **_: False
+        sys.modules["plugins.tools.skills"].SCHEMA = {
+            "description": "",
+            "parameters": {},
+        }
+        sys.modules["plugins.tools.github_pr_context"].check_available = lambda **_: (
+            False
+        )
+        sys.modules["plugins.tools.github_pr_review"].check_available = lambda **_: (
+            False
+        )
         sys.modules["plugins.tools.lookup_feature"].check_available = lambda **_: False
 
         # Load the real suggest_next_actions into sys.modules first.
