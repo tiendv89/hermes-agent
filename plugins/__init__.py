@@ -5,10 +5,11 @@ from __future__ import annotations
 import functools
 import json
 import logging
-from typing import Any
+from typing import Any, Optional
 
 from src.services.workflow_backend_client import check_workflow_available
 from .hooks import inject_context
+from .tools import guardrails as _guardrails
 from .tools import (
     workspace,
     feature,
@@ -71,11 +72,89 @@ def _unpack_args(args: tuple, kwargs: dict) -> dict:
     return {**fn_args, **kwargs}
 
 
-def _json_result_handler(handler: Any, is_async: bool) -> Any:
-    """Wrap a tool handler so its return value is JSON-stringified for the model.
+def _get_session_context() -> Optional[dict[str, Any]]:
+    """Return the current session's workspace context for guardrail G10.
+
+    Uses the thread-local set by set_context() at turn start. Returns None
+    when no context is set (general chat without workspace binding), which
+    causes the workspace isolation check to be skipped.
+    """
+    try:
+        from plugins.context import get_workspace_id, get_feature_id
+
+        workspace_id = get_workspace_id()
+        if workspace_id:
+            return {"workspace_id": workspace_id, "feature_id": get_feature_id()}
+    except Exception:
+        pass
+    return None
+
+
+def _guardrail_wrapper(handler: Any, tool_name: str, is_async: bool) -> Any:
+    """Wrap a tool handler with the pre-dispatch guardrail gate (T2).
+
+    Checks guardrails.check() before invoking the handler. If a guardrail
+    blocks the call, returns a structured refusal JSON string without calling
+    the handler. Fail-closed: if the guardrails module is unavailable, the
+    call is allowed to proceed (fail-open only on import error, never on a
+    normal guardrail exception — guardrails.check() itself is fail-closed).
+    """
+    try:
+        from plugins.tools import guardrails as _guardrails_mod
+    except ImportError:
+        logger.error(
+            "guardrail_wrapper: could not import guardrails module — tool %s will run unguarded",
+            tool_name,
+        )
+        return handler
+
+    if is_async:
+
+        @functools.wraps(handler)
+        async def _async_guarded(*args: Any, **kwargs: Any) -> str:
+            arguments = args[0] if args and isinstance(args[0], dict) else {}
+            session_context = _get_session_context()
+            allowed, reason_code = _guardrails_mod.check(
+                tool_name, arguments, session_context=session_context
+            )
+            if not allowed:
+                refusal = _guardrails_mod.build_refusal_message(reason_code, tool_name)
+                logger.info(
+                    "guardrail pre-dispatch blocked: tool=%s reason=%s",
+                    tool_name,
+                    reason_code,
+                )
+                return _as_tool_content(refusal)
+            return await handler(*args, **kwargs)
+
+        return _async_guarded
+
+    @functools.wraps(handler)
+    def _sync_guarded(*args: Any, **kwargs: Any) -> str:
+        arguments = args[0] if args and isinstance(args[0], dict) else {}
+        session_context = _get_session_context()
+        allowed, reason_code = _guardrails_mod.check(
+            tool_name, arguments, session_context=session_context
+        )
+        if not allowed:
+            refusal = _guardrails_mod.build_refusal_message(reason_code, tool_name)
+            logger.info(
+                "guardrail pre-dispatch blocked: tool=%s reason=%s",
+                tool_name,
+                reason_code,
+            )
+            return _as_tool_content(refusal)
+        return handler(*args, **kwargs)
+
+    return _sync_guarded
+
+
+def _json_result_handler(handler: Any, is_async: bool, tool_name: str = "") -> Any:
+    """Wrap a tool handler so its return value is sanitized and JSON-stringified.
 
     Unpacks the positional args-dict from registry.dispatch into keyword
-    arguments before calling the handler, then JSON-encodes the return value.
+    arguments before calling the handler, then applies guardrail result
+    sanitization (G7 OOB marker stripping) and JSON-encodes the return value.
     The underlying ``handle()`` still returns its dict to direct callers
     (hooks, HTTP routes, unit tests) — only the registered tool handler is
     wrapped.
@@ -84,13 +163,17 @@ def _json_result_handler(handler: Any, is_async: bool) -> Any:
 
         @functools.wraps(handler)
         async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
-            return _as_tool_content(await handler(**_unpack_args(args, kwargs)))
+            result = await handler(**_unpack_args(args, kwargs))
+            result = _guardrails.sanitize_result(tool_name, result)
+            return _as_tool_content(result)
 
         return _async_wrapper
 
     @functools.wraps(handler)
     def _sync_wrapper(*args: Any, **kwargs: Any) -> str:
-        return _as_tool_content(handler(**_unpack_args(args, kwargs)))
+        result = handler(**_unpack_args(args, kwargs))
+        result = _guardrails.sanitize_result(tool_name, result)
+        return _as_tool_content(result)
 
     return _sync_wrapper
 
@@ -248,11 +331,15 @@ def register(ctx: Any) -> None:
     """Entry point called by PluginManager.discover_and_load."""
     for t in _TOOLS:
         is_async = t.get("is_async", False)
+        # Apply JSON-result wrapping first, then the pre-dispatch guardrail gate.
+        # Order: AIAgent → _guardrail_wrapper → _json_result_handler → handler
+        json_handler = _json_result_handler(t["handler"], is_async, t["name"])
+        guarded_handler = _guardrail_wrapper(json_handler, t["name"], is_async)
         ctx.register_tool(
             name=t["name"],
             toolset="workflow",
             schema=t["schema"],
-            handler=_json_result_handler(t["handler"], is_async),
+            handler=guarded_handler,
             check_fn=t.get("check_fn"),
             is_async=is_async,
         )

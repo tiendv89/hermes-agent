@@ -12,6 +12,12 @@ legitimate workspace work is worse than the occasional off-topic answer the
 guard exists to prevent, so the classifier is biased to IN and only blocks a
 confident OUT.
 
+G4 — system introspection — is the exception: it uses a deterministic regex
+gate (``check_introspection``) that fires *before* the LLM classifier. Introspection
+attempts are blocked with certainty; there is no false-positive risk because a
+message asking for the agent's own prompt/architecture is never legitimate
+workspace work.
+
 Disable entirely with ``HERMES_SCOPE_GUARD=0``.
 """
 
@@ -21,6 +27,8 @@ import logging
 import os
 import re
 from typing import Optional
+
+from plugins.tools.guardrails import INTROSPECTION_PATTERNS
 
 logger = logging.getLogger(__name__)
 
@@ -34,8 +42,33 @@ _TRIVIAL_IN_SCOPE = re.compile(
 )
 
 
+def _check_introspection(text: str) -> bool:
+    """Return True if *text* matches any G4 system-introspection pattern."""
+    for pattern in INTROSPECTION_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+
+
+def check_introspection(message: str) -> bool:
+    """G4 public gate: return True when *message* is a system introspection attempt.
+
+    Called by ``is_out_of_scope`` before the LLM classifier.  Also exposed for
+    use by other layers (e.g. guardrails pre-dispatch check) that want to reuse
+    the same pattern set without a second LLM call.
+    """
+    text = (message or "").strip()
+    if not text:
+        return False
+    return _check_introspection(text)
+
+
 def _is_trivially_in_scope(text: str) -> bool:
+    # Introspection attempts are never trivially in scope — even very short ones.
+    if _check_introspection(text):
+        return False
     return len(text) <= 2 or bool(_TRIVIAL_IN_SCOPE.match(text))
+
 
 # The canned decline — mirrors the example in shared.md's scope section.
 SCOPE_DECLINE = (
@@ -85,7 +118,9 @@ def _classifier_model(provider: Optional[str], model: Optional[str]) -> Optional
     override = os.environ.get("HERMES_SCOPE_GUARD_MODEL", "").strip()
     if override:
         return override
-    is_anthropic = (provider or "").strip().lower() == "anthropic" or "claude" in (model or "").lower()
+    is_anthropic = (provider or "").strip().lower() == "anthropic" or "claude" in (
+        model or ""
+    ).lower()
     if is_anthropic:
         return "claude-haiku-4-5"
     return model
@@ -110,6 +145,12 @@ def is_out_of_scope(
 
     if _is_trivially_in_scope(text):
         return False
+
+    # G4: deterministic pre-LLM gate — no classifier call needed for these.
+    if check_introspection(text):
+        logger.info("scope_guard: system_introspection_blocked: %r", text[:120])
+        return True
+
     try:
         from agent.auxiliary_client import call_llm
 

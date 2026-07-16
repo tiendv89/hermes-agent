@@ -1075,18 +1075,18 @@ async def add_member(
     role_label: Optional[str] = None,
 ) -> None:
     """Add user_id to session_id's member set (idempotent — upsert on conflict)."""
-    existing = await db.get(SessionMember, (session_id, user_id))
-    if existing is not None:
-        return
-    db.add(
-        SessionMember(
+    stmt = (
+        pg_insert(SessionMember)
+        .values(
             session_id=session_id,
             user_id=user_id,
             role_label=role_label,
             added_by=added_by,
             added_at=time.time(),
         )
+        .on_conflict_do_nothing(index_elements=["session_id", "user_id"])
     )
+    await db.execute(stmt)
     await db.commit()
 
 
