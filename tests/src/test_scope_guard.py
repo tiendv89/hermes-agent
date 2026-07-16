@@ -27,8 +27,30 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 
+def _ensure_guardrails_stub():
+    """Load guardrails.py directly (bypassing plugins/__init__.py) and register it
+    under the canonical import path so scope_guard can import INTROSPECTION_PATTERNS."""
+    if "plugins.tools.guardrails" in sys.modules:
+        return
+    _bare = "_test_guardrails_bare"
+    sys.modules.pop(_bare, None)
+    spec = importlib.util.spec_from_file_location(
+        _bare, REPO_ROOT / "plugins" / "tools" / "guardrails.py"
+    )
+    guard_mod = importlib.util.module_from_spec(spec)
+    sys.modules[_bare] = guard_mod
+    spec.loader.exec_module(guard_mod)
+    plugins_pkg = sys.modules.setdefault("plugins", types.ModuleType("plugins"))
+    plugins_tools_pkg = sys.modules.setdefault(
+        "plugins.tools", types.ModuleType("plugins.tools")
+    )
+    plugins_pkg.tools = plugins_tools_pkg  # type: ignore[attr-defined]
+    sys.modules["plugins.tools.guardrails"] = guard_mod
+
+
 def _load_scope_guard():
     """Import scope_guard fresh (HERMES_SCOPE_GUARD taken from env at call time)."""
+    _ensure_guardrails_stub()
     mod_name = "src.api.scope_guard"
     sys.modules.pop(mod_name, None)
     spec = importlib.util.spec_from_file_location(

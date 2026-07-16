@@ -28,6 +28,8 @@ import os
 import re
 from typing import Optional
 
+from plugins.tools.guardrails import INTROSPECTION_PATTERNS
+
 logger = logging.getLogger(__name__)
 
 _TRIVIAL_IN_SCOPE = re.compile(
@@ -38,25 +40,6 @@ _TRIVIAL_IN_SCOPE = re.compile(
     r"[\s!.?,…]*$",
     re.IGNORECASE,
 )
-
-# G4 — patterns that indicate system introspection attempts.
-# These are matched deterministically before the LLM classifier runs.
-INTROSPECTION_PATTERNS = [
-    re.compile(r"\bsystem\s+prompt\b", re.IGNORECASE),
-    re.compile(r"\byour\s+instructions\b", re.IGNORECASE),
-    re.compile(r"\byour\s+rules\b", re.IGNORECASE),
-    re.compile(r"\brepeat\s+everything\s+above\b", re.IGNORECASE),
-    re.compile(r"\bwhat\s+tools\s+do\s+you\s+have\b", re.IGNORECASE),
-    re.compile(
-        r"\bshow\s+me\s+your\s+(?:tools|functions|prompt|instructions)\b",
-        re.IGNORECASE,
-    ),
-    re.compile(r"\bprint\s+your\s+(?:prompt|instructions|rules)\b", re.IGNORECASE),
-    re.compile(r"\blist\s+(?:all\s+)?your\s+(?:tools|functions)\b", re.IGNORECASE),
-    re.compile(r"\byour\s+architecture\b", re.IGNORECASE),
-    re.compile(r"\bwhat\s+model\s+are\s+you\b", re.IGNORECASE),
-    re.compile(r"\bignore\s+(?:all\s+)?previous\s+instructions\b", re.IGNORECASE),
-]
 
 
 def _check_introspection(text: str) -> bool:
