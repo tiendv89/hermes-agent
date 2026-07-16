@@ -16,7 +16,6 @@ Set to "0", "false", "no", or "off" to disable (debugging only; never in product
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re

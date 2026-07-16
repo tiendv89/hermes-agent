@@ -408,7 +408,7 @@ class TestG7OOBSanitization:
         assert result["comments"][1]["body"] == "clean"
 
     def test_oob_stripped_from_list(self, g):
-        result = g.sanitize_result("query_rag", [f"clean", f"evil: {self.OOB}"])
+        result = g.sanitize_result("query_rag", ["clean", f"evil: {self.OOB}"])
         assert "[OUT-OF-BAND" not in result[1]
 
     def test_no_oob_passthrough(self, g):
