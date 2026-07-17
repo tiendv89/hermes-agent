@@ -29,12 +29,14 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     POST /channels/{id}/join                               — channels
     POST /dms                                              — create/resolve DM session (agent-general-chat)
     GET  /dms                                              — list caller's DMs (agent-general-chat)
+    POST /generate-feature-name                            — generate kebab-case slug from description (auto-gen-slug)
 """
 
 from __future__ import annotations
 
 from fastapi import APIRouter
 
+from src.api.generate_feature_name import router as generate_feature_name_router
 from src.api.routers import (
     admin_models,
     channels,
@@ -52,6 +54,7 @@ from src.api.routers import (
 )
 
 router = APIRouter()
+router.include_router(generate_feature_name_router)
 router.include_router(sessions.router)
 router.include_router(models.router)
 router.include_router(admin_models.router)
