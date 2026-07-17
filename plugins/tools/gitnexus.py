@@ -194,6 +194,7 @@ async def handle(
             _build_arguments(tool, query, repo, direction),
             workspace_id=workspace_id,
             organization_id=org_id,
+            api_key=os.environ.get("GITNEXUS_MCP_TOKEN", ""),
         )
         return {"ok": True, "results": results}
     except Exception as exc:
@@ -322,7 +323,12 @@ def list_indexed_repos(
 
     async def _go() -> Any:
         coro = call_mcp_tool(
-            url, "list_repos", {}, workspace_id=workspace_id, organization_id=organization_id
+            url,
+            "list_repos",
+            {},
+            workspace_id=workspace_id,
+            organization_id=organization_id,
+            api_key=os.environ.get("GITNEXUS_MCP_TOKEN", ""),
         )
         if timeout:
             return await asyncio.wait_for(coro, timeout)

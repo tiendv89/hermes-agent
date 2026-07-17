@@ -92,6 +92,7 @@ async def call_mcp_tool(
     arguments: dict,
     workspace_id: str = "",
     organization_id: str = "",
+    api_key: str = "",
 ) -> list[dict]:
     """Connect to an MCP SSE server, run a single tool call, return content as plain dicts.
 
@@ -107,11 +108,19 @@ async def call_mcp_tool(
     endpoints, and without it the base URL is used verbatim. organization_id
     is optional and defaults to "" so existing callers (e.g. GitNexus, which
     has no concept of organization_id) are unaffected.
+
+    *api_key* is sent as ``Authorization: Bearer <api_key>``. These MCP
+    endpoints are trusted-backend-to-backend only (no browser/BFF session to
+    derive a per-user identity token from), so both rag-service and GitNexus
+    gate them behind a static shared secret (RAG_MCP_TOKEN / GITNEXUS_MCP_TOKEN
+    respectively) instead. Omitted (default "") when the target server has no
+    token configured — the request is then unauthenticated and 401s server-side.
     """
     endpoint = _sse_endpoint(base_url, workspace_id, organization_id)
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
     async def _run() -> list[dict]:
-        async with sse_client(endpoint) as (read, write):
+        async with sse_client(endpoint, headers=headers) as (read, write):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 result = await session.call_tool(tool, arguments)

@@ -366,6 +366,7 @@ class TestWorkflowQueryGitnexus:
             {"query": "where is register() defined"},
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -388,6 +389,7 @@ class TestWorkflowQueryGitnexus:
             {"query": "TopNav", "repo": "voyager-interface"},
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -417,6 +419,7 @@ class TestWorkflowQueryGitnexus:
             },
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -439,6 +442,7 @@ class TestWorkflowQueryGitnexus:
             {"query": "find X"},
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -462,6 +466,7 @@ class TestWorkflowQueryGitnexus:
             {"name": "register"},
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -486,6 +491,7 @@ class TestWorkflowQueryGitnexus:
             {"scope": "unstaged", "repo": "voyager-interface"},
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -509,6 +515,7 @@ class TestWorkflowQueryGitnexus:
             {},
             workspace_id="test-workspace",
             organization_id="test-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -558,6 +565,7 @@ class TestWorkflowQueryGitnexus:
             {"query": "find X"},
             workspace_id="test-workspace",
             organization_id="workspace-owning-org",
+            api_key="",
         )
 
     @pytest.mark.asyncio
@@ -589,6 +597,7 @@ class TestWorkflowQueryGitnexus:
             {"query": "find X"},
             workspace_id="test-workspace",
             organization_id="session-org",
+            api_key="",
         )
 
     def test_check_available_false_when_unset(self):
@@ -845,7 +854,7 @@ class TestGitnexusHandleWorkspaceScoping:
 
         captured_workspace_ids = []
 
-        async def fake_call(url, tool, args, workspace_id="", organization_id=""):
+        async def fake_call(url, tool, args, workspace_id="", organization_id="", api_key=""):
             captured_workspace_ids.append(workspace_id)
             return [{"type": "text", "text": "data"}]
 
@@ -915,7 +924,7 @@ class TestListIndexedReposWorkspaceScoping:
             "ws-b": [{"type": "text", "text": '[{"name":"repo-b"}]'}],
         }
 
-        async def fake_call(url, tool, args, workspace_id="", organization_id=""):
+        async def fake_call(url, tool, args, workspace_id="", organization_id="", api_key=""):
             call_count["n"] += 1
             return responses.get(workspace_id, [])
 
@@ -1107,6 +1116,7 @@ class TestWorkflowQueryRag:
             },
             workspace_id="ws-1",
             organization_id="org-1",
+            api_key="",
         )
 
     @pytest.mark.asyncio

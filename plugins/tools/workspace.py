@@ -87,6 +87,7 @@ async def _rag_overview_snippets(wid: str, org_id: str) -> List[Dict[str, Any]]:
             },
             workspace_id=wid,
             organization_id=org_id,
+            api_key=os.environ.get("RAG_MCP_TOKEN", ""),
         )
     except Exception as exc:
         logger.debug("get_workspace_context: RAG overview query failed: %s", exc)
