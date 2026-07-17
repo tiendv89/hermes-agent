@@ -75,16 +75,24 @@ def _unpack_args(args: tuple, kwargs: dict) -> dict:
 def _get_session_context() -> Optional[dict[str, Any]]:
     """Return the current session's workspace context for guardrail G10.
 
-    Uses the thread-local set by set_context() at turn start. Returns None
-    when no context is set (general chat without workspace binding), which
-    causes the workspace isolation check to be skipped.
+    Uses the agent_session_id stored on the thread-local by set_agent_context()
+    at turn start to look up the authoritative per-session store. Returns None
+    when no agent session is registered (general chat without workspace binding),
+    which causes G10 to be skipped.
+
+    Reads from the per-session dict (not the raw thread-local workspace_id /
+    feature_id) to avoid the G2 leakage: a reused ThreadPoolExecutor thread
+    retains stale thread-locals from the previous session; agent_session_id is
+    always overwritten at the start of each turn by set_agent_context().
     """
     try:
-        from plugins.context import get_workspace_id, get_feature_id
+        from plugins.context import get_agent_session_id, get_context_for_session
 
-        workspace_id = get_workspace_id()
-        if workspace_id:
-            return {"workspace_id": workspace_id, "feature_id": get_feature_id()}
+        session_id = get_agent_session_id()
+        if session_id:
+            workspace_id, feature_id = get_context_for_session(session_id)
+            if workspace_id:
+                return {"workspace_id": workspace_id, "feature_id": feature_id}
     except Exception:
         pass
     return None
