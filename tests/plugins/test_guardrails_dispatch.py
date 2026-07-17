@@ -78,7 +78,7 @@ def _clear_thread_local():
     try:
         from plugins.context import _local
 
-        for attr in ("workspace_id", "feature_id", "user_id", "org_id"):
+        for attr in ("workspace_id", "feature_id", "user_id", "org_id", "agent_session_id"):
             if hasattr(_local, attr):
                 setattr(_local, attr, "")
     except Exception:
@@ -115,17 +115,22 @@ class TestGetSessionContext:
         import plugins.context as ctx
 
         ctx.set_context("sess-1", "my-workspace", "feat-1")
+        ctx.set_agent_context("sess-1", None)  # set agent_session_id on thread-local
         fn = _get_get_session_context(plugins_mod)
         result = fn()
         assert result is not None
         assert result["workspace_id"] == "my-workspace"
         assert result["feature_id"] == "feat-1"
 
-    def test_returns_none_when_workspace_empty(self):
-        plugins_mod = _load_plugins()
-        import plugins.context as ctx
+    def test_returns_none_when_no_agent_session(self):
+        """Without agent_session_id set, _get_session_context returns None.
 
-        ctx._local.workspace_id = ""
+        This replaces the old test that checked thread-local workspace_id directly.
+        _get_session_context now uses get_agent_session_id() + get_context_for_session()
+        so that it reads from the per-session store, not the stale thread-local.
+        """
+        plugins_mod = _load_plugins()
+        # No set_agent_context call — agent_session_id is empty
         fn = _get_get_session_context(plugins_mod)
         result = fn()
         assert result is None
@@ -271,6 +276,7 @@ class TestGuardrailWrapperSync:
         import plugins.context as ctx
 
         ctx.set_context("sess-a", "workspace-A", "feat-1")
+        ctx.set_agent_context("sess-a", None)  # wire agent_session_id so _get_session_context resolves
 
         inner = self._make_handler()
         wrapped = plugins_mod._guardrail_wrapper(inner, "read_file", is_async=False)
@@ -288,6 +294,7 @@ class TestGuardrailWrapperSync:
         import plugins.context as ctx
 
         ctx.set_context("sess-a", "workspace-A", "feat-1")
+        ctx.set_agent_context("sess-a", None)  # wire agent_session_id so _get_session_context resolves
 
         inner = self._make_handler({"ok": True})
         wrapped = plugins_mod._guardrail_wrapper(inner, "read_file", is_async=False)
@@ -526,6 +533,7 @@ class TestGuardrailWrapperAsync:
         import plugins.context as ctx
 
         ctx.set_context("sess-async", "workspace-X", "feat-1")
+        ctx.set_agent_context("sess-async", None)  # wire agent_session_id so _get_session_context resolves
 
         inner = self._make_async_handler()
         wrapped = plugins_mod._guardrail_wrapper(inner, "query_rag", is_async=True)

@@ -32,7 +32,7 @@ from src.api.thread_authz import authorize_thread_access
 from src.db import (
     Message,
     add_member,
-    get_messages_as_conversation,
+    get_thread_messages_as_conversation,
     get_session,
     persist_mentions,
     touch_session,
@@ -201,7 +201,7 @@ async def post_thread_reply(
     if resolved["model"] != getattr(session, "model", None):
         await update_session_model(db, session_id, resolved["model"])
 
-    history = await get_messages_as_conversation(db, session_id)
+    history = await get_thread_messages_as_conversation(db, session_id, root_id)
     loop = asyncio.get_running_loop()
     feature_id = getattr(session, "feature_id", "") or ""
 

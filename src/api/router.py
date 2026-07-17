@@ -15,7 +15,8 @@ module assembles them into the single ``router`` mounted at ``/api/v1`` in
     POST /threads/{id}/messages                            — send service (v4 team-chat)
     GET  /threads/{id}/stream                              — SSE fan-out subscription (v4)
     POST /threads/{id}/typing                              — ephemeral typing indicator (v4)
-    POST /threads/{id}/cancel                              — cancel in-progress agent turn
+    POST /threads/{id}/cancel                              — cancel in-progress agent turn (thread-scoped)
+    POST /sessions/{id}/cancel                             — cancel in-progress agent turn (session-scoped)
     POST /threads/{id}/clarify                             — reply to a pending agent.clarify prompt
     POST /threads                                          — create workspace-level thread (T9)
     GET  /threads                                          — list caller's workspace threads (T9)
