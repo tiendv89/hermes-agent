@@ -545,6 +545,78 @@ class TestAllowedCallsViaRegisteredHandlers:
         # Not a guardrail block — might fail for DB reasons in test env
         assert not _is_guardrail_block(parsed)
 
+    def test_suggest_next_actions_start_task_blocked(self):
+        """suggest_next_actions with 'Start Task' action_text → cta_phishing_blocked (G9)."""
+        plugins_mod = _load_plugins()
+        ctx = MagicMock()
+        plugins_mod.register(ctx)
+        handler = _get_handler(ctx, "suggest_next_actions")
+
+        parsed = _call_sync(
+            handler,
+            {
+                "suggestions": [
+                    {
+                        "id": "s1",
+                        "title": "Start Task T4",
+                        "action_text": "Start Task T4",
+                        "description": "Begin task execution.",
+                        "button_label": "Start",
+                    }
+                ]
+            },
+        )
+        assert parsed["ok"] is False
+        assert parsed["reason_code"] == "cta_phishing_blocked"
+
+    def test_suggest_next_actions_start_implementation_blocked(self):
+        """suggest_next_actions with 'Start implementation' action_text → cta_phishing_blocked (G9)."""
+        plugins_mod = _load_plugins()
+        ctx = MagicMock()
+        plugins_mod.register(ctx)
+        handler = _get_handler(ctx, "suggest_next_actions")
+
+        parsed = _call_sync(
+            handler,
+            {
+                "suggestions": [
+                    {
+                        "id": "s1",
+                        "title": "Begin implementation",
+                        "action_text": "Start implementation of T1",
+                        "description": "Run the task.",
+                        "button_label": "Go",
+                    }
+                ]
+            },
+        )
+        assert parsed["ok"] is False
+        assert parsed["reason_code"] == "cta_phishing_blocked"
+
+    def test_suggest_next_actions_run_task_blocked(self):
+        """suggest_next_actions with 'Run task' action_text → cta_phishing_blocked (G9)."""
+        plugins_mod = _load_plugins()
+        ctx = MagicMock()
+        plugins_mod.register(ctx)
+        handler = _get_handler(ctx, "suggest_next_actions")
+
+        parsed = _call_sync(
+            handler,
+            {
+                "suggestions": [
+                    {
+                        "id": "s1",
+                        "title": "Run the task",
+                        "action_text": "Run task now",
+                        "description": "Execute the task.",
+                        "button_label": "Run",
+                    }
+                ]
+            },
+        )
+        assert parsed["ok"] is False
+        assert parsed["reason_code"] == "cta_phishing_blocked"
+
     def test_same_workspace_read_file_not_blocked(self):
         """read_file with workspace_id matching session context is allowed (G10 passes)."""
         _set_context("ws-A", "feat-1")
