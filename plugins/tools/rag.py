@@ -138,7 +138,12 @@ async def handle(
     mark_context_gathered(coerce_text(feature_id))
     try:
         results = await call_mcp_tool(
-            url, "rag_query", arguments, workspace_id=wid, organization_id=org_id
+            url,
+            "rag_query",
+            arguments,
+            workspace_id=wid,
+            organization_id=org_id,
+            api_key=os.environ.get("RAG_MCP_TOKEN", ""),
         )
         return {"ok": True, "results": results}
     except Exception as exc:
