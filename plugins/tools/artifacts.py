@@ -202,6 +202,16 @@ def _write_artifact(
     stage: str,
 ) -> Dict[str, Any]:
     """Write document content to storage-service."""
+    if not feature_id:
+        return {
+            "ok": False,
+            "error": (
+                "feature_id could not be resolved for the current session. "
+                "Pass feature_id explicitly in the tool call, or ensure "
+                "set_context() was called with this session's feature_id "
+                "before invoking write tools."
+            ),
+        }
     _validate_id(feature_id, "feature_id")
 
     # Hard gate: a product spec / technical design must be grounded in the
@@ -304,9 +314,11 @@ def _write_artifact(
 
 
 def _resolve_ids(workspace_id: str, feature_id: str) -> tuple[str, str]:
-    from ..context import get_feature_id, get_workspace_id
+    from ..context import get_agent_session_id, get_context_for_session
 
-    return workspace_id or get_workspace_id(), feature_id or get_feature_id()
+    session_id = get_agent_session_id()
+    ctx_workspace_id, ctx_feature_id = get_context_for_session(session_id)
+    return workspace_id or ctx_workspace_id, feature_id or ctx_feature_id
 
 
 def handle_write_product_spec(

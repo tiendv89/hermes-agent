@@ -77,12 +77,17 @@ def test_get_context_for_session_returns_workspace_feature_only():
     assert feat == "feat-4"
 
 
-def test_get_context_for_session_missing_falls_back_to_thread_local():
-    """A session not in _by_session falls back to the thread-local."""
+def test_get_context_for_session_unknown_returns_empty_strings():
+    """A session not in _by_session returns ("", "") — no thread-local fallback.
+
+    The fallback was removed as part of the G2 fix: reused ThreadPoolExecutor
+    threads retain stale thread-locals from a previous session, which caused
+    feature_id to leak across sessions. The per-session store is now authoritative.
+    """
     ctx.set_context("sess5", "ws-5", "feat-5")
     ws, feat = ctx.get_context_for_session("unknown-session")
-    assert ws == "ws-5"
-    assert feat == "feat-5"
+    assert ws == ""
+    assert feat == ""
 
 
 def test_clear_context_removes_session():
