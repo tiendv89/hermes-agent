@@ -1,8 +1,8 @@
-"""Tests for the parse_tasks tool — strict tasks.md Index-table parsing.
+"""Tests for the parse_tasks tool — header-driven tasks.md Index-table parsing.
 
-Grammar under test (go features), strict and positional:
+Grammar under test (go features) — required columns, order-flexible:
 
-    | ID | Title | Repo | Depends On | Actor | Model |
+    | ID | Title | Repo | Depends On | Actor |   (Model optional; extras ignored)
 
 Parsed rows map onto the workflow-backend CreateTaskItem contract:
     name, title, repo, depends_on, actor_type, model.
@@ -64,7 +64,8 @@ _SAMPLE = """\
 ## T1 — Thread user_id
 """
 
-# Five-column sample (pre-feature format, must return [] after grammar change).
+# Required-columns-only sample (no optional Model column) — parses with
+# model == "" on every row.
 _SAMPLE_5COL = """\
 # Tasks — demo
 
@@ -215,18 +216,74 @@ class TestParseTasksIndex:
         assert tasks[0]["model"] == ""
         assert tasks[1]["model"] == ""
 
-    def test_stale_5_column_input_returns_empty(self):
-        """Pre-existing five-column tasks.md must return [] (backward-incompatible)."""
-        assert parse(_SAMPLE_5COL) == []
+    # -------------------------------------------------------------------------
+    # Required columns only (no optional Model column)
+    # -------------------------------------------------------------------------
 
-    def test_stale_5_column_no_rows_parsed(self):
-        """Five-column header means header match fails → no rows parsed even if valid."""
+    def test_required_columns_only_parses(self):
+        """A table with only the required columns (no Model) parses successfully."""
+        tasks = parse(_SAMPLE_5COL)
+        assert len(tasks) == 2
+        assert [t["name"] for t in tasks] == ["T1", "T2"]
+
+    def test_required_columns_only_model_blank(self):
+        """Every row of a Model-less table gets model == ""."""
+        tasks = parse(_SAMPLE_5COL)
+        assert all(t["model"] == "" for t in tasks)
+
+    def test_required_columns_only_fields_parse(self):
+        """actor_type / depends_on still parse correctly without a Model column."""
+        tasks = parse(_SAMPLE_5COL)
+        assert tasks[0]["actor_type"] == "agent"
+        assert tasks[1]["actor_type"] == "human"
+        assert tasks[0]["depends_on"] == []
+
+    def test_required_columns_only_header_case_insensitive(self):
         md = (
-            "| ID | Title | Repo | Depends On | Actor |\n"
+            "## Index\n\n"
+            "| id | title | repo | depends on | actor |\n"
             "|----|-------|------|------------|-------|\n"
-            "| T1 | Task | repo | — | agent |\n"
+            "| T1 | Task | my-repo | — | agent |\n"
         )
-        assert parse(md) == []
+        tasks = parse(md)
+        assert len(tasks) == 1
+        assert tasks[0]["model"] == ""
+
+    # -------------------------------------------------------------------------
+    # Flexible, header-driven layout — order-independent, extra columns ignored
+    # -------------------------------------------------------------------------
+
+    def test_reordered_columns_map_by_name(self):
+        """Columns in a non-canonical order still map each field correctly."""
+        md = (
+            "## Index\n\n"
+            "| ID | Actor | Title | Repo | Depends On | Model |\n"
+            "|----|-------|-------|------|------------|-------|\n"
+            "| T1 | human | Do a thing | my-repo | — | |\n"
+            "| T2 | agent | Do another | my-repo | T1 | Claude Opus 4.8 |\n"
+        )
+        tasks = parse(md)
+        assert len(tasks) == 2
+        assert tasks[0]["actor_type"] == "human"
+        assert tasks[0]["title"] == "Do a thing"
+        assert tasks[1]["actor_type"] == "agent"
+        assert tasks[1]["depends_on"] == ["T1"]
+        assert tasks[1]["model"] == "Claude Opus 4.8"
+
+    def test_extra_unknown_column_ignored(self):
+        """An added column the parser doesn't know about is ignored, not an error."""
+        md = (
+            "## Index\n\n"
+            "| ID | Title | Priority | Repo | Depends On | Actor | Model |\n"
+            "|----|-------|----------|------|------------|-------|-------|\n"
+            "| T1 | Task | high | my-repo | — | agent | Claude Sonnet 4.6 |\n"
+        )
+        tasks = parse(md)
+        assert len(tasks) == 1
+        assert tasks[0]["title"] == "Task"
+        assert tasks[0]["actor_type"] == "agent"
+        assert tasks[0]["model"] == "Claude Sonnet 4.6"
+        assert "priority" not in tasks[0]
 
 
 class TestHandle:
@@ -247,6 +304,8 @@ class TestHandle:
         t1 = next(t for t in result["tasks"] if t["name"] == "T1")
         assert t1["model"] == "Claude Sonnet 4.6"
 
-    def test_handle_stale_5_column_returns_error(self):
+    def test_handle_required_columns_only_parses(self):
         result = _MOD.handle(tasks_md=_SAMPLE_5COL)
-        assert result["ok"] is False
+        assert result["ok"] is True
+        assert result["count"] == 2
+        assert result["tasks"][0]["model"] == ""
