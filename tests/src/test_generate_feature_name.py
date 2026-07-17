@@ -143,6 +143,10 @@ class TestGenerateFeatureNameEndpoint:
     async def test_llm_exception_returns_503(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
 
+        # Clear the cached client so the patched mock is used.
+        from src.api.generate_feature_name import _get_anthropic_client
+        _get_anthropic_client.cache_clear()
+
         mock_create = AsyncMock(side_effect=RuntimeError("connection refused"))
         mock_client = MagicMock()
         mock_client.messages.create = mock_create
@@ -166,6 +170,10 @@ class TestGenerateFeatureNameEndpoint:
     async def test_custom_model_env_var(self, monkeypatch):
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         monkeypatch.setenv("GENERATE_FEATURE_NAME_MODEL", "claude-sonnet-4-5")
+
+        # Clear the cached client so the patched mock is used.
+        from src.api.generate_feature_name import _get_anthropic_client
+        _get_anthropic_client.cache_clear()
 
         mock_create = AsyncMock(return_value=_make_llm_response("my-feature-slug"))
         mock_client = MagicMock()

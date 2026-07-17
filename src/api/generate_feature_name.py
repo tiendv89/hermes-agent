@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import logging
 import os
+import re
+from functools import lru_cache
 
 import anthropic
 from fastapi import APIRouter, Depends, HTTPException
@@ -34,6 +36,29 @@ class GenerateFeatureNameRequest(BaseModel):
     description: str
 
 
+@lru_cache(maxsize=1)
+def _get_anthropic_client(api_key: str) -> anthropic.AsyncAnthropic:
+    """Return a cached AsyncAnthropic client for the given API key.
+
+    Cached with maxsize=1 so a single client instance is reused across
+    requests that share the same API key, avoiding new connection-pool
+    creation on every invocation.
+    """
+    return anthropic.AsyncAnthropic(api_key=api_key)
+
+
+def _sanitize_slug(raw: str) -> str:
+    """Normalize LLM output into a valid kebab-case slug.
+
+    Strips leading/trailing non-alphanumeric characters, replaces runs of
+    non-alphanumeric characters with a single hyphen, and lowercases.
+    """
+    slug = raw.strip().lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")
+    return slug
+
+
 @router.post("/generate-feature-name")
 async def generate_feature_name_endpoint(
     body: GenerateFeatureNameRequest,
@@ -51,14 +76,15 @@ async def generate_feature_name_endpoint(
     model = os.environ.get("GENERATE_FEATURE_NAME_MODEL", _DEFAULT_MODEL)
 
     try:
-        client = anthropic.AsyncAnthropic(api_key=api_key)
+        client = _get_anthropic_client(api_key)
         message = await client.messages.create(
             model=model,
             max_tokens=_MAX_TOKENS,
             system=_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": description}],
         )
-        slug = message.content[0].text.strip().lower()
+        raw = message.content[0].text
+        slug = _sanitize_slug(raw)
     except Exception as exc:
         logger.warning("generate_feature_name: LLM call failed: %s", exc)
         raise HTTPException(status_code=503, detail="LLM service temporarily unavailable.") from exc
