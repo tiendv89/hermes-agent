@@ -548,3 +548,203 @@ async def test_mark_stopped_suppresses_done_on_bus_translator():
         # The bus publish happens via _bus_publish which uses call_soon_threadsafe.
         # We verify _terminated was not set.
         assert t._terminated is False
+
+
+# ---------------------------------------------------------------------------
+# Session-scoped cancel endpoint — POST /sessions/{id}/cancel
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_no_active_turn_returns_404(cancel_app):
+    """POST /sessions/{id}/cancel with no in-flight turn → 404."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import _active_runs, _active_runs_lock
+
+    session_id = "sess_session_cancel_404"
+    with _active_runs_lock:
+        _active_runs.pop(session_id, None)
+
+    async with AsyncClient(
+        transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+    ) as client:
+        resp = await client.post(
+            f"/api/v1/sessions/{session_id}/cancel",
+            headers={"X-User-Id": "user_a"},
+        )
+
+    assert resp.status_code == 404, f"Expected 404, got {resp.status_code}: {resp.text}"
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_non_triggering_member_returns_403(cancel_app):
+    """POST /sessions/{id}/cancel by a non-triggering member → 403."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_session_cancel_403"
+    fake_task = MagicMock(spec=asyncio.Task)
+    with _active_runs_lock:
+        _active_runs[session_id] = ActiveRun(run_id="test-session-run-403", task=fake_task, triggered_by="user_owner")
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(
+                f"/api/v1/sessions/{session_id}/cancel",
+                headers={"X-User-Id": "user_interloper"},
+            )
+
+        assert resp.status_code == 403, (
+            f"Expected 403, got {resp.status_code}: {resp.text}"
+        )
+        fake_task.cancel.assert_not_called()
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_by_triggering_member_returns_202(cancel_app):
+    """POST /sessions/{id}/cancel by the triggering member → 202, task.cancel() called."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_session_cancel_202"
+    fake_task = MagicMock(spec=asyncio.Task)
+    with _active_runs_lock:
+        _active_runs[session_id] = ActiveRun(run_id="test-session-run-202", task=fake_task, triggered_by="user_a")
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(
+                f"/api/v1/sessions/{session_id}/cancel",
+                headers={"X-User-Id": "user_a"},
+            )
+
+        assert resp.status_code == 202, (
+            f"Expected 202, got {resp.status_code}: {resp.text}"
+        )
+        assert resp.json() == {"status": "cancelling"}
+        fake_task.cancel.assert_called_once()
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_interrupts_agent_and_sets_event(cancel_app):
+    """POST /sessions/{id}/cancel sets cancel_event and calls agent.interrupt()."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_session_cancel_interrupt"
+    fake_task = MagicMock(spec=asyncio.Task)
+    fake_agent = MagicMock()
+    run = ActiveRun(run_id="test-session-run-interrupt", task=fake_task, triggered_by="user_a")
+    run.agent = fake_agent
+    with _active_runs_lock:
+        _active_runs[session_id] = run
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(
+                f"/api/v1/sessions/{session_id}/cancel",
+                headers={"X-User-Id": "user_a"},
+            )
+
+        assert resp.status_code == 202, resp.text
+        assert run.cancel_event.is_set(), "cancel_event must be set for the worker"
+        fake_agent.interrupt.assert_called_once()
+        fake_task.cancel.assert_called_once()
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_session_cancel_missing_identity_returns_400(cancel_app):
+    """POST /sessions/{id}/cancel with no X-User-Id header → 400."""
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_session_cancel_no_identity"
+    fake_task = MagicMock(spec=asyncio.Task)
+    with _active_runs_lock:
+        _active_runs[session_id] = ActiveRun(run_id="test-session-run-identity", task=fake_task, triggered_by="user_a")
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp = await client.post(f"/api/v1/sessions/{session_id}/cancel")
+
+        assert resp.status_code == 400, (
+            f"Expected 400, got {resp.status_code}: {resp.text}"
+        )
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
+
+
+@pytest.mark.asyncio
+async def test_session_and_thread_cancel_share_same_run(cancel_app):
+    """Both /sessions/{id}/cancel and /threads/{id}/cancel operate on the same ActiveRun.
+
+    The session-scoped endpoint is a semantic alias — it cancels the same
+    in-flight run that the thread-scoped endpoint would cancel.
+    """
+    _inject_stubs()
+    from httpx import ASGITransport, AsyncClient
+    from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
+
+    session_id = "sess_shared_run_test"
+    fake_task = MagicMock(spec=asyncio.Task)
+    run = ActiveRun(run_id="test-shared-run", task=fake_task, triggered_by="user_a")
+    with _active_runs_lock:
+        _active_runs[session_id] = run
+
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            # Cancel via the session-scoped endpoint.
+            resp = await client.post(
+                f"/api/v1/sessions/{session_id}/cancel",
+                headers={"X-User-Id": "user_a"},
+            )
+
+        assert resp.status_code == 202, resp.text
+        assert run.cancel_event.is_set()
+        fake_task.cancel.assert_called_once()
+
+        # A second cancel via the thread-scoped endpoint on an already-cancelled
+        # run (task is still in _active_runs until the task coroutine cleans up)
+        # should also work if the run still exists.
+        # Reset mock to verify second call independently.
+        fake_task.cancel.reset_mock()
+        fake_task.cancel.return_value = None
+
+        async with AsyncClient(
+            transport=ASGITransport(app=cancel_app), base_url="http://testserver"
+        ) as client:
+            resp2 = await client.post(
+                f"/api/v1/threads/{session_id}/cancel",
+                headers={"X-User-Id": "user_a"},
+            )
+
+        # Both routes reach the same ActiveRun.
+        assert resp2.status_code == 202, resp2.text
+    finally:
+        with _active_runs_lock:
+            _active_runs.pop(session_id, None)
