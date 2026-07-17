@@ -14,7 +14,9 @@ Single tool with an ``action`` enum selector, matching the existing
     file_at_ref   → full file content at a given ref/commit
     list_prs      → list open (or filtered) PRs for a repo
 
-Gated on ``GITHUB_TOKEN`` presence, same convention as ``gitnexus.py``/``rag.py``.
+Gated on ``VCS_SERVICE_URL`` presence (vcs-service must be reachable).
+All operations route through vcs-service proxy endpoints — no direct
+GitHub API calls.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import logging
 import os
 from typing import Any, Dict, Optional
 
-from plugins.clients.github_pr_client import (
+from plugins.clients.vcs_client import (
     compare_refs,
     get_check_runs,
     get_file_at_ref,
@@ -142,8 +144,8 @@ SCHEMA: Dict[str, Any] = {
 
 
 def check_available(**_: Any) -> bool:
-    """Return True only when GITHUB_TOKEN is configured."""
-    return bool(os.environ.get("GITHUB_TOKEN", "").strip())
+    """Return True only when VCS_SERVICE_URL is configured."""
+    return bool(os.environ.get("VCS_SERVICE_URL", "").strip())
 
 
 def handle(
@@ -164,9 +166,8 @@ def handle(
             "error": f"Unknown action {action!r}. Expected one of: {', '.join(_ACTIONS)}.",
         }
 
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not configured."}
+    if not os.environ.get("VCS_SERVICE_URL", "").strip():
+        return {"ok": False, "error": "VCS_SERVICE_URL is not configured."}
 
     # PR-scoped actions require pr_url; owner/repo are inferred from it.
     _PR_ACTIONS = {"diff", "files", "metadata", "comments", "reviews", "checks", "commits"}

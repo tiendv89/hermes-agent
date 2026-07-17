@@ -2,10 +2,10 @@
 
 Two-call posting pattern (per product-spec §Step 6 / technical-design §4):
 
-  Step 6a — POST the full narrative to /issues/{n}/comments (always attempted;
-             fatal on any non-422 failure).
-  Step 6b — POST /pulls/{n}/reviews (skip gracefully on HTTP 422 self-review
-             restriction; fatal on any other error).
+  Step 6a — POST the full narrative to the issue comment endpoint (always
+             attempted; fatal on any non-422 failure).
+  Step 6b — POST the formal review event (skip gracefully on HTTP 422
+             self-review restriction; fatal on any other error).
 
 Returns:
   {ok: True, review_url: <str>, self_review_skipped: <bool>}
@@ -14,7 +14,8 @@ Returns:
   ``self_review_skipped`` is True.  When step 6b succeeds (HTTP 201),
   ``review_url`` is the formal review URL and ``self_review_skipped`` is False.
 
-Gated on ``GITHUB_TOKEN`` presence, same convention as ``github_pr_context.py``.
+All operations route through vcs-service proxy endpoints — no direct
+GitHub API calls.  Gated on ``VCS_SERVICE_URL`` presence.
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ from typing import Any, Dict, List, Optional
 
 import requests
 
-from plugins.clients.github_pr_client import (
+from plugins.clients.vcs_client import (
     parse_pr_url,
     post_issue_comment,
     post_pr_review,
@@ -109,8 +110,8 @@ SCHEMA: Dict[str, Any] = {
 
 
 def check_available(**_: Any) -> bool:
-    """Return True only when GITHUB_TOKEN is configured."""
-    return bool(os.environ.get("GITHUB_TOKEN", "").strip())
+    """Return True only when VCS_SERVICE_URL is configured."""
+    return bool(os.environ.get("VCS_SERVICE_URL", "").strip())
 
 
 def handle(
@@ -130,9 +131,8 @@ def handle(
     if not body:
         return {"ok": False, "error": "body is required."}
 
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not configured."}
+    if not os.environ.get("VCS_SERVICE_URL", "").strip():
+        return {"ok": False, "error": "VCS_SERVICE_URL is not configured."}
 
     try:
         owner, repo, pull_number = parse_pr_url(pr_url)
