@@ -847,11 +847,15 @@ async def _schedule_follow_up(
 ) -> None:
     """Re-load history and schedule the coalesced follow-up turn."""
     try:
-        from src.db import get_messages_as_conversation, touch_session
+        from src.db import get_messages_as_conversation, get_thread_messages_as_conversation, touch_session
         from src.api.model_catalog import resolve_model
 
+        thread_root_id = pending.get("thread_root_id")
         async with pending["db_factory"]() as db:
-            history = await get_messages_as_conversation(db, session_id)
+            if thread_root_id is not None:
+                history = await get_thread_messages_as_conversation(db, session_id, thread_root_id)
+            else:
+                history = await get_messages_as_conversation(db, session_id)
             await touch_session(db, session_id)
             resolved = await resolve_model(db, pending["model"])
 

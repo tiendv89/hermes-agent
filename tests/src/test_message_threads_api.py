@@ -565,7 +565,7 @@ async def test_post_thread_reply_agent_mention_triggers_dispatch():
          patch("src.api.routers.message_threads.touch_session", AsyncMock()), \
          patch("src.api.routers.message_threads.author_for", AsyncMock(return_value=None)), \
          patch("src.api.routers.message_threads.get_bus") as mock_bus, \
-         patch("src.api.routers.message_threads.get_messages_as_conversation", AsyncMock(return_value=[])), \
+         patch("src.api.routers.message_threads.get_thread_messages_as_conversation", AsyncMock(return_value=[])), \
          patch("src.api.routers.message_threads.resolve_model", AsyncMock(return_value={"model": "gpt-4", "provider": None, "api_key": None, "base_url": None})), \
          patch("src.api.routers.message_threads.update_session_model", AsyncMock()), \
          patch("src.api.routers.message_threads.schedule_agent_turn", AsyncMock(side_effect=lambda **kw: schedule_called.append(kw))):

@@ -572,6 +572,57 @@ async def get_messages_as_conversation(
     return messages
 
 
+async def get_thread_messages_as_conversation(
+    db: AsyncSession,
+    session_id: str,
+    thread_root_id: int,
+) -> list[Dict[str, Any]]:
+    """Return thread messages in OpenAI conversation format for agent context.
+
+    Always prepends the root message so the agent knows what thread it is in,
+    then appends active replies in created_at order. When there are no replies
+    yet the result contains only the root message, giving the agent at least
+    the initial context to respond to.
+    """
+
+    def _to_entry(msg: Message) -> Dict[str, Any]:
+        entry: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
+        if msg.tool_call_id:
+            entry["tool_call_id"] = msg.tool_call_id
+        if msg.tool_name:
+            entry["tool_name"] = msg.tool_name
+        if msg.tool_calls:
+            try:
+                entry["tool_calls"] = json.loads(msg.tool_calls)
+            except (ValueError, TypeError):
+                entry["tool_calls"] = msg.tool_calls
+        if msg.finish_reason:
+            entry["finish_reason"] = msg.finish_reason
+        if msg.reasoning:
+            entry["reasoning"] = msg.reasoning
+        return entry
+
+    messages: list[Dict[str, Any]] = []
+
+    root_msg = await get_message(db, thread_root_id)
+    if root_msg is not None and root_msg.active:
+        messages.append(_to_entry(root_msg))
+
+    result = await db.execute(
+        select(Message)
+        .where(
+            Message.session_id == session_id,
+            Message.thread_root_id == thread_root_id,
+            Message.active == True,  # noqa: E712
+        )
+        .order_by(Message.created_at)
+    )
+    for msg in result.scalars().all():
+        messages.append(_to_entry(msg))
+
+    return messages
+
+
 async def get_session_messages(
     db: AsyncSession,
     session_id: str,

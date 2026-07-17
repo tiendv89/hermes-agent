@@ -337,6 +337,7 @@ async def test_schedule_follow_up_passes_thread_context_to_run_agent_turn_async(
 
     with (
         patch("src.db.get_messages_as_conversation", AsyncMock(return_value=[])),
+        patch("src.db.get_thread_messages_as_conversation", AsyncMock(return_value=[])),
         patch("src.db.touch_session", AsyncMock()),
         patch(
             "src.api.model_catalog.resolve_model",
