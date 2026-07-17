@@ -93,13 +93,18 @@ def clear_context(session_id: str) -> None:
 
 
 def get_context_for_session(session_id: str) -> tuple[str, str]:
-    """Return (workspace_id, feature_id) for a session, falling back to the thread-local."""
+    """Return (workspace_id, feature_id) for a session from the per-session store only.
+
+    Returns ("", "") when the session is not found — no thread-local fallback.
+    Removing the fallback prevents stale thread-locals on reused ThreadPoolExecutor
+    threads from leaking feature_id from a previous session into a new one (G2 fix).
+    """
     if session_id:
         with _lock:
             found = _by_session.get(session_id)
         if found is not None:
             return found[0], found[1]
-    return get_workspace_id(), get_feature_id()
+    return "", ""
 
 
 def mark_context_gathered(feature_id: str = "") -> None:
