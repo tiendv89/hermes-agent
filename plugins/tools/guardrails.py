@@ -139,6 +139,10 @@ LIFECYCLE_ACTION_PATTERNS = [
     re.compile(r"\bcreate[_\s]tasks\b", re.IGNORECASE),
     re.compile(r"\bworkflow[_\s]init[_\s]feature\b", re.IGNORECASE),
     re.compile(r"\brequest[_\s]approval\b", re.IGNORECASE),
+    # task-execution CTAs — owned by the orchestrator, not the human user
+    re.compile(r"\bstart[_\s]task\b", re.IGNORECASE),
+    re.compile(r"\bstart[_\s]implementation\b", re.IGNORECASE),
+    re.compile(r"\brun[_\s]task\b", re.IGNORECASE),
 ]
 
 # G4 — system introspection patterns (exposed for scope_guard reuse)
