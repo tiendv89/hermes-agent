@@ -593,6 +593,18 @@ class TestG9CTAPhishing:
         }
         assert not allowed(g, "suggest_next_actions", args)
 
+    def test_start_task_cta_blocked(self, g):
+        args = {"suggestions": [self._suggestion("Start Task T4")]}
+        assert not allowed(g, "suggest_next_actions", args)
+
+    def test_start_implementation_cta_blocked(self, g):
+        args = {"suggestions": [self._suggestion("Start implementation of T1")]}
+        assert not allowed(g, "suggest_next_actions", args)
+
+    def test_run_task_cta_blocked(self, g):
+        args = {"suggestions": [self._suggestion("Run task now")]}
+        assert not allowed(g, "suggest_next_actions", args)
+
 
 # ---------------------------------------------------------------------------
 # G10 — Cross-workspace isolation
