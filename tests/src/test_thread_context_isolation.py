@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import sys
 import types
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -251,12 +251,6 @@ async def test_get_thread_messages_as_conversation_null_content_coerced():
 async def test_post_thread_reply_uses_thread_scoped_history():
     """post_thread_reply builds agent history with get_thread_messages_as_conversation,
     not get_messages_as_conversation, so the agent only sees thread messages."""
-    import sys
-    import types
-
-    from fastapi import FastAPI
-    from fastapi.testclient import TestClient
-
     # Capture which history-building function is called.
     thread_history_calls: list = []
     session_history_calls: list = []
