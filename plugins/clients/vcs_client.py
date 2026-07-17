@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import time
 from typing import Any, Dict, List, Optional, Tuple
 
 import requests
@@ -24,9 +25,7 @@ logger = logging.getLogger(__name__)
 _DEFAULT_BASE_URL = "http://vcs-service:8080"
 _DEFAULT_TIMEOUT = 30
 
-_PR_URL_RE = re.compile(
-    r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)"
-)
+_PR_URL_RE = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
 
 def _base_url() -> str:
@@ -89,12 +88,42 @@ def get_pr_files(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]
 
 
 def get_pr_metadata(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
-    """Return PR metadata: title, body, author, branches, state, labels, etc."""
+    """Return PR metadata: title, body, author, branches, state, labels, etc.
+
+    The vcs-service may return either a flat representation (already
+    transformed) or the raw provider response (nested).  We normalise
+    both shapes so callers always see the flat form.
+    """
     resp = _post(
         "/api/vcs/pr/metadata",
         {"owner": owner, "repo": repo, "pull_number": pull_number},
     )
-    return resp.json()
+    data = resp.json()
+    # If the response is already flat (has 'title' at top level), return as-is.
+    if "title" in data and "author" in data and "base_branch" in data:
+        return data
+    # Otherwise treat it as a raw provider response and flatten it.
+    return {
+        "number": data.get("number"),
+        "title": data.get("title"),
+        "body": data.get("body"),
+        "state": data.get("state"),
+        "draft": data.get("draft"),
+        "author": data.get("user", {}).get("login"),
+        "base_branch": data.get("base", {}).get("ref"),
+        "base_sha": data.get("base", {}).get("sha"),
+        "head_branch": data.get("head", {}).get("ref"),
+        "head_sha": data.get("head", {}).get("sha"),
+        "labels": [lb.get("name") for lb in data.get("labels", [])],
+        "requested_reviewers": [
+            r.get("login") for r in data.get("requested_reviewers", [])
+        ],
+        "merged": data.get("merged"),
+        "merged_at": data.get("merged_at"),
+        "html_url": data.get("html_url"),
+        "created_at": data.get("created_at"),
+        "updated_at": data.get("updated_at"),
+    }
 
 
 def get_pr_comments(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
@@ -134,9 +163,8 @@ def get_check_runs(
 
     When *poll_timeout_seconds* is set (> 0), polls every 15 seconds until all
     check-runs reach a terminal state or the timeout expires.  On timeout
-    returns ``status: "pending"`` rather than blocking forever.
+    Returns ``status: "pending"`` rather than blocking forever.
     """
-    import time
 
     if poll_timeout_seconds is None:
         poll_timeout_seconds = int(
@@ -202,12 +230,44 @@ def compare_refs(owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
 
 
 def get_file_at_ref(owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:
-    """Return the content of a file at a given ref/commit/branch."""
+    """Return the content of a file at a given ref/commit/branch.
+
+    If the response contains base64-encoded content we decode it before
+    returning, matching the historical behaviour of github_pr_client.
+    """
+    import base64
+
     resp = _post(
         "/api/vcs/repo/file_content",
         {"owner": owner, "repo": repo, "path": path, "ref": ref},
     )
-    return resp.json()
+    data = resp.json()
+
+    if isinstance(data, list):
+        # Path is a directory, not a file.
+        return {
+            "ok": False,
+            "error": f"{path!r} is a directory, not a file.",
+        }
+
+    raw = data.get("content", "")
+    if data.get("encoding") == "base64" and raw:
+        try:
+            content = base64.b64decode(raw).decode("utf-8", errors="replace")
+        except Exception:
+            content = raw
+    else:
+        content = raw
+
+    return {
+        "path": data.get("path"),
+        "sha": data.get("sha"),
+        "size": data.get("size"),
+        "encoding": data.get("encoding"),
+        "content": content,
+        "html_url": data.get("html_url"),
+        "ok": data.get("ok", True),
+    }
 
 
 def list_open_prs(

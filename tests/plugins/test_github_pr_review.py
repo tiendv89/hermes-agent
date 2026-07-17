@@ -7,7 +7,7 @@ Covers (per tasks.md T2 test plan):
   - Non-422 failure on step 6b (fatal → ok=False)
   - Step 6a (issue comment) failure (fatal → ok=False)
   - Inline comment formatting for comments[] (passed through to step 6b payload)
-  - check_available(): gates on GITHUB_TOKEN presence
+  - check_available(): gates on VCS_SERVICE_URL presence
   - Tool registered in plugins.__init__._TOOLS with correct name/schema/check_fn
 """
 
@@ -24,6 +24,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 _PR_URL = "https://github.com/acme/myrepo/pull/42"
 _BODY = "## Review\n\nThis looks good overall. 🟢 Nit: rename variable."
+
+_VCS_POST_PATH = "plugins.clients.vcs_client.requests.post"
 
 
 # ---------------------------------------------------------------------------
@@ -43,7 +45,9 @@ def _clean_modules():
         del sys.modules[k]
 
 
-def _make_comment_response(html_url: str = "https://github.com/acme/myrepo/issues/42#issuecomment-1") -> MagicMock:
+def _make_comment_response(
+    html_url: str = "https://github.com/acme/myrepo/issues/42#issuecomment-1",
+) -> MagicMock:
     resp = MagicMock()
     resp.status_code = 201
     resp.json.return_value = {"html_url": html_url, "id": 1}
@@ -51,7 +55,10 @@ def _make_comment_response(html_url: str = "https://github.com/acme/myrepo/issue
     return resp
 
 
-def _make_review_response(status_code: int, html_url: str = "https://github.com/acme/myrepo/pull/42#pullrequestreview-99") -> MagicMock:
+def _make_review_response(
+    status_code: int,
+    html_url: str = "https://github.com/acme/myrepo/pull/42#pullrequestreview-99",
+) -> MagicMock:
     resp = MagicMock()
     resp.status_code = status_code
     resp.json.return_value = {"html_url": html_url, "id": 99}
@@ -65,19 +72,22 @@ def _make_review_response(status_code: int, html_url: str = "https://github.com/
 
 
 class TestCheckAvailable:
-    def test_returns_false_when_token_unset(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    def test_returns_false_when_url_unset(self, monkeypatch):
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         from plugins.tools.github_pr_review import check_available
+
         assert check_available() is False
 
-    def test_returns_false_when_token_empty(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "   ")
+    def test_returns_false_when_url_empty(self, monkeypatch):
+        monkeypatch.setenv("VCS_SERVICE_URL", "   ")
         from plugins.tools.github_pr_review import check_available
+
         assert check_available() is False
 
-    def test_returns_true_when_token_set(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+    def test_returns_true_when_url_set(self, monkeypatch):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_review import check_available
+
         assert check_available() is True
 
 
@@ -88,39 +98,46 @@ class TestCheckAvailable:
 
 class TestInputValidation:
     def test_missing_pr_url_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_review import handle
+
         result = handle(event="APPROVE", body=_BODY)
         assert result["ok"] is False
         assert "pr_url" in result["error"]
 
     def test_missing_body_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_review import handle
+
         result = handle(pr_url=_PR_URL, event="APPROVE", body="")
         assert result["ok"] is False
         assert "body" in result["error"]
 
     def test_unknown_event_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_review import handle
+
         result = handle(pr_url=_PR_URL, event="COMMENT", body=_BODY)
         assert result["ok"] is False
         assert "COMMENT" in result["error"]
 
     def test_invalid_pr_url_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_review import handle
-        result = handle(pr_url="https://example.com/not-a-pr", event="APPROVE", body=_BODY)
+
+        result = handle(
+            pr_url="https://example.com/not-a-pr", event="APPROVE", body=_BODY
+        )
         assert result["ok"] is False
         assert "Invalid GitHub PR URL" in result["error"]
 
-    def test_missing_token_returns_error(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    def test_missing_url_returns_error(self, monkeypatch):
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         from plugins.tools.github_pr_review import handle
+
         result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
         assert result["ok"] is False
-        assert "GITHUB_TOKEN" in result["error"]
+        assert "VCS_SERVICE_URL" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -130,14 +147,15 @@ class TestInputValidation:
 
 class TestApproveHappyPath:
     def test_approve_posts_comment_then_review(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         comment_resp = _make_comment_response()
         review_resp = _make_review_response(201)
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
         assert result["ok"] is True
@@ -145,17 +163,25 @@ class TestApproveHappyPath:
         assert "github.com" in result["review_url"]
 
     def test_approve_review_url_from_step6b(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        comment_resp = _make_comment_response("https://github.com/acme/myrepo/issues/42#issuecomment-1")
-        review_resp = _make_review_response(201, "https://github.com/acme/myrepo/pull/42#pullrequestreview-99")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        comment_resp = _make_comment_response(
+            "https://github.com/acme/myrepo/issues/42#issuecomment-1"
+        )
+        review_resp = _make_review_response(
+            201, "https://github.com/acme/myrepo/pull/42#pullrequestreview-99"
+        )
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
-        assert result["review_url"] == "https://github.com/acme/myrepo/pull/42#pullrequestreview-99"
+        assert (
+            result["review_url"]
+            == "https://github.com/acme/myrepo/pull/42#pullrequestreview-99"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -165,25 +191,34 @@ class TestApproveHappyPath:
 
 class TestRequestChangesHappyPath:
     def test_request_changes_posts_comment_then_review(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         body = "## Review\n\n🔴 **Blocker** — security issue on line 42."
         comment_resp = _make_comment_response()
         review_resp = _make_review_response(201)
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="REQUEST_CHANGES", body=body)
 
         assert result["ok"] is True
         assert result["self_review_skipped"] is False
 
     def test_request_changes_with_inline_comments(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         comments = [
-            {"path": "src/auth.py", "line": 42, "body": "🔴 **Blocker** — SQL injection risk."},
-            {"path": "src/utils.py", "line": 10, "body": "🟡 **Warning** — hardcoded timeout."},
+            {
+                "path": "src/auth.py",
+                "line": 42,
+                "body": "🔴 **Blocker** — SQL injection risk.",
+            },
+            {
+                "path": "src/utils.py",
+                "line": 10,
+                "body": "🟡 **Warning** — hardcoded timeout.",
+            },
         ]
         comment_resp = _make_comment_response()
         review_resp = _make_review_response(201)
@@ -196,8 +231,9 @@ class TestRequestChangesHappyPath:
                 return comment_resp
             return review_resp
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=fake_post):
+        with patch(_VCS_POST_PATH, side_effect=fake_post):
             from plugins.tools.github_pr_review import handle
+
             result = handle(
                 pr_url=_PR_URL,
                 event="REQUEST_CHANGES",
@@ -221,15 +257,16 @@ class TestRequestChangesHappyPath:
 
 class TestSelfReviewPath:
     def test_422_sets_self_review_skipped_and_does_not_fail(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         comment_url = "https://github.com/acme/myrepo/issues/42#issuecomment-1"
         comment_resp = _make_comment_response(comment_url)
         review_resp = _make_review_response(422)
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
         assert result["ok"] is True
@@ -238,14 +275,15 @@ class TestSelfReviewPath:
         assert result["review_url"] == comment_url
 
     def test_422_does_not_fail_regardless_of_event(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         comment_resp = _make_comment_response()
         review_resp = _make_review_response(422)
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="REQUEST_CHANGES", body=_BODY)
 
         assert result["ok"] is True
@@ -259,28 +297,30 @@ class TestSelfReviewPath:
 
 class TestStep6bNon422Fatal:
     def test_500_on_step6b_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         comment_resp = _make_comment_response()
         review_resp = _make_review_response(500)
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
         assert result["ok"] is False
         assert "500" in result["error"]
 
     def test_403_on_step6b_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         comment_resp = _make_comment_response()
         review_resp = _make_review_response(403)
 
         post_responses = iter([comment_resp, review_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=lambda *a, **kw: next(post_responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(post_responses)):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
         assert result["ok"] is False
@@ -294,7 +334,7 @@ class TestStep6bNon422Fatal:
 
 class TestStep6aFailure:
     def test_http_error_on_comment_post_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from requests import HTTPError
 
         bad_resp = MagicMock()
@@ -303,19 +343,24 @@ class TestStep6aFailure:
             "500 Server Error", response=bad_resp
         )
 
-        with patch("plugins.clients.github_pr_client.requests.post", return_value=bad_resp):
+        with patch(_VCS_POST_PATH, return_value=bad_resp):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
         assert result["ok"] is False
-        assert "step 6a" in result["error"].lower() or "issue comment" in result["error"].lower()
+        assert (
+            "step 6a" in result["error"].lower()
+            or "issue comment" in result["error"].lower()
+        )
 
     def test_network_error_on_comment_post_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         import requests as req_lib
 
-        with patch("plugins.clients.github_pr_client.requests.post", side_effect=req_lib.ConnectionError("timeout")):
+        with patch(_VCS_POST_PATH, side_effect=req_lib.ConnectionError("timeout")):
             from plugins.tools.github_pr_review import handle
+
             result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
 
         assert result["ok"] is False
@@ -328,34 +373,38 @@ class TestStep6aFailure:
 
 class TestToolRegistration:
     def test_github_pr_review_registered(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
         monkeypatch.delenv("RAG_MCP_URL", raising=False)
 
         import plugins as plugin_module
+
         names = {t["name"] for t in plugin_module._TOOLS}
         assert "github_pr_review" in names
 
-    def test_check_fn_gates_on_github_token(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    def test_check_fn_gates_on_vcs_url(self, monkeypatch):
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         import plugins as plugin_module
+
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_review")
         assert tool["check_fn"]() is False
 
-    def test_check_fn_passes_when_token_set(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+    def test_check_fn_passes_when_url_set(self, monkeypatch):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         import plugins as plugin_module
+
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_review")
         assert tool["check_fn"]() is True
 
     def test_schema_has_required_fields(self):
         import plugins as plugin_module
+
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_review")
         required = tool["schema"]["parameters"]["required"]
         assert "pr_url" in required
@@ -364,6 +413,7 @@ class TestToolRegistration:
 
     def test_schema_event_enum(self):
         import plugins as plugin_module
+
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_review")
         event_prop = tool["schema"]["parameters"]["properties"]["event"]
         assert "APPROVE" in event_prop["enum"]

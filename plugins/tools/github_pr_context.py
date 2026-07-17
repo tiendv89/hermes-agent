@@ -170,7 +170,15 @@ def handle(
         return {"ok": False, "error": "VCS_SERVICE_URL is not configured."}
 
     # PR-scoped actions require pr_url; owner/repo are inferred from it.
-    _PR_ACTIONS = {"diff", "files", "metadata", "comments", "reviews", "checks", "commits"}
+    _PR_ACTIONS = {
+        "diff",
+        "files",
+        "metadata",
+        "comments",
+        "reviews",
+        "checks",
+        "commits",
+    }
 
     parsed_owner: str = owner
     parsed_repo: str = repo
@@ -213,7 +221,10 @@ def handle(
             meta = get_pr_metadata(parsed_owner, parsed_repo, pull_number)
             head_sha = meta.get("head_sha", "")
             if not head_sha:
-                return {"ok": False, "error": "Could not determine head SHA from PR metadata."}
+                return {
+                    "ok": False,
+                    "error": "Could not determine head SHA from PR metadata.",
+                }
             result = get_check_runs(parsed_owner, parsed_repo, head_sha)
             return {"ok": True, **result}
 
@@ -223,19 +234,34 @@ def handle(
 
         if action == "compare":
             if not parsed_owner or not parsed_repo:
-                return {"ok": False, "error": "owner and repo are required for action='compare'."}
+                return {
+                    "ok": False,
+                    "error": "owner and repo are required for action='compare'.",
+                }
             if not base or not head:
-                return {"ok": False, "error": "base and head are required for action='compare'."}
+                return {
+                    "ok": False,
+                    "error": "base and head are required for action='compare'.",
+                }
             result = compare_refs(parsed_owner, parsed_repo, base, head)
             return {"ok": True, **result}
 
         if action == "file_at_ref":
             if not parsed_owner or not parsed_repo:
-                return {"ok": False, "error": "owner and repo are required for action='file_at_ref'."}
+                return {
+                    "ok": False,
+                    "error": "owner and repo are required for action='file_at_ref'.",
+                }
             if not path:
-                return {"ok": False, "error": "path is required for action='file_at_ref'."}
+                return {
+                    "ok": False,
+                    "error": "path is required for action='file_at_ref'.",
+                }
             if not ref:
-                return {"ok": False, "error": "ref is required for action='file_at_ref'."}
+                return {
+                    "ok": False,
+                    "error": "ref is required for action='file_at_ref'.",
+                }
             result = get_file_at_ref(parsed_owner, parsed_repo, path, ref)
             if not result.get("ok", True):
                 return {"ok": False, "error": result.get("error", "Unknown error.")}
@@ -243,7 +269,10 @@ def handle(
 
         if action == "list_prs":
             if not parsed_owner or not parsed_repo:
-                return {"ok": False, "error": "owner and repo are required for action='list_prs'."}
+                return {
+                    "ok": False,
+                    "error": "owner and repo are required for action='list_prs'.",
+                }
             result = list_open_prs(
                 parsed_owner,
                 parsed_repo,

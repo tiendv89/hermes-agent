@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 _GITHUB_API_URL = "https://api.github.com"
 _DEFAULT_TIMEOUT = 30
 
-_PR_URL_RE = re.compile(
-    r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)"
-)
+_PR_URL_RE = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)")
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +171,9 @@ def list_open_prs(
 # ---------------------------------------------------------------------------
 
 
-def post_issue_comment(owner: str, repo: str, issue_number: int, body: str) -> Dict[str, Any]:
+def post_issue_comment(
+    owner: str, repo: str, issue_number: int, body: str
+) -> Dict[str, Any]:
     """Post *body* as an issue comment on PR *issue_number*.
 
     Returns the parsed JSON response.  Raises ``requests.HTTPError`` on failure.

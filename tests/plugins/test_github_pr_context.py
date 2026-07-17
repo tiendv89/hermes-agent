@@ -1,7 +1,7 @@
-"""Tests for the github_pr_context tool and github_pr_client module.
+"""Tests for the github_pr_context tool and vcs_client module.
 
 Covers:
-  - check_available(): gates on GITHUB_TOKEN presence
+  - check_available(): gates on VCS_SERVICE_URL presence
   - handle(): one test per action (happy path + key error paths)
   - get_check_runs(): bounded poll timeout returns 'pending' rather than blocking
   - parse_pr_url(): valid URL parsing and invalid URL rejection
@@ -44,26 +44,30 @@ def _clean_modules():
 
 class TestParsePrUrl:
     def test_valid_url(self):
-        from plugins.clients.github_pr_client import parse_pr_url
+        from plugins.clients.vcs_client import parse_pr_url
+
         owner, repo, num = parse_pr_url("https://github.com/acme/my-repo/pull/42")
         assert owner == "acme"
         assert repo == "my-repo"
         assert num == 42
 
     def test_valid_url_http(self):
-        from plugins.clients.github_pr_client import parse_pr_url
+        from plugins.clients.vcs_client import parse_pr_url
+
         owner, repo, num = parse_pr_url("http://github.com/org/repo/pull/1")
         assert owner == "org"
         assert repo == "repo"
         assert num == 1
 
     def test_invalid_url_raises(self):
-        from plugins.clients.github_pr_client import parse_pr_url
+        from plugins.clients.vcs_client import parse_pr_url
+
         with pytest.raises(ValueError, match="Invalid GitHub PR URL"):
             parse_pr_url("https://example.com/not-a-pr")
 
     def test_missing_pull_number_raises(self):
-        from plugins.clients.github_pr_client import parse_pr_url
+        from plugins.clients.vcs_client import parse_pr_url
+
         with pytest.raises(ValueError):
             parse_pr_url("https://github.com/owner/repo/issues/5")
 
@@ -74,38 +78,61 @@ class TestParsePrUrl:
 
 
 class TestCheckAvailable:
-    def test_returns_false_when_token_unset(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    def test_returns_false_when_url_unset(self, monkeypatch):
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         from plugins.tools.github_pr_context import check_available
+
         assert check_available() is False
 
-    def test_returns_false_when_token_empty(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "   ")
+    def test_returns_false_when_url_empty(self, monkeypatch):
+        monkeypatch.setenv("VCS_SERVICE_URL", "   ")
         from plugins.tools.github_pr_context import check_available
+
         assert check_available() is False
 
-    def test_returns_true_when_token_set(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test_token")
+    def test_returns_true_when_url_set(self, monkeypatch):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs-service:8080")
         from plugins.tools.github_pr_context import check_available
+
         assert check_available() is True
 
 
 # ---------------------------------------------------------------------------
-# handle() — missing token
+# Helper — build a mock vcs-service response
 # ---------------------------------------------------------------------------
 
 
-class TestHandleMissingToken:
-    def test_returns_error_when_no_token(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+def _mock_vcs_resp(json_data=None, text="", status_code=200):
+    """Build a MagicMock that behaves like a requests.Response for vcs_client._post."""
+    resp = MagicMock()
+    resp.status_code = status_code
+    resp.text = text
+    resp.json.return_value = json_data or {}
+    resp.raise_for_status = MagicMock()
+    return resp
+
+
+_VCS_POST_PATH = "plugins.clients.vcs_client.requests.post"
+
+
+# ---------------------------------------------------------------------------
+# handle() — missing VCS_SERVICE_URL
+# ---------------------------------------------------------------------------
+
+
+class TestHandleMissingUrl:
+    def test_returns_error_when_no_url(self, monkeypatch):
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="metadata", pr_url="https://github.com/a/b/pull/1")
         assert result["ok"] is False
-        assert "GITHUB_TOKEN" in result["error"]
+        assert "VCS_SERVICE_URL" in result["error"]
 
     def test_unknown_action_returns_error(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="nonexistent")
         assert result["ok"] is False
         assert "nonexistent" in result["error"]
@@ -118,19 +145,21 @@ class TestHandleMissingToken:
 
 class TestHandleDiff:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.text = "diff --git a/foo.py b/foo.py\n+line"
-        mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={"diff": "diff --git a/foo.py b/foo.py\n+line"}
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="diff", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert "diff --git" in result["diff"]
 
     def test_missing_pr_url(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="diff")
         assert result["ok"] is False
         assert "pr_url" in result["error"]
@@ -143,14 +172,23 @@ class TestHandleDiff:
 
 class TestHandleFiles:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = [
-            {"filename": "a.py", "status": "modified", "additions": 5, "deletions": 2, "changes": 7}
-        ]
-        mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "files": [
+                    {
+                        "filename": "a.py",
+                        "status": "modified",
+                        "additions": 5,
+                        "deletions": 2,
+                        "changes": 7,
+                    }
+                ]
+            }
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="files", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["files"][0]["filename"] == "a.py"
@@ -164,28 +202,29 @@ class TestHandleFiles:
 
 class TestHandleMetadata:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = {
-            "number": 5,
-            "title": "Add feature",
-            "body": "description",
-            "state": "open",
-            "draft": False,
-            "user": {"login": "alice"},
-            "base": {"ref": "main", "sha": "abc"},
-            "head": {"ref": "feat", "sha": "def"},
-            "labels": [{"name": "bug"}],
-            "requested_reviewers": [{"login": "bob"}],
-            "merged": False,
-            "merged_at": None,
-            "html_url": "https://github.com/o/r/pull/5",
-            "created_at": "2026-01-01T00:00:00Z",
-            "updated_at": "2026-01-02T00:00:00Z",
-        }
-        mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "number": 5,
+                "title": "Add feature",
+                "body": "description",
+                "state": "open",
+                "draft": False,
+                "user": {"login": "alice"},
+                "base": {"ref": "main", "sha": "abc"},
+                "head": {"ref": "feat", "sha": "def"},
+                "labels": [{"name": "bug"}],
+                "requested_reviewers": [{"login": "bob"}],
+                "merged": False,
+                "merged_at": None,
+                "html_url": "https://github.com/o/r/pull/5",
+                "created_at": "2026-01-01T00:00:00Z",
+                "updated_at": "2026-01-02T00:00:00Z",
+            }
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="metadata", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         m = result["metadata"]
@@ -202,30 +241,34 @@ class TestHandleMetadata:
 
 class TestHandleComments:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        issue_comment = {
-            "id": 1, "user": {"login": "alice"}, "body": "LGTM",
-            "created_at": "2026-01-01T00:00:00Z", "html_url": "https://..."
-        }
-        review_comment = {
-            "id": 2, "user": {"login": "bob"}, "body": "Nit",
-            "path": "a.py", "line": 10,
-            "created_at": "2026-01-01T00:00:00Z", "html_url": "https://..."
-        }
-        call_count = [0]
-
-        def fake_get(url, **kwargs):
-            resp = MagicMock()
-            resp.raise_for_status = MagicMock()
-            if "issues" in url:
-                resp.json.return_value = [issue_comment]
-            else:
-                resp.json.return_value = [review_comment]
-            call_count[0] += 1
-            return resp
-
-        with patch("plugins.clients.github_pr_client.requests.get", side_effect=fake_get):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "issue_comments": [
+                    {
+                        "id": 1,
+                        "user": "alice",
+                        "body": "LGTM",
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "html_url": "https://...",
+                    }
+                ],
+                "review_comments": [
+                    {
+                        "id": 2,
+                        "user": "bob",
+                        "body": "Nit",
+                        "path": "a.py",
+                        "line": 10,
+                        "created_at": "2026-01-01T00:00:00Z",
+                        "html_url": "https://...",
+                    }
+                ],
+            }
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="comments", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert len(result["issue_comments"]) == 1
@@ -241,18 +284,24 @@ class TestHandleComments:
 
 class TestHandleReviews:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.json.return_value = [
-            {
-                "id": 100, "user": {"login": "alice"}, "state": "APPROVED",
-                "body": "Looks good", "submitted_at": "2026-01-01T00:00:00Z",
-                "html_url": "https://..."
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "reviews": [
+                    {
+                        "id": 100,
+                        "user": "alice",
+                        "state": "APPROVED",
+                        "body": "Looks good",
+                        "submitted_at": "2026-01-01T00:00:00Z",
+                        "html_url": "https://...",
+                    }
+                ]
             }
-        ]
-        mock_resp.raise_for_status = MagicMock()
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="reviews", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["reviews"][0]["state"] == "APPROVED"
@@ -266,30 +315,46 @@ class TestHandleReviews:
 
 class TestHandleChecks:
     def test_happy_path_all_passed(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         # First call returns metadata; second returns check-runs.
-        meta_resp = MagicMock()
-        meta_resp.raise_for_status = MagicMock()
-        meta_resp.json.return_value = {
-            "number": 5, "title": "t", "body": "", "state": "open", "draft": False,
-            "user": {"login": "u"}, "base": {"ref": "main", "sha": "base"},
-            "head": {"ref": "feat", "sha": "abc123"},
-            "labels": [], "requested_reviewers": [],
-            "merged": False, "merged_at": None, "html_url": "h",
-            "created_at": "c", "updated_at": "u",
-        }
-        checks_resp = MagicMock()
-        checks_resp.raise_for_status = MagicMock()
-        checks_resp.json.return_value = {
-            "check_runs": [
-                {"name": "ci", "status": "completed", "conclusion": "success",
-                 "html_url": "https://...", "started_at": "s", "completed_at": "c"}
-            ]
-        }
+        meta_resp = _mock_vcs_resp(
+            json_data={
+                "number": 5,
+                "title": "t",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "user": {"login": "u"},
+                "base": {"ref": "main", "sha": "base"},
+                "head": {"ref": "feat", "sha": "abc123"},
+                "labels": [],
+                "requested_reviewers": [],
+                "merged": False,
+                "merged_at": None,
+                "html_url": "h",
+                "created_at": "c",
+                "updated_at": "u",
+            }
+        )
+        checks_resp = _mock_vcs_resp(
+            json_data={
+                "check_runs": [
+                    {
+                        "name": "ci",
+                        "status": "completed",
+                        "conclusion": "success",
+                        "html_url": "https://...",
+                        "started_at": "s",
+                        "completed_at": "c",
+                    }
+                ]
+            }
+        )
         responses = iter([meta_resp, checks_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(responses)):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["status"] == "passed"
@@ -297,82 +362,122 @@ class TestHandleChecks:
 
     def test_poll_timeout_returns_pending(self, monkeypatch):
         """When check-runs are still in progress and timeout expires, status=pending."""
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         monkeypatch.setenv("CHAT_REVIEW_CI_POLL_TIMEOUT_SECONDS", "0")
 
-        meta_resp = MagicMock()
-        meta_resp.raise_for_status = MagicMock()
-        meta_resp.json.return_value = {
-            "number": 5, "title": "t", "body": "", "state": "open", "draft": False,
-            "user": {"login": "u"}, "base": {"ref": "main", "sha": "base"},
-            "head": {"ref": "feat", "sha": "sha999"},
-            "labels": [], "requested_reviewers": [],
-            "merged": False, "merged_at": None, "html_url": "h",
-            "created_at": "c", "updated_at": "u",
-        }
-        checks_resp = MagicMock()
-        checks_resp.raise_for_status = MagicMock()
-        checks_resp.json.return_value = {
-            "check_runs": [
-                {"name": "ci", "status": "in_progress", "conclusion": None,
-                 "html_url": "https://...", "started_at": "s", "completed_at": None}
-            ]
-        }
+        meta_resp = _mock_vcs_resp(
+            json_data={
+                "number": 5,
+                "title": "t",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "user": {"login": "u"},
+                "base": {"ref": "main", "sha": "base"},
+                "head": {"ref": "feat", "sha": "sha999"},
+                "labels": [],
+                "requested_reviewers": [],
+                "merged": False,
+                "merged_at": None,
+                "html_url": "h",
+                "created_at": "c",
+                "updated_at": "u",
+            }
+        )
+        checks_resp = _mock_vcs_resp(
+            json_data={
+                "check_runs": [
+                    {
+                        "name": "ci",
+                        "status": "in_progress",
+                        "conclusion": None,
+                        "html_url": "https://...",
+                        "started_at": "s",
+                        "completed_at": None,
+                    }
+                ]
+            }
+        )
         responses = iter([meta_resp, checks_resp])
 
-        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
-            with patch("plugins.clients.github_pr_client.time.sleep"):  # don't actually sleep
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(responses)):
+            with patch("plugins.clients.vcs_client.time.sleep"):  # don't actually sleep
                 from plugins.tools.github_pr_context import handle
+
                 result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["status"] == "pending"
 
     def test_failed_ci(self, monkeypatch):
         """When a check-run has conclusion=failure, status=failed."""
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        meta_resp = MagicMock()
-        meta_resp.raise_for_status = MagicMock()
-        meta_resp.json.return_value = {
-            "number": 5, "title": "t", "body": "", "state": "open", "draft": False,
-            "user": {"login": "u"}, "base": {"ref": "main", "sha": "base"},
-            "head": {"ref": "feat", "sha": "sha999"},
-            "labels": [], "requested_reviewers": [],
-            "merged": False, "merged_at": None, "html_url": "h",
-            "created_at": "c", "updated_at": "u",
-        }
-        checks_resp = MagicMock()
-        checks_resp.raise_for_status = MagicMock()
-        checks_resp.json.return_value = {
-            "check_runs": [
-                {"name": "ci", "status": "completed", "conclusion": "failure",
-                 "html_url": "https://...", "started_at": "s", "completed_at": "c"}
-            ]
-        }
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        meta_resp = _mock_vcs_resp(
+            json_data={
+                "number": 5,
+                "title": "t",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "user": {"login": "u"},
+                "base": {"ref": "main", "sha": "base"},
+                "head": {"ref": "feat", "sha": "sha999"},
+                "labels": [],
+                "requested_reviewers": [],
+                "merged": False,
+                "merged_at": None,
+                "html_url": "h",
+                "created_at": "c",
+                "updated_at": "u",
+            }
+        )
+        checks_resp = _mock_vcs_resp(
+            json_data={
+                "check_runs": [
+                    {
+                        "name": "ci",
+                        "status": "completed",
+                        "conclusion": "failure",
+                        "html_url": "https://...",
+                        "started_at": "s",
+                        "completed_at": "c",
+                    }
+                ]
+            }
+        )
         responses = iter([meta_resp, checks_resp])
-        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(responses)):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["status"] == "failed"
 
     def test_no_checks_returns_no_checks(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        meta_resp = MagicMock()
-        meta_resp.raise_for_status = MagicMock()
-        meta_resp.json.return_value = {
-            "number": 5, "title": "t", "body": "", "state": "open", "draft": False,
-            "user": {"login": "u"}, "base": {"ref": "main", "sha": "base"},
-            "head": {"ref": "feat", "sha": "sha000"},
-            "labels": [], "requested_reviewers": [],
-            "merged": False, "merged_at": None, "html_url": "h",
-            "created_at": "c", "updated_at": "u",
-        }
-        checks_resp = MagicMock()
-        checks_resp.raise_for_status = MagicMock()
-        checks_resp.json.return_value = {"check_runs": []}
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        meta_resp = _mock_vcs_resp(
+            json_data={
+                "number": 5,
+                "title": "t",
+                "body": "",
+                "state": "open",
+                "draft": False,
+                "user": {"login": "u"},
+                "base": {"ref": "main", "sha": "base"},
+                "head": {"ref": "feat", "sha": "sha000"},
+                "labels": [],
+                "requested_reviewers": [],
+                "merged": False,
+                "merged_at": None,
+                "html_url": "h",
+                "created_at": "c",
+                "updated_at": "u",
+            }
+        )
+        checks_resp = _mock_vcs_resp(json_data={"check_runs": []})
         responses = iter([meta_resp, checks_resp])
-        with patch("plugins.clients.github_pr_client.requests.get", side_effect=lambda *a, **kw: next(responses)):
+        with patch(_VCS_POST_PATH, side_effect=lambda *a, **kw: next(responses)):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["status"] == "no_checks"
@@ -385,21 +490,24 @@ class TestHandleChecks:
 
 class TestHandleCommits:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = [
-            {
-                "sha": "abc",
-                "commit": {
-                    "message": "feat: add thing",
-                    "author": {"name": "Alice", "email": "alice@example.com", "date": "2026-01-01T00:00:00Z"},
-                },
-                "html_url": "https://..."
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "commits": [
+                    {
+                        "sha": "abc",
+                        "message": "feat: add thing",
+                        "author": "Alice",
+                        "author_email": "alice@example.com",
+                        "date": "2026-01-01T00:00:00Z",
+                        "html_url": "https://...",
+                    }
+                ]
             }
-        ]
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="commits", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
         assert result["commits"][0]["sha"] == "abc"
@@ -413,37 +521,39 @@ class TestHandleCommits:
 
 class TestHandleCompare:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "status": "ahead",
-            "ahead_by": 3,
-            "behind_by": 0,
-            "total_commits": 3,
-            "commits": [],
-            "files": [],
-        }
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "status": "ahead",
+                "ahead_by": 3,
+                "behind_by": 0,
+                "total_commits": 3,
+                "commits": [],
+                "files": [],
+            }
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(
-                action="compare", owner="o", repo="r",
-                base="main", head="feat"
+                action="compare", owner="o", repo="r", base="main", head="feat"
             )
         assert result["ok"] is True
         assert result["ahead_by"] == 3
         assert result["status"] == "ahead"
 
     def test_missing_base_or_head(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="compare", owner="o", repo="r", base="main")
         assert result["ok"] is False
         assert "base and head" in result["error"]
 
     def test_missing_owner_repo(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="compare", base="main", head="feat")
         assert result["ok"] is False
         assert "owner" in result["error"]
@@ -457,37 +567,44 @@ class TestHandleCompare:
 class TestHandleFileAtRef:
     def test_happy_path(self, monkeypatch):
         import base64
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         content_b64 = base64.b64encode(b"def hello():\n    pass\n").decode()
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = {
-            "path": "src/hello.py",
-            "sha": "abc",
-            "size": 25,
-            "encoding": "base64",
-            "content": content_b64 + "\n",
-            "html_url": "https://...",
-        }
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "path": "src/hello.py",
+                "sha": "abc",
+                "size": 25,
+                "encoding": "base64",
+                "content": content_b64 + "\n",
+                "html_url": "https://...",
+            }
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(
-                action="file_at_ref", owner="o", repo="r",
-                path="src/hello.py", ref="main"
+                action="file_at_ref",
+                owner="o",
+                repo="r",
+                path="src/hello.py",
+                ref="main",
             )
         assert result["ok"] is True
         assert "def hello" in result["content"]
 
     def test_missing_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="file_at_ref", owner="o", repo="r", ref="main")
         assert result["ok"] is False
         assert "path" in result["error"]
 
     def test_missing_ref(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="file_at_ref", owner="o", repo="r", path="a.py")
         assert result["ok"] is False
         assert "ref" in result["error"]
@@ -500,27 +617,38 @@ class TestHandleFileAtRef:
 
 class TestHandleListPrs:
     def test_happy_path(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
-        mock_resp = MagicMock()
-        mock_resp.raise_for_status = MagicMock()
-        mock_resp.json.return_value = [
-            {
-                "number": 7, "title": "Open PR", "state": "open", "draft": False,
-                "user": {"login": "dev"},
-                "base": {"ref": "main"}, "head": {"ref": "feat", "sha": "aaa"},
-                "html_url": "https://...", "created_at": "c", "updated_at": "u",
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
+        mock_resp = _mock_vcs_resp(
+            json_data={
+                "pull_requests": [
+                    {
+                        "number": 7,
+                        "title": "Open PR",
+                        "state": "open",
+                        "draft": False,
+                        "author": "dev",
+                        "base_branch": "main",
+                        "head_branch": "feat",
+                        "head_sha": "aaa",
+                        "html_url": "https://...",
+                        "created_at": "c",
+                        "updated_at": "u",
+                    }
+                ]
             }
-        ]
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        )
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="list_prs", owner="o", repo="r")
         assert result["ok"] is True
         assert len(result["pull_requests"]) == 1
         assert result["pull_requests"][0]["number"] == 7
 
     def test_missing_owner_repo(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from plugins.tools.github_pr_context import handle
+
         result = handle(action="list_prs")
         assert result["ok"] is False
         assert "owner" in result["error"]
@@ -533,12 +661,14 @@ class TestHandleListPrs:
 
 class TestApiErrorPropagation:
     def test_http_error_returns_ok_false(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "tok")
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         from requests import HTTPError
+
         mock_resp = MagicMock()
         mock_resp.raise_for_status.side_effect = HTTPError("404 Not Found")
-        with patch("plugins.clients.github_pr_client.requests.get", return_value=mock_resp):
+        with patch(_VCS_POST_PATH, return_value=mock_resp):
             from plugins.tools.github_pr_context import handle
+
             result = handle(action="metadata", pr_url="https://github.com/o/r/pull/999")
         assert result["ok"] is False
         assert "404 Not Found" in result["error"]
@@ -551,29 +681,31 @@ class TestApiErrorPropagation:
 
 class TestToolRegistration:
     def test_github_pr_context_registered(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
         monkeypatch.delenv("RAG_MCP_URL", raising=False)
 
-        # Import the module fresh (autouse fixture clears sys.modules before each test)
         import plugins as plugin_module
+
         names = {t["name"] for t in plugin_module._TOOLS}
         assert "github_pr_context" in names
 
-    def test_check_fn_gates_on_github_token(self, monkeypatch):
-        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    def test_check_fn_gates_on_vcs_url(self, monkeypatch):
+        monkeypatch.delenv("VCS_SERVICE_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         import plugins as plugin_module
+
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_context")
         assert tool["check_fn"]() is False
 
-    def test_check_fn_passes_when_token_set(self, monkeypatch):
-        monkeypatch.setenv("GITHUB_TOKEN", "ghp_test")
+    def test_check_fn_passes_when_url_set(self, monkeypatch):
+        monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8080")
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         import plugins as plugin_module
+
         tool = next(t for t in plugin_module._TOOLS if t["name"] == "github_pr_context")
         assert tool["check_fn"]() is True

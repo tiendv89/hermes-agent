@@ -154,8 +154,7 @@ def handle(
         return {
             "ok": False,
             "error": (
-                f"Failed to post issue comment (step 6a): HTTP {status}. "
-                f"Detail: {exc}"
+                f"Failed to post issue comment (step 6a): HTTP {status}. Detail: {exc}"
             ),
         }
     except Exception as exc:
