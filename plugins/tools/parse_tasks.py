@@ -6,41 +6,50 @@ only ships an already-parsed list over the wire. The tasks-stage approve
 pipeline (and the backup /create-tasks tool) compose the two internally —
 parse here, then create via the client.
 
-Index table grammar (go features), strict and positional:
+Index table grammar (go features) — header-driven, order-flexible:
 
-    | ID | Title | Repo | Depends On | Actor |
-    |----|-------|------|------------|-------|
-    | T1 | Do the thing        | repo-a | —      | agent  |
-    | T2 | Do the other thing  | repo-b | T1     | human  |
+    | ID | Title | Repo | Depends On | Actor | Model |
+    |----|-------|------|------------|-------|-------|
+    | T1 | Do the thing        | repo-a | —      | agent  | Claude Sonnet 4.6 |
+    | T2 | Do the other thing  | repo-b | T1     | human  |                   |
+
+The parser reads the header row to learn each column's position, then pulls
+cells by name — so column order is flexible, unknown/extra columns are ignored,
+and optional columns may simply be absent. A table is recognised as the Index
+table when its header contains every *required* column (``id``, ``title``,
+``repo``, ``depends on``, ``actor``); ``model`` is optional.
 
 Each parsed row maps 1:1 onto the workflow-backend `CreateTaskItem` contract:
   - ``name``        ← ID cell (e.g. "T1")   [backend-required field]
   - ``title``       ← Title cell (inline code backticks stripped)
   - ``repo``        ← Repo cell
-  - ``depends_on``  ← Depends On cell ("—"/"-"/empty → []; else comma/space-separated T-ids)
+  - ``depends_on``  ← Depends On cell ("—"/"-"/empty → []; else comma/space-separated ids)
   - ``actor_type``  ← Actor cell, normalised to agent|human|either (default agent)
+  - ``model``       ← Model cell, display name for agent-actor tasks; "" for
+                      human/either tasks and for tables without a Model column
+
+Backward compatibility (configure-executor-types-model-policies): the ``Model``
+column is optional, so pre-existing five-column tasks.md files (no Model column)
+still parse — every row simply gets ``model == ""``. The ``T<n>`` id shape is a
+convention only; any non-empty id cell is accepted, so other id formats parse
+without a parser change.
 """
 
 from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
-
-# A data row of the Index table — exactly five columns, ID first:
-#   | T1 | Title | repo-slug | T2, T3 | agent |
-_INDEX_ROW_RE = re.compile(
-    r"^\|\s*(T\d+)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|$"
-)
 
 _VALID_ACTORS = frozenset({"agent", "human", "either"})
 _DEFAULT_ACTOR = "agent"
 
-# Header cells (lowercased, trimmed) that identify the Index table header row,
-# in order. The parser is strict about column layout for go features.
-_EXPECTED_HEADERS = ("id", "title", "repo", "depends on", "actor")
+# Column names (lowercased, trimmed) that must all be present for a pipe row to
+# be recognised as the Index table header. ``model`` is optional; any other
+# columns are ignored.
+_REQUIRED_HEADERS = frozenset({"id", "title", "repo", "depends on", "actor"})
 
 
 def _split_row(stripped: str) -> List[str]:
@@ -56,9 +65,30 @@ def _split_row(stripped: str) -> List[str]:
     return [c.strip() for c in inner.split("|")]
 
 
-def _is_header_row(cells: List[str]) -> bool:
-    """True when the cells match the expected Index header exactly (case-insensitive)."""
-    return tuple(c.lower() for c in cells) == _EXPECTED_HEADERS
+def _header_index(cells: List[str]) -> Optional[Dict[str, int]]:
+    """Return a ``{column_name: position}`` map when the cells are an Index header.
+
+    A row qualifies as the header when its lowercased column names cover every
+    entry in ``_REQUIRED_HEADERS`` (case-insensitive, order-independent). Returns
+    ``None`` otherwise. Unknown columns are kept in the map but ignored by the
+    row parser.
+    """
+    col_index = {c.lower(): i for i, c in enumerate(cells)}
+    if _REQUIRED_HEADERS <= col_index.keys():
+        return col_index
+    return None
+
+
+def _cell(cells: List[str], col_index: Dict[str, int], name: str) -> str:
+    """Read a column's cell value by name, or ``""`` if absent / out of range.
+
+    Absent when the header has no such column (e.g. ``model`` in a legacy table);
+    out of range when a data row has fewer cells than the header.
+    """
+    idx = col_index.get(name)
+    if idx is None or idx >= len(cells):
+        return ""
+    return cells[idx].strip()
 
 
 def _is_separator_row(stripped: str) -> bool:
@@ -78,12 +108,15 @@ def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
     lines = tasks_md.splitlines()
 
     header_idx = -1
+    col_index: Dict[str, int] = {}
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped.startswith("|"):
             continue
-        if _is_header_row(_split_row(stripped)):
+        found = _header_index(_split_row(stripped))
+        if found is not None:
             header_idx = i
+            col_index = found
             break
 
     if header_idx == -1:
@@ -96,28 +129,37 @@ def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
         if _is_separator_row(stripped):
             continue
 
-        m = _INDEX_ROW_RE.match(stripped)
-        if not m:
+        cells = _split_row(stripped)
+
+        # A data row is any non-separator pipe row with a non-empty ID cell.
+        # The "T<n>" shape is a convention, not a rule — do not enforce it.
+        task_id = _cell(cells, col_index, "id")
+        if not task_id:
             continue
 
-        task_id, title_raw, repo, depends_raw, actor_raw = (g.strip() for g in m.groups())
+        title_raw = _cell(cells, col_index, "title")
+        repo = _cell(cells, col_index, "repo")
+        depends_raw = _cell(cells, col_index, "depends on")
+        actor_raw = _cell(cells, col_index, "actor")
+        model_raw = _cell(cells, col_index, "model")
 
         # Strip inline code backticks from the title.
         title = re.sub(r"`([^`]*)`", r"\1", title_raw).strip()
 
-        # "—" / "-" / empty → []; else comma/space-separated T-ids.
+        # "—" / "-" / empty → []; else comma/space-separated ids (kept verbatim,
+        # since the id shape is not enforced).
         if depends_raw in ("—", "-", ""):
             depends_on: List[str] = []
         else:
-            depends_on = [
-                d.strip()
-                for d in re.split(r"[,\s]+", depends_raw)
-                if re.match(r"^T\d+$", d.strip())
-            ]
+            depends_on = [d for d in re.split(r"[,\s]+", depends_raw) if d]
 
         actor = actor_raw.lower()
         if actor not in _VALID_ACTORS:
             actor = _DEFAULT_ACTOR
+
+        # model: display name for agent tasks, empty for human/either and for
+        # tables without a Model column. "—"/"-" normalised to "".
+        model = model_raw if model_raw not in ("—", "-") else ""
 
         tasks.append(
             {
@@ -126,6 +168,7 @@ def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
                 "repo": repo,
                 "depends_on": depends_on,
                 "actor_type": actor,
+                "model": model,
             }
         )
 
@@ -136,10 +179,14 @@ SCHEMA: Dict[str, Any] = {
     "description": (
         "Parse a go feature's tasks.md Index table into a structured task list. "
         "Read-only — this does NOT create tasks; it returns exactly the rows that "
-        "would be sent to workflow-backend (name, title, repo, depends_on, actor_type).\n\n"
+        "would be sent to workflow-backend "
+        "(name, title, repo, depends_on, actor_type, model).\n\n"
         "Provide tasks_md to parse a string directly, or omit it to read tasks.md "
-        "from the current feature. Expected Index columns, in order:\n"
+        "from the current feature. Required Index columns (any order):\n"
         "  | ID | Title | Repo | Depends On | Actor |\n\n"
+        "The Model column is optional; extra columns are ignored. Model holds the "
+        "implementation-phase model display name for agent-actor tasks and is blank "
+        "for human/either tasks and for tables without a Model column.\n\n"
         "Use this to preview or validate a task breakdown before approving the "
         "tasks stage."
     ),
@@ -198,9 +245,10 @@ def handle(
         return {
             "ok": False,
             "error": (
-                "No tasks parsed. tasks.md must contain an Index table with the "
-                "columns: | ID | Title | Repo | Depends On | Actor | and at least "
-                "one T<n> row."
+                "No tasks parsed. tasks.md must contain an Index table whose header "
+                "includes the columns | ID | Title | Repo | Depends On | Actor | "
+                "(in any order; a Model column is optional) and at least one data "
+                "row with a non-empty ID cell."
             ),
             "tasks": [],
             "count": 0,

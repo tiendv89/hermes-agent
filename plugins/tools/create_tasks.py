@@ -120,9 +120,6 @@ def handle(
     **_: Any,
 ) -> Dict[str, Any]:
     from ..context import get_feature_id, get_workspace_id
-    from .approve import _run_async_create_tasks
-    from .parse_tasks import parse_tasks_index
-    from src.services.workflow_backend_client import WorkflowBackendError
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
@@ -136,6 +133,10 @@ def handle(
             ),
         }
 
+    from .approve import _run_async_create_tasks
+    from .parse_tasks import parse_tasks_index
+    from src.services.workflow_backend_client import WorkflowBackendError
+
     loaded = load_feature_tasks_md(wid, fid)
     if not loaded.get("ok"):
         return {"ok": False, "error": loaded.get("error", "Could not read tasks.md.")}
@@ -146,13 +147,30 @@ def handle(
             "ok": False,
             "error": (
                 "No tasks parsed from tasks.md. It must contain an Index table with "
-                "columns | ID | Title | Repo | Depends On | Actor | and at least one "
+                "columns | ID | Title | Repo | Depends On | Actor | Model | and at least one "
                 "T<n> row."
             ),
         }
 
+    # Resolve display-name model fields to model_id UUIDs before creating tasks.
+    # This is the same step run in approve.py step d — the backup /create-tasks
+    # tool must also re-confirm before every retry (product spec Goal 4).
+    from .model_resolution import format_unresolved_error, resolve_task_models
+    from ..context import get_org_id, get_user_id
+
+    resolution = resolve_task_models(
+        wid, tasks, user_id=get_user_id() or "", org_id=get_org_id() or ""
+    )
+    if not resolution["ok"]:
+        return {
+            "ok": False,
+            "error": format_unresolved_error(resolution["unresolved"]),
+            "unresolved_models": resolution["unresolved"],
+        }
+    resolved_tasks = resolution["tasks"]
+
     try:
-        result = _run_async_create_tasks(wid, fid, tasks)
+        result = _run_async_create_tasks(wid, fid, resolved_tasks)
     except WorkflowBackendError as exc:
         if exc.reason_code == "tasks_already_exist":
             logger.info(
