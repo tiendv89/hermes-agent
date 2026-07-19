@@ -347,7 +347,7 @@ class TestG6Transitions:
     def test_github_pr_approve_blocked(self, g):
         assert not allowed(
             g,
-            "github_pr_review",
+            "vcs_pr_review",
             {
                 "event": "APPROVE",
                 "pr_url": "https://github.com/a/b/pull/1",
@@ -357,7 +357,7 @@ class TestG6Transitions:
         assert (
             reason(
                 g,
-                "github_pr_review",
+                "vcs_pr_review",
                 {"event": "APPROVE", "pr_url": "...", "body": "."},
             )
             == g.ReasonCode.PR_APPROVE_BLOCKED
@@ -366,7 +366,7 @@ class TestG6Transitions:
     def test_github_pr_request_changes_allowed(self, g):
         assert allowed(
             g,
-            "github_pr_review",
+            "vcs_pr_review",
             {"event": "REQUEST_CHANGES", "pr_url": "...", "body": "needs work"},
         )
 
@@ -727,8 +727,8 @@ class TestBuildRefusalMessage:
         assert "deletion_blocked" in msg["error"]
 
     def test_tool_name_preserved(self, g):
-        msg = g.build_refusal_message("pr_approve_blocked", "github_pr_review")
-        assert msg["tool"] == "github_pr_review"
+        msg = g.build_refusal_message("pr_approve_blocked", "vcs_pr_review")
+        assert msg["tool"] == "vcs_pr_review"
 
     def test_guardrail_id_inferred(self, g):
         # When guardrail_id not provided, it is inferred from the reason code
@@ -768,7 +768,7 @@ class TestGuardrailsDisabled:
     def test_github_approve_allowed_when_disabled(self, g_disabled):
         assert allowed(
             g_disabled,
-            "github_pr_review",
+            "vcs_pr_review",
             {"event": "APPROVE", "pr_url": "...", "body": "."},
         )
 

@@ -169,7 +169,7 @@ class TestSyncHandlerOOBStrippingStrings:
         handler = factory(
             _make_sync_handler(f"a {OOB_FULL} b {OOB_FULL} c"),
             False,
-            "github_pr_context",
+            "vcs_pr_context",
         )
         out = handler()
         assert OOB_START not in out
@@ -216,7 +216,7 @@ class TestSyncHandlerOOBStrippingDicts:
     def test_oob_stripped_from_nested_dict(self):
         result = {"comments": [{"body": f"comment {OOB_FULL} text"}, {"body": "clean"}]}
         factory = _load_handler_factory()
-        handler = factory(_make_sync_handler(result), False, "github_pr_context")
+        handler = factory(_make_sync_handler(result), False, "vcs_pr_context")
         parsed = json.loads(handler())
         assert OOB_START not in parsed["comments"][0]["body"]
         assert parsed["comments"][1]["body"] == "clean"
@@ -433,13 +433,13 @@ class TestRegisteredHandlersApplySanitization:
         assert OOB_START not in parsed["content"]
         assert "rest of file" in parsed["content"]
 
-    def test_github_pr_context_strips_oob_from_comments(self):
+    def test_vcs_pr_context_strips_oob_from_comments(self):
         plugins_mod = _load_plugins_register()
         result = {
             "ok": True,
             "comments": [{"body": f"LGTM! {OOB_FULL}"}, {"body": "needs work"}],
         }
-        wrapped = self._make_wrapped(plugins_mod, "github_pr_context", result)
+        wrapped = self._make_wrapped(plugins_mod, "vcs_pr_context", result)
         parsed = json.loads(wrapped())
         assert OOB_START not in parsed["comments"][0]["body"]
         assert parsed["comments"][1]["body"] == "needs work"
@@ -525,7 +525,7 @@ class TestRegisteredHandlersApplySanitization:
         read_tools = {
             "read_file",
             "read_workspace_file",
-            "github_pr_context",
+            "vcs_pr_context",
             "query_rag",
             "query_gitnexus",
             "get_tasks",

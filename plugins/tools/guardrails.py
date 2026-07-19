@@ -207,7 +207,7 @@ _READ_TOOLS: frozenset[str] = frozenset(
     {
         "read_file",
         "read_workspace_file",
-        "github_pr_context",
+        "vcs_pr_context",
         "query_rag",
         "query_gitnexus",
         "get_feature_state",
@@ -243,7 +243,7 @@ _GUARDRAIL_MESSAGES: dict[str, tuple[str, str]] = {
     ReasonCode.DOWNLOAD_BLOCKED: (
         "G5",
         "The agent cannot download, clone, or fetch source code or binaries from external "
-        "URLs. Authorized tools (query_rag, query_gitnexus, github_pr_context) use "
+        "URLs. Authorized tools (query_rag, query_gitnexus, vcs_pr_context) use "
         "controlled backends and are unaffected.",
     ),
     ReasonCode.TRANSITION_BLOCKED: (
@@ -359,7 +359,7 @@ def _check_G6_transitions(tool_name: str, arguments: dict[str, Any]) -> Optional
     """G6 — Block invalid lifecycle and task state transitions.
 
     - approve_feature(stage="handoff") → transition_blocked
-    - github_pr_review(event="APPROVE") → pr_approve_blocked
+    - vcs_pr_review(event="APPROVE") → pr_approve_blocked
     """
     if tool_name == "approve_feature":
         stage = str(arguments.get("stage", "")).lower()
@@ -367,7 +367,7 @@ def _check_G6_transitions(tool_name: str, arguments: dict[str, Any]) -> Optional
         if stage == "handoff" and action == "approve":
             return ReasonCode.TRANSITION_BLOCKED
 
-    if tool_name == "github_pr_review":
+    if tool_name == "vcs_pr_review":
         event = str(arguments.get("event", "")).upper()
         if event == "APPROVE":
             return ReasonCode.PR_APPROVE_BLOCKED

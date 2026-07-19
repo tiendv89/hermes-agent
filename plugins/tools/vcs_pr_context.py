@@ -1,4 +1,4 @@
-"""github_pr_context tool — read-only GitHub PR context (G7).
+"""vcs_pr_context tool — read-only GitHub PR context via vcs-service (G7).
 
 Single tool with an ``action`` enum selector, matching the existing
 ``gitnexus.py``/``rag.py`` convention:
@@ -14,30 +14,20 @@ Single tool with an ``action`` enum selector, matching the existing
     file_at_ref   → full file content at a given ref/commit
     list_prs      → list open (or filtered) PRs for a repo
 
-Gated on ``GITHUB_TOKEN`` presence, same convention as ``gitnexus.py``/``rag.py``.
+Proxies through vcs-service (no GITHUB_TOKEN / local GitHub PAT needed —
+vcs-service resolves a scoped GitHub App installation token per-owner
+internally). Gated on VCS_SERVICE_URL/VCS_SERVICE_TOKEN presence.
 """
 
 from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
-
-from plugins.clients.github_pr_client import (
-    compare_refs,
-    get_check_runs,
-    get_file_at_ref,
-    get_pr_comments,
-    get_pr_commits,
-    get_pr_diff,
-    get_pr_files,
-    get_pr_metadata,
-    get_pr_reviews,
-    list_open_prs,
-    parse_pr_url,
-)
+from typing import Any, Dict, Optional, Tuple
 
 logger = logging.getLogger(__name__)
+
+_PR_URL_RE_SOURCE = r"https?://github\.com/([^/]+)/([^/]+)/pull/(\d+)"
 
 _ACTIONS = (
     "diff",
@@ -51,6 +41,8 @@ _ACTIONS = (
     "file_at_ref",
     "list_prs",
 )
+
+_PR_ACTIONS = {"diff", "files", "metadata", "comments", "reviews", "checks", "commits"}
 
 SCHEMA: Dict[str, Any] = {
     "description": (
@@ -142,8 +134,21 @@ SCHEMA: Dict[str, Any] = {
 
 
 def check_available(**_: Any) -> bool:
-    """Return True only when GITHUB_TOKEN is configured."""
-    return bool(os.environ.get("GITHUB_TOKEN", "").strip())
+    from src.services.vcs_service_client import check_vcs_service_available
+
+    return check_vcs_service_available()
+
+
+def _parse_pr_url(pr_url: str) -> Tuple[str, str, int]:
+    import re
+
+    m = re.match(_PR_URL_RE_SOURCE, pr_url.strip())
+    if not m:
+        raise ValueError(
+            f"Invalid GitHub PR URL {pr_url!r}. "
+            "Expected https://github.com/{{owner}}/{{repo}}/pull/{{number}}."
+        )
+    return m.group(1), m.group(2), int(m.group(3))
 
 
 def handle(
@@ -158,18 +163,14 @@ def handle(
     state: str = "open",
     **_: Any,
 ) -> Dict[str, Any]:
+    from src.services.vcs_service_client import VCSServiceError, run_async
+    from src.services import vcs_service_client as vcs
+
     if action not in _ACTIONS:
         return {
             "ok": False,
             "error": f"Unknown action {action!r}. Expected one of: {', '.join(_ACTIONS)}.",
         }
-
-    token = os.environ.get("GITHUB_TOKEN", "").strip()
-    if not token:
-        return {"ok": False, "error": "GITHUB_TOKEN is not configured."}
-
-    # PR-scoped actions require pr_url; owner/repo are inferred from it.
-    _PR_ACTIONS = {"diff", "files", "metadata", "comments", "reviews", "checks", "commits"}
 
     parsed_owner: str = owner
     parsed_repo: str = repo
@@ -177,82 +178,84 @@ def handle(
 
     if action in _PR_ACTIONS:
         if not pr_url:
-            return {
-                "ok": False,
-                "error": f"pr_url is required for action={action!r}.",
-            }
+            return {"ok": False, "error": f"pr_url is required for action={action!r}."}
         try:
-            parsed_owner, parsed_repo, pull_number = parse_pr_url(pr_url)
+            parsed_owner, parsed_repo, pull_number = _parse_pr_url(pr_url)
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
 
     try:
         if action == "diff":
-            result = get_pr_diff(parsed_owner, parsed_repo, pull_number)
+            result = run_async(vcs.get_pr_diff(parsed_owner, parsed_repo, pull_number))
             return {"ok": True, "diff": result}
 
         if action == "files":
-            result = get_pr_files(parsed_owner, parsed_repo, pull_number)
-            return {"ok": True, "files": result}
+            data = run_async(vcs.get_pr_files(parsed_owner, parsed_repo, pull_number))
+            return {"ok": True, **data}
 
         if action == "metadata":
-            result = get_pr_metadata(parsed_owner, parsed_repo, pull_number)
-            return {"ok": True, "metadata": result}
+            data = run_async(vcs.get_pr_metadata(parsed_owner, parsed_repo, pull_number))
+            return {"ok": True, "metadata": data}
 
         if action == "comments":
-            result = get_pr_comments(parsed_owner, parsed_repo, pull_number)
-            return {"ok": True, **result}
+            data = run_async(vcs.get_pr_comments(parsed_owner, parsed_repo, pull_number))
+            return {"ok": True, **data}
 
         if action == "reviews":
-            result = get_pr_reviews(parsed_owner, parsed_repo, pull_number)
-            return {"ok": True, "reviews": result}
+            data = run_async(vcs.get_pr_reviews(parsed_owner, parsed_repo, pull_number))
+            return {"ok": True, **data}
 
         if action == "checks":
-            # Resolve head SHA from PR metadata when not provided directly.
-            meta = get_pr_metadata(parsed_owner, parsed_repo, pull_number)
+            meta = run_async(vcs.get_pr_metadata(parsed_owner, parsed_repo, pull_number))
             head_sha = meta.get("head_sha", "")
             if not head_sha:
                 return {"ok": False, "error": "Could not determine head SHA from PR metadata."}
-            result = get_check_runs(parsed_owner, parsed_repo, head_sha)
-            return {"ok": True, **result}
+            poll_timeout = int(os.environ.get("CHAT_REVIEW_CI_POLL_TIMEOUT_SECONDS", "60"))
+            data = run_async(
+                vcs.get_check_runs(
+                    parsed_owner, parsed_repo, head_sha, poll_timeout_seconds=poll_timeout
+                )
+            )
+            return {"ok": True, **data}
 
         if action == "commits":
-            result = get_pr_commits(parsed_owner, parsed_repo, pull_number)
-            return {"ok": True, "commits": result}
+            data = run_async(vcs.get_pr_commits(parsed_owner, parsed_repo, pull_number))
+            return {"ok": True, **data}
 
         if action == "compare":
             if not parsed_owner or not parsed_repo:
                 return {"ok": False, "error": "owner and repo are required for action='compare'."}
             if not base or not head:
                 return {"ok": False, "error": "base and head are required for action='compare'."}
-            result = compare_refs(parsed_owner, parsed_repo, base, head)
-            return {"ok": True, **result}
+            data = run_async(vcs.compare_refs(parsed_owner, parsed_repo, base, head))
+            return {"ok": True, **data}
 
         if action == "file_at_ref":
             if not parsed_owner or not parsed_repo:
-                return {"ok": False, "error": "owner and repo are required for action='file_at_ref'."}
+                return {
+                    "ok": False,
+                    "error": "owner and repo are required for action='file_at_ref'.",
+                }
             if not path:
                 return {"ok": False, "error": "path is required for action='file_at_ref'."}
             if not ref:
                 return {"ok": False, "error": "ref is required for action='file_at_ref'."}
-            result = get_file_at_ref(parsed_owner, parsed_repo, path, ref)
-            if not result.get("ok", True):
-                return {"ok": False, "error": result.get("error", "Unknown error.")}
-            return {"ok": True, **result}
+            data = run_async(vcs.get_file_at_ref(parsed_owner, parsed_repo, path, ref))
+            return {"ok": True, **data}
 
         if action == "list_prs":
             if not parsed_owner or not parsed_repo:
                 return {"ok": False, "error": "owner and repo are required for action='list_prs'."}
-            result = list_open_prs(
-                parsed_owner,
-                parsed_repo,
-                state=state or "open",
-                head=head or None,
+            data = run_async(
+                vcs.list_prs(parsed_owner, parsed_repo, state=state or "open", head=head or "")
             )
-            return {"ok": True, "pull_requests": result}
+            return {"ok": True, "pull_requests": data.get("prs", [])}
 
+    except VCSServiceError as exc:
+        logger.warning("vcs_pr_context action=%r vcs-service error: %s", action, exc)
+        return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        logger.warning("github_pr_context action=%r failed: %s", action, exc)
+        logger.warning("vcs_pr_context action=%r failed: %s", action, exc)
         return {"ok": False, "error": str(exc)}
 
     return {"ok": False, "error": f"Unhandled action {action!r}."}

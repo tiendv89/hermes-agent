@@ -415,10 +415,13 @@ class TestToolRegistration:
             "tasks_write",
             "create_tasks",
             "parse_tasks",
-            "github_pr_context",
-            "github_pr_review",
+            "vcs_pr_context",
+            "vcs_pr_review",
             "lookup_feature",
             "init_feature",
+            "create_pr",
+            "ensure_branch",
+            "commit_files",
         ]
         for tname in tool_names:
             stub = _stub_tool(tname)
@@ -470,13 +473,16 @@ class TestToolRegistration:
             "description": "",
             "parameters": {},
         }
-        sys.modules["plugins.tools.github_pr_context"].check_available = lambda **_: (
+        sys.modules["plugins.tools.vcs_pr_context"].check_available = lambda **_: (
             False
         )
-        sys.modules["plugins.tools.github_pr_review"].check_available = lambda **_: (
+        sys.modules["plugins.tools.vcs_pr_review"].check_available = lambda **_: (
             False
         )
         sys.modules["plugins.tools.lookup_feature"].check_available = lambda **_: False
+        sys.modules["plugins.tools.create_pr"].check_available = lambda **_: False
+        sys.modules["plugins.tools.ensure_branch"].check_available = lambda **_: False
+        sys.modules["plugins.tools.commit_files"].check_available = lambda **_: False
 
         # Load the real suggest_next_actions into sys.modules first.
         sna_mod, *_ = _load_suggest_next_actions_isolated()

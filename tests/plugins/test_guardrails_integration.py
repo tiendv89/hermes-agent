@@ -176,12 +176,12 @@ class TestBlockedCallsViaRegisteredHandlers:
         assert parsed["reason_code"] == "transition_blocked"
         assert parsed["guardrail"] == "G6"
 
-    def test_github_pr_review_approve_blocked(self):
-        """github_pr_review(event='APPROVE') → pr_approve_blocked (G6)."""
+    def test_vcs_pr_review_approve_blocked(self):
+        """vcs_pr_review(event='APPROVE') → pr_approve_blocked (G6)."""
         plugins_mod = _load_plugins()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        handler = _get_handler(ctx, "github_pr_review")
+        handler = _get_handler(ctx, "vcs_pr_review")
 
         parsed = _call_sync(
             handler,
@@ -396,12 +396,12 @@ class TestAllowedCallsViaRegisteredHandlers:
         parsed = _call_sync(handler, {"stage": "technical_design", "feature_id": "f"})
         assert not _is_guardrail_block(parsed)
 
-    def test_github_pr_review_request_changes_not_blocked(self):
-        """github_pr_review(event='REQUEST_CHANGES') is allowed by G6."""
+    def test_vcs_pr_review_request_changes_not_blocked(self):
+        """vcs_pr_review(event='REQUEST_CHANGES') is allowed by G6."""
         plugins_mod = _load_plugins()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        handler = _get_handler(ctx, "github_pr_review")
+        handler = _get_handler(ctx, "vcs_pr_review")
 
         parsed = _call_sync(
             handler,
@@ -645,12 +645,12 @@ class TestAllowedCallsViaRegisteredHandlers:
         )
         assert not _is_guardrail_block(parsed)
 
-    def test_github_pr_context_not_blocked(self):
-        """github_pr_context is not guardrail-blocked (read-only PR inspection)."""
+    def test_vcs_pr_context_not_blocked(self):
+        """vcs_pr_context is not guardrail-blocked (read-only PR inspection)."""
         plugins_mod = _load_plugins()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        handler = _get_handler(ctx, "github_pr_context")
+        handler = _get_handler(ctx, "vcs_pr_context")
 
         parsed = _call_sync(handler, {"pr_url": "https://github.com/org/repo/pull/99"})
         assert not _is_guardrail_block(parsed)
@@ -744,7 +744,7 @@ class TestOOBSanitizationIntegration:
         result_str = json.dumps(json.loads(raw))
         assert _OOB_OPEN not in result_str
 
-    def test_github_pr_context_oob_stripped(self):
+    def test_vcs_pr_context_oob_stripped(self):
         """OOB markers embedded in PR comments/reviews are stripped (G7)."""
         plugins_mod = _load_plugins()
 
@@ -763,10 +763,10 @@ class TestOOBSanitizationIntegration:
             }
 
         json_handler = plugins_mod._json_result_handler(
-            _oob_pr_handler, is_async=False, tool_name="github_pr_context"
+            _oob_pr_handler, is_async=False, tool_name="vcs_pr_context"
         )
         guarded = plugins_mod._guardrail_wrapper(
-            json_handler, "github_pr_context", is_async=False
+            json_handler, "vcs_pr_context", is_async=False
         )
 
         raw = guarded({"pr_url": "https://github.com/org/repo/pull/1"})
@@ -1081,11 +1081,11 @@ class TestGuardrailsDisabledRegression:
         assert not _is_guardrail_block(parsed)
 
     def test_github_pr_approve_not_blocked_when_disabled(self):
-        """github_pr_review(event='APPROVE') passes through with guardrails off."""
+        """vcs_pr_review(event='APPROVE') passes through with guardrails off."""
         plugins_mod = _load_plugins()
         ctx = MagicMock()
         plugins_mod.register(ctx)
-        handler = _get_handler(ctx, "github_pr_review")
+        handler = _get_handler(ctx, "vcs_pr_review")
 
         parsed = _call_sync(
             handler,
@@ -1278,9 +1278,9 @@ class TestAllRegisteredToolsReturnJSON:
         ("get_workspace_context", {}),
         ("get_feature_state", {"feature_id": "f"}),
         ("get_tasks", {"feature_id": "f"}),
-        ("github_pr_context", {"pr_url": "https://github.com/a/b/pull/1"}),
+        ("vcs_pr_context", {"pr_url": "https://github.com/a/b/pull/1"}),
         (
-            "github_pr_review",
+            "vcs_pr_review",
             {"event": "REQUEST_CHANGES", "pr_url": "...", "body": "fix lint"},
         ),
         (

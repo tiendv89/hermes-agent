@@ -20,7 +20,10 @@ async def list_tools_endpoint() -> JSONResponse:
     """Return the live tools + loadable skills for the FE slash-command picker.
 
     ``tools`` is the plugin registry, honoring each tool's check_fn (gated-off
-    tools, where check_fn returns False, are excluded).
+    tools, where check_fn returns False, are excluded). Each entry's
+    ``description`` is the tool's ``short_description`` — a one-line summary
+    for the picker UI — falling back to the full SCHEMA description (the
+    LLM-facing tool-use instructions) when a tool has no short_description.
 
     ``skills`` is the bundled skill index — every entry is loadable on demand
     via the ``load_skill`` tool. Each carries a ``type`` of
@@ -40,7 +43,8 @@ async def list_tools_endpoint() -> JSONResponse:
         tools.append(
             {
                 "name": t["name"],
-                "description": t.get("schema", {}).get("description", ""),
+                "description": t.get("short_description")
+                or t.get("schema", {}).get("description", ""),
             }
         )
 

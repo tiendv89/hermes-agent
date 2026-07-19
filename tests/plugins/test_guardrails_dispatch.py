@@ -438,13 +438,13 @@ class TestGuardrailWrapperSync:
         assert not inner.call_log
 
     def test_g6_github_pr_approve_blocked(self, monkeypatch):
-        """github_pr_review with event=APPROVE is blocked by G6."""
+        """vcs_pr_review with event=APPROVE is blocked by G6."""
         plugins_mod = _load_plugins()
         monkeypatch.setenv("HERMES_GUARDRAILS_ENABLED", "1")
 
         inner = self._make_handler()
         wrapped = plugins_mod._guardrail_wrapper(
-            inner, "github_pr_review", is_async=False
+            inner, "vcs_pr_review", is_async=False
         )
 
         result = wrapped(
@@ -456,13 +456,13 @@ class TestGuardrailWrapperSync:
         assert not inner.call_log
 
     def test_g6_github_pr_request_changes_allowed(self, monkeypatch):
-        """github_pr_review with event=REQUEST_CHANGES is allowed by G6."""
+        """vcs_pr_review with event=REQUEST_CHANGES is allowed by G6."""
         plugins_mod = _load_plugins()
         monkeypatch.setenv("HERMES_GUARDRAILS_ENABLED", "1")
 
         inner = self._make_handler({"ok": True})
         wrapped = plugins_mod._guardrail_wrapper(
-            inner, "github_pr_review", is_async=False
+            inner, "vcs_pr_review", is_async=False
         )
 
         wrapped({"event": "REQUEST_CHANGES", "pr_url": "...", "body": "needs work"})

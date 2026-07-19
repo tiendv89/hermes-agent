@@ -269,10 +269,10 @@ class TestAsyncToolHandlersWithGuardrails:
             return {"ok": True}
 
         json_handler = plugins_mod._json_result_handler(
-            _handler, is_async=True, tool_name="github_pr_review"
+            _handler, is_async=True, tool_name="vcs_pr_review"
         )
         guarded = plugins_mod._guardrail_wrapper(
-            json_handler, "github_pr_review", is_async=True
+            json_handler, "vcs_pr_review", is_async=True
         )
 
         result = asyncio.run(
@@ -418,7 +418,7 @@ class TestLargeResponseOOBSanitization:
         middle = "B" * (100 * 1024)  # 100KB of clean content
         text = OOB_FULL + middle + OOB_FULL
 
-        result = g.sanitize_result("github_pr_context", text)
+        result = g.sanitize_result("vcs_pr_context", text)
 
         assert _OOB_OPEN not in result
         assert "B" * 100 in result  # clean content survives
@@ -439,7 +439,7 @@ class TestLargeResponseOOBSanitization:
             },
         }
 
-        result = g.sanitize_result("github_pr_context", payload)
+        result = g.sanitize_result("vcs_pr_context", payload)
         result_str = json.dumps(result)
 
         assert _OOB_OPEN not in result_str
@@ -639,7 +639,7 @@ class TestGuardrailsEnabledByDefault:
 
         blocked_cases = [
             ("approve_feature", {"stage": "handoff"}, "transition_blocked"),
-            ("github_pr_review", {"event": "APPROVE"}, "pr_approve_blocked"),
+            ("vcs_pr_review", {"event": "APPROVE"}, "pr_approve_blocked"),
             (
                 "write_file",
                 {"path": "CLAUDE.md", "content": "x"},
@@ -712,7 +712,7 @@ class TestGuardrailsDisabledEdgeCases:
             ("run_command", {"command": "bash -c 'rm -rf /'"}),
             ("write_file", {"path": "CLAUDE.md", "content": "<script>x</script>"}),
             ("approve_feature", {"stage": "handoff"}),
-            ("github_pr_review", {"event": "APPROVE"}),
+            ("vcs_pr_review", {"event": "APPROVE"}),
         ]
 
         for tool_name, args in dangerous_calls:
@@ -762,7 +762,7 @@ class TestEmptySessionContext:
         assert code == "system_prompt_source_blocked"
 
         # G6 PR approve blocked even without session context
-        ok, code = g.check("github_pr_review", {"event": "APPROVE"})
+        ok, code = g.check("vcs_pr_review", {"event": "APPROVE"})
         assert not ok
         assert code == "pr_approve_blocked"
 

@@ -1,9 +1,9 @@
 ---
 name: review-pr
 description: >-
-  Chat-native PR reviewer that fetches context via github_pr_context, evaluates
+  Chat-native PR reviewer that fetches context via vcs_pr_context, evaluates
   the diff against review_criteria.md, and posts a GitHub APPROVE or
-  REQUEST_CHANGES review via github_pr_review. No result.json, no task-state
+  REQUEST_CHANGES review via vcs_pr_review. No result.json, no task-state
   writes — chat-invoked reviews stop after posting.
 ---
 
@@ -18,7 +18,7 @@ file reads. If it is unavailable or returns no results, fall back to grep/Read.
 # Review PR
 
 Evaluates a pull request against the task specification and technical design,
-then posts a GitHub review (APPROVE or REQUEST_CHANGES) via `github_pr_review`.
+then posts a GitHub review (APPROVE or REQUEST_CHANGES) via `vcs_pr_review`.
 
 **Chat-invoked reviews stop after posting the review. There is no result.json,
 no merge step, and no task-state write — those belong to the orchestrator's
@@ -61,20 +61,20 @@ contradict the approved spec.
 
 ### Step 1 — Fetch PR metadata
 
-Call `github_pr_context` with `action="metadata"` and the PR URL.
+Call `vcs_pr_context` with `action="metadata"` and the PR URL.
 
 ```
-github_pr_context(action="metadata", pr_url="<PR URL>")
+vcs_pr_context(action="metadata", pr_url="<PR URL>")
 ```
 
 Record: title, author, base branch, head SHA.
 
 ### Step 2 — Fetch the PR diff
 
-Call `github_pr_context` with `action="diff"`.
+Call `vcs_pr_context` with `action="diff"`.
 
 ```
-github_pr_context(action="diff", pr_url="<PR URL>")
+vcs_pr_context(action="diff", pr_url="<PR URL>")
 ```
 
 Read the full diff. Note every file changed and every line added or removed.
@@ -82,17 +82,17 @@ Read the full diff. Note every file changed and every line added or removed.
 Optionally fetch the changed-file list for a structural overview:
 
 ```
-github_pr_context(action="files", pr_url="<PR URL>")
+vcs_pr_context(action="files", pr_url="<PR URL>")
 ```
 
 ### Step 3 — Wait for CI to resolve
 
-Call `github_pr_context` with `action="checks"`. The tool polls CI check-runs
+Call `vcs_pr_context` with `action="checks"`. The tool polls CI check-runs
 for up to `CHAT_REVIEW_CI_POLL_TIMEOUT_SECONDS` (default 60 s) and returns a
 `status` field:
 
 ```
-github_pr_context(action="checks", pr_url="<PR URL>")
+vcs_pr_context(action="checks", pr_url="<PR URL>")
 ```
 
 Interpret the result:
@@ -109,14 +109,14 @@ to re-invoke the review once CI has finished.
 
 ### Step 4 — Fetch additional context (optional)
 
-When the diff or task spec raises questions, use additional `github_pr_context`
+When the diff or task spec raises questions, use additional `vcs_pr_context`
 actions to gather more information before evaluating:
 
 ```
-github_pr_context(action="comments", pr_url="<PR URL>")     # existing discussion
-github_pr_context(action="reviews",  pr_url="<PR URL>")     # prior review history
-github_pr_context(action="commits",  pr_url="<PR URL>")     # commit messages
-github_pr_context(action="file_at_ref", owner="…", repo="…", path="…", ref="…")  # full file content
+vcs_pr_context(action="comments", pr_url="<PR URL>")     # existing discussion
+vcs_pr_context(action="reviews",  pr_url="<PR URL>")     # prior review history
+vcs_pr_context(action="commits",  pr_url="<PR URL>")     # commit messages
+vcs_pr_context(action="file_at_ref", owner="…", repo="…", path="…", ref="…")  # full file content
 ```
 
 ### Step 5 — Evaluate the PR against the rubric
@@ -150,13 +150,13 @@ additional context would help. Do not post a review you are not confident in.
 
 ### Step 7 — Post the GitHub review
 
-Call `github_pr_review` with the verdict, the full narrative, and any inline
+Call `vcs_pr_review` with the verdict, the full narrative, and any inline
 comments:
 
 **For APPROVE:**
 
 ```
-github_pr_review(
+vcs_pr_review(
   pr_url="<PR URL>",
   event="APPROVE",
   body="<full review narrative: verdict, all findings with severity markers, inline references>",
@@ -169,7 +169,7 @@ github_pr_review(
 **For REQUEST_CHANGES:**
 
 ```
-github_pr_review(
+vcs_pr_review(
   pr_url="<PR URL>",
   event="REQUEST_CHANGES",
   body="<full review narrative>",
@@ -189,7 +189,7 @@ The tool returns `{ok, review_url, self_review_skipped}`:
   issue comment. The `review_url` is the comment URL. This is expected when
   the bot token owns the PR.
 - `ok: false` — tool failed. Describe the error to the user and ask them to
-  retry or check `GITHUB_TOKEN` configuration.
+  retry or check the vcs-service connection.
 
 ### Step 8 — Summarize in chat
 
@@ -208,9 +208,9 @@ Reply to the user with:
 
 | Situation | Action |
 |---|---|
-| `github_pr_context` returns `ok: false` | Report the error to the user; do not proceed with an incomplete diff |
+| `vcs_pr_context` returns `ok: false` | Report the error to the user; do not proceed with an incomplete diff |
 | CI `status: "pending"` | Tell the user to retry once CI resolves; stop |
 | CI `status: "failed"` | Record as 🔴 finding and continue to rubric evaluation |
-| `github_pr_review` returns `ok: false` | Report the error; suggest checking `GITHUB_TOKEN` |
-| `github_pr_review` returns `self_review_skipped: true` | Normal path — use `review_url` (comment URL) in the summary |
+| `vcs_pr_review` returns `ok: false` | Report the error; suggest checking the vcs-service connection |
+| `vcs_pr_review` returns `self_review_skipped: true` | Normal path — use `review_url` (comment URL) in the summary |
 | Confidence < 0.80 | Tell the user what is unclear; do not post a low-confidence review |

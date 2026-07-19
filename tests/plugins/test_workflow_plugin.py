@@ -123,11 +123,14 @@ class TestRegisterT3:
         "create_tasks",
         "parse_tasks",
         "suggest_next_actions",
-        "github_pr_context",
-        "github_pr_review",
+        "vcs_pr_context",
+        "vcs_pr_review",
         "list_documents",
         "workflow_init_feature",
         "workflow_lookup_feature",
+        "vcs_create_pr",
+        "vcs_ensure_branch",
+        "vcs_commit_files",
     }
 
     def test_registers_all_tools(self):
