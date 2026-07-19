@@ -606,6 +606,39 @@ async def update_feature_stage(
     )
 
 
+async def update_feature_status(
+    workspace_id: str,
+    feature_id: str,
+    feature_status: str,
+    actor: str,
+    *,
+    user_id: str | None = None,
+    org_id: str | None = None,
+) -> None:
+    """Move a feature to a new lifecycle ``feature_status`` without touching any
+    stage-review state.
+
+    Unlike ``update_feature_stage`` (which carries a full stage-review payload),
+    this sends only ``{feature_status, actor}`` to the same
+    ``PATCH .../features/{feature_id}/stage`` endpoint. workflow-backend merges the
+    partial body server-side, leaving the stages JSONB and current_stage untouched.
+    Used for the ``backlog → in_design`` transition, where no stage is being
+    approved/rejected — the feature is simply advanced out of Backlog so its design
+    can later be reviewed and approved.
+    """
+    await _call(
+        "PATCH",
+        f"/api/workspaces/{workspace_id}/features/{feature_id}/stage",
+        user_id=user_id,
+        org_id=org_id,
+        json_body={
+            "feature_status": feature_status,
+            "actor": actor,
+        },
+        not_found_message=f"Feature {feature_id!r} not found in workspace {workspace_id!r}",
+    )
+
+
 async def create_feature(
     workspace_id: str,
     name: str,

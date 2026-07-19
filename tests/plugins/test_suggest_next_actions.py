@@ -411,6 +411,7 @@ class TestToolRegistration:
             "skills",
             "approval",
             "approve",
+            "move_feature",
             "tasks_write",
             "create_tasks",
             "parse_tasks",

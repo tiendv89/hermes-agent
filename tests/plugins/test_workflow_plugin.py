@@ -118,6 +118,7 @@ class TestRegisterT3:
         "load_skill",
         "request_approval",
         "approve_feature",
+        "move_feature_status",
         "write_tasks",
         "create_tasks",
         "parse_tasks",

@@ -492,3 +492,64 @@ class TestGoEarlierStagesDbOnly:
         assert result["ok"] is True, result.get("error")
         assert mocks["update_stage"].called
         mocks["create_tasks"].assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# handle() — backlog precondition: a design cannot be approved from Backlog.
+# The approval is refused with needs_status_change and no DB write happens.
+# ---------------------------------------------------------------------------
+
+
+class TestBacklogApproveGate:
+    def _run_handle(self, monkeypatch, *, stage="product_spec", action="approve",
+                    status="backlog"):
+        monkeypatch.setenv("GIT_AUTHOR_EMAIL", _ACTOR)
+
+        stages = {
+            stage: {
+                "review_status": "draft",
+                "reviewed_by": None,
+                "reviewed_at": None,
+                "review_comment": None,
+                "review_history": [],
+            }
+        }
+        detail = _make_feature_detail("go", stages)
+        detail["status"] = status
+        update_mock = AsyncMock()
+
+        mod = _load_approve_mod()
+        mod.get_feature_detail = AsyncMock(return_value=detail)
+        mod.update_feature_stage = update_mock
+
+        result = mod.handle(
+            stage=stage,
+            action=action,
+            workspace_id=_WORKSPACE_ID,
+            feature_id=_FEATURE_ID,
+        )
+        return result, {"update_stage": update_mock}
+
+    def test_backlog_approve_refused(self, monkeypatch):
+        result, _ = self._run_handle(monkeypatch)
+        assert result["ok"] is False
+        assert result["needs_status_change"] is True
+        assert result["target_status"] == "in_design"
+
+    def test_backlog_approve_does_not_write_db(self, monkeypatch):
+        _, mocks = self._run_handle(monkeypatch)
+        mocks["update_stage"].assert_not_called()
+
+    def test_backlog_reject_not_gated(self, monkeypatch):
+        """Only approve is gated — reject on a backlog feature still writes DB."""
+        result, mocks = self._run_handle(monkeypatch, action="reject")
+        assert result["ok"] is True, result.get("error")
+        assert "needs_status_change" not in result
+        assert mocks["update_stage"].called
+
+    def test_in_design_approve_not_gated(self, monkeypatch):
+        """A feature already in in_design approves normally (regression guard)."""
+        result, mocks = self._run_handle(monkeypatch, status="in_design")
+        assert result["ok"] is True, result.get("error")
+        assert "needs_status_change" not in result
+        assert mocks["update_stage"].called
