@@ -65,6 +65,7 @@ your assumption instead and proceed.
 
 Features follow this lifecycle:
 
+- backlog
 - in_design
 - in_tdd
 - ready_for_implementation
@@ -99,6 +100,10 @@ Features follow this lifecycle:
 
 ## Workflow
 
+0. A feature is created in `backlog` (its initial status). Specs **may be
+   drafted** while the feature is in `backlog`, but a design **cannot be
+   approved** from `backlog` — the feature must first be moved to `in_design`
+   (see "Backlog → In Design rule" below).
 1. Product owner produces `product-spec.md`
 2. Human approves or rejects product spec
 3. Tech lead uses `tech-lead` (Phase 1) to produce `technical-design.md`
@@ -108,6 +113,47 @@ Features follow this lifecycle:
 7. Teams execute tasks in their real implementation repos
 8. Handoffs are recorded under `handoffs/`
 9. Human approves final handoff
+
+## Backlog → In Design rule
+
+A feature starts in `backlog`. Writing or revising specs (`write_product_spec`,
+`write_technical_design`) is allowed while it is in `backlog`. **Approving a
+design is not** — the feature must first be moved to `in_design`, reviewed, and
+then approved.
+
+When `approve_feature` returns `needs_status_change: true` (the feature is still
+in `backlog`), do **not** try to approve again. Instead:
+
+1. Tell the user the feature is still in Backlog and a design can't be approved
+   from there.
+2. Surface a **"Move to In Design"** action via `suggest_next_actions` — use
+   `button_label: "Move to In Design"` and a plain-language `action_text` such as
+   `"Move this feature to In Design"` (do **not** put a tool name in
+   `action_text`; that would be blocked as a lifecycle-mutation CTA).
+3. When the user confirms (or asks to move it), call `move_feature_status` — it
+   sets `feature_status` to `in_design`.
+4. After the move succeeds, check whether a real product spec already exists
+   (`read_file(document="product_spec")`). Treat a missing doc **and** a doc
+   that is still template/placeholder content (unfilled `_Describe..._`-style
+   fields, boilerplate headers with no real prose, a duplicated template) the
+   same way — as "no usable spec yet":
+   - **No usable spec:** tell the user a spec is needed and surface a **"Write
+     product spec"** CTA via `suggest_next_actions` (plain-language
+     `action_text`). Do this even if a placeholder doc technically exists —
+     never end the turn asking the user to describe the feature in prose alone
+     when you can offer a one-click CTA that starts the same conversation.
+   - **Real spec already exists:** tell the user to **review the design and
+     update it if needed before advancing to Final Design.** Do not
+     auto-approve; the user re-runs the approval when the design is ready.
+
+**Approve requested with no stage specified, feature in `backlog`:** `stage` is
+required by `approve_feature`, so a bare "approve this feature" with nothing
+drafted yet gives you nothing valid to call it with. Do not fall back to asking
+"which stage?" in plain text — you already know none can be approved from
+`backlog`. Instead respond with the same CTA pattern as above: tell the user the
+feature is in Backlog, and surface both **"Write product spec"** and **"Move to
+In Design"** via `suggest_next_actions` (plain-language `action_text` for each,
+per the rule above) so the user has a one-click next step either way.
 
 ## Design-phase context-gathering rule (REQUIRED)
 
@@ -662,15 +708,22 @@ human to reformat it.
 
 ## Suggesting next actions
 
-After delivering your main response, you MAY call `suggest_next_actions` with
-1–3 CTA objects when a natural follow-up exists. Guidelines:
+After delivering your main response, call `suggest_next_actions` with 1–3 CTA
+objects whenever a concrete, nameable next step exists — e.g. writing or
+rewriting a document, moving a lifecycle stage, approving a stage. Do not end a
+turn asking the user to restate something in prose ("please describe the
+feature," "let me know how you'd like to proceed") when a `suggest_next_actions`
+CTA could trigger that same next step with one click — the CTA and the prose
+question are not alternatives; when a real next step exists, offer the CTA.
+Guidelines:
 
 - Prefer lifecycle actions (approve, advance) when the conversation just
   completed a document draft.
 - Prefer clarifying follow-ups when your answer introduced a concept the user
   might want to explore.
-- OMIT the call when you answered a simple factual question or when no clear
-  next step exists.
+- OMIT the call only when you answered a simple factual question or genuinely
+  no next step exists (not merely because the user would need to supply
+  details — offer the CTA anyway; the conversation continues once clicked).
 - Never suggest more than 3 options.
 - `action_text` must be the literal text that will be submitted as the user's
   next message. Use plain natural language that maps to a real tool call,

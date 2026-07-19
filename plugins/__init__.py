@@ -25,6 +25,7 @@ from .tools import (
     skills as skills_tool,
     approval,
     approve as approve_tool,
+    move_feature as move_feature_tool,
     tasks_write as tasks_write_tool,
     suggest_next_actions as suggest_next_actions_tool,
     create_tasks as create_tasks_tool,
@@ -283,6 +284,12 @@ _TOOLS = (
         "name": "approve_feature",
         "schema": approve_tool.SCHEMA,
         "handler": approve_tool.handle,
+        "check_fn": check_workflow_available,
+    },
+    {
+        "name": "move_feature_status",
+        "schema": move_feature_tool.SCHEMA,
+        "handler": move_feature_tool.handle,
         "check_fn": check_workflow_available,
     },
     {

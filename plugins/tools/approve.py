@@ -242,6 +242,26 @@ def handle(
         "stages": dict(detail.get("stages") or {}),
     }
 
+    # Backlog precondition: a design cannot be approved while the feature is still
+    # in Backlog. Refuse the approval and signal the agent to offer a
+    # "Move to In Design" step (via move_feature_status). Only 'approve' is gated —
+    # reject/reopen do not occur on a backlogged feature.
+    if action == "approve" and status_data.get("feature_status") == "backlog":
+        return {
+            "ok": False,
+            "needs_status_change": True,
+            "feature_id": fid,
+            "stage": stage,
+            "feature_status": "backlog",
+            "target_status": "in_design",
+            "message": (
+                "This feature is still in Backlog. A design can't be approved from "
+                "Backlog — move it to In Design first, review the design, then "
+                "approve. Offer the user a 'Move to In Design' action "
+                "(move_feature_status)."
+            ),
+        }
+
     now = _now_utc()
     stage_block = status_data.setdefault("stages", {}).setdefault(stage, {})
     if not isinstance(stage_block.get("review_history"), list):
