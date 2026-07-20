@@ -17,3 +17,16 @@ When calling `workflow_init_feature` in chat and the user has not provided an ex
 | "Fix thread context isolation bugs" | `thread-context-isolation-bugs` |
 | "Add OAuth2 support for GitHub" | `oauth2-support-github` |
 | "We need a dashboard for feature status" | `dashboard-feature-status` |
+
+## Human-actor prompting during task breakdown
+
+During the task-breakdown phase (`write_tasks` / creating `tasks.md`), you **must** ask the human:
+
+> "Are any of these tasks meant to be done by a human (not an agent)? If so, which ones?"
+
+Behavior:
+
+- If the human says none, or does not identify any human-owned tasks, every task defaults to `actor_type: agent`.
+- If the human identifies specific tasks (e.g. "T1 and T3"), set only those tasks' actor type to `human` in the Index table — all others stay `agent`.
+- The Index table header must always include five required columns: `| ID | Title | Repo | Depends On | Actor |`. The optional `Model` column comes sixth when a model needs to be specified for agent-actor tasks.
+- For human-actor tasks, the Model cell should be blank (or "—") since no model is dispatched.
