@@ -293,14 +293,28 @@ The following `action` values are defined for task log entries:
 - This rule is enforced by `start-implementation`
 - **Auto-ready rule**: when a task is marked `done`, any task whose entire `depends_on` list is now satisfied must have its status advanced from `todo` to `ready`. The actor who marks the dependency `done` is responsible for applying this transition and appending a log entry to each affected task.
 
-## Execution rules
+## Human-actor prompting during task breakdown
 
-Each task must define:
+During the task-breakdown phase (`write_tasks` / creating `tasks.md`), you **must** ask the human which tasks — if any — are human-owned. Ask via the **`clarify` tool in multiple-choice mode**, not as free-text prose the human has to type into. Free text here is a rule violation: it forces the human to hand-type task IDs when a one-click pick would do.
 
-```yaml
-execution:
-  actor_type: human | agent | either
-```
+Build the clarify call like this:
+
+- **Question:** `"Which of these tasks should a human do (not an agent)? (select all that apply)"`. The ` (select all that apply)` suffix switches the UI to multi-select — required here, since more than one task can be human-owned (see "Clarify formatting conventions" above).
+- **Choices:** each choice must be a readable label, not a bare ID — lead with the task ID and follow with its title so the human knows what they're picking and you can still map the answer back. Include a "none" choice phrased as a full sentence. For example:
+  - `"None — every task is handled by agents"`
+  - `"T1 — Add /generate-feature-name endpoint"`
+  - `"T2 — Wire endpoint into the feature-init flow"`
+  - `"T3 — Update CLAUDE.md slug guidance"`
+
+  Use the actual task titles from your breakdown, not these examples. Do **not** add an "Other" choice yourself — the UI always auto-appends a 5th "Other (type your answer)" option.
+- **The 4-choice limit:** `clarify` accepts at most 4 choices. The "none" sentence + up to three task labels fills it exactly (plus the auto-`Other`). When the feature has more than three tasks, you cannot list them all — offer the "none" choice plus the tasks most plausibly human-owned and rely on the auto-appended "Other" for the human to type any remaining IDs, or drop "none" to fit four task labels and let the human pick "Other" for none.
+
+Behavior:
+
+- If the human picks `None`, says none, or does not identify any human-owned tasks, every task defaults to `actor_type: agent`.
+- If the human identifies specific tasks (e.g. "T1 and T3"), set only those tasks' actor type to `human` in the Index table — all others stay `agent`.
+- The Index table header must always include five required columns: `| ID | Title | Repo | Depends On | Actor |`. The optional `Model` column comes sixth when a model needs to be specified for agent-actor tasks.
+- For human-actor tasks, the Model cell should be blank (or "—") since no model is dispatched.
 
 ## Review boundary
 
