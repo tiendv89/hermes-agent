@@ -159,6 +159,10 @@ def _json_result_handler(handler: Any, is_async: bool, tool_name: str = "") -> A
         @functools.wraps(handler)
         async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
             result = await handler(**_unpack_args(args, kwargs))
+            if isinstance(result, dict) and result.get("__deferred__"):
+                # Deferred-execution marker — skip guardrail sanitization
+                # so the IDE extension receives params unmodified.
+                return _as_tool_content(result)
             result = _guardrails.sanitize_result(tool_name, result)
             return _as_tool_content(result)
 
@@ -167,6 +171,10 @@ def _json_result_handler(handler: Any, is_async: bool, tool_name: str = "") -> A
     @functools.wraps(handler)
     def _sync_wrapper(*args: Any, **kwargs: Any) -> str:
         result = handler(**_unpack_args(args, kwargs))
+        if isinstance(result, dict) and result.get("__deferred__"):
+            # Deferred-execution marker — skip guardrail sanitization
+            # so the IDE extension receives params unmodified.
+            return _as_tool_content(result)
         result = _guardrails.sanitize_result(tool_name, result)
         return _as_tool_content(result)
 
