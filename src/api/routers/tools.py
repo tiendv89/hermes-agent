@@ -29,10 +29,10 @@ async def list_tools_endpoint() -> JSONResponse:
     via the ``load_skill`` tool. Each carries a ``type`` of
     ``"technical"`` (knowledge skills) or ``"workflow"`` (workflow skills).
     """
-    from plugins import _TOOLS
+    import plugins
 
     tools = []
-    for t in _TOOLS:
+    for t in plugins._TOOLS:
         check_fn = t.get("check_fn")
         if check_fn is not None:
             try:

@@ -556,16 +556,18 @@ class TestHandleParameterOverride:
 
 
 class TestToolsRegistration:
-    def test_create_tasks_in_tools_list(self):
-        from plugins import _TOOLS
+    @staticmethod
+    def _get_tools():
+        """Return the workflow tool list from the profile setup module."""
+        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        return _WORKFLOW_TOOLS
 
-        names = [t["name"] for t in _TOOLS]
+    def test_create_tasks_in_tools_list(self):
+        names = [t["name"] for t in self._get_tools()]
         assert "create_tasks" in names
 
     def test_create_tasks_has_required_fields(self):
-        from plugins import _TOOLS
-
-        tool = next(t for t in _TOOLS if t["name"] == "create_tasks")
+        tool = next(t for t in self._get_tools() if t["name"] == "create_tasks")
         assert "schema" in tool
         assert "handler" in tool
         assert "check_fn" in tool
@@ -574,7 +576,7 @@ class TestToolsRegistration:
         ctx = MagicMock()
         from plugins import register
 
-        register(ctx)
+        register(ctx, tools=self._get_tools())
         registered_names = [
             call.kwargs.get("name") or call.args[0]
             for call in ctx.register_tool.call_args_list

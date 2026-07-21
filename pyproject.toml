@@ -26,7 +26,7 @@ workflow-gateway = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["src*", "plugins*"]
+include = ["src*", "plugins*", "profiles*"]
 
 [tool.uv]
 constraint-dependencies = ["pygments>=2.20.0"]
