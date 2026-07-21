@@ -192,9 +192,58 @@ def register_tools(ctx: Any) -> None:
 def build_router():
     """Return an APIRouter for the coding profile.
 
-    T4 will add the ``POST /coding/chat`` SSE endpoint here.
+    Mounts:
+
+    * ``POST /coding/chat`` — SSE endpoint (JWT auth, deferred tools).
+    * ``GET  /coding/version`` — public, per-IDE version info.
     """
+    import os
+
     from fastapi import APIRouter
 
+    from src.api.routers.coding_chat import router as chat_router
+
     router = APIRouter()
+
+    # ── Coding chat (SSE, JWT auth, deferred tools) ──────────────────
+    router.include_router(chat_router)
+
+    # ── Version endpoint (public, no auth) ───────────────────────────
+    @router.get("/coding/version")
+    async def coding_version():
+        return {
+            "vscode": {
+                "min_version": os.environ.get(
+                    "CODING_VSCODE_MIN_VERSION", "1.0.0"
+                ),
+                "recommended_version": os.environ.get(
+                    "CODING_VSCODE_RECOMMENDED_VERSION", "1.0.0"
+                ),
+                "marketplace_url": os.environ.get(
+                    "CODING_VSCODE_MARKETPLACE_URL",
+                    "https://marketplace.visualstudio.com/items?itemName=nousresearch.hermes",
+                ),
+                "deprecation_notice": os.environ.get(
+                    "CODING_VSCODE_DEPRECATION_NOTICE"
+                )
+                or None,
+            },
+            "jetbrains": {
+                "min_version": os.environ.get(
+                    "CODING_JETBRAINS_MIN_VERSION", "1.0.0"
+                ),
+                "recommended_version": os.environ.get(
+                    "CODING_JETBRAINS_RECOMMENDED_VERSION", "1.0.0"
+                ),
+                "marketplace_url": os.environ.get(
+                    "CODING_JETBRAINS_MARKETPLACE_URL",
+                    "https://plugins.jetbrains.com/plugin/nousresearch-hermes",
+                ),
+                "deprecation_notice": os.environ.get(
+                    "CODING_JETBRAINS_DEPRECATION_NOTICE"
+                )
+                or None,
+            },
+        }
+
     return router
