@@ -502,7 +502,11 @@ class TestToolRegistration:
         sys.modules["plugins"] = mod
         spec.loader.exec_module(mod)
 
-        names = {t["name"] for t in mod._TOOLS}
+        # _TOOLS is now populated by the profile setup, not at module load time.
+        # Check the workflow profile's tool list instead.
+        from profiles.workflow.setup import _WORKFLOW_TOOLS
+
+        names = {t["name"] for t in _WORKFLOW_TOOLS}
         assert "suggest_next_actions" in names, (
-            f"suggest_next_actions missing from _TOOLS; registered: {sorted(names)}"
+            f"suggest_next_actions missing from _WORKFLOW_TOOLS; registered: {sorted(names)}"
         )

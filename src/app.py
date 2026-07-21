@@ -2,6 +2,15 @@
 
 Entry point:
     uvicorn src.app:app --host 0.0.0.0 --port 8000
+
+Profile selection:
+    Set ``HERMES_PROFILE`` to ``workflow`` (default) or ``coding`` before
+    startup.  Each profile registers a distinct tool set and mounts its own
+    FastAPI router.
+
+    Workflow: BFF-proxied web chat with document-editing, workflow-mutation,
+              and VCS tools.
+    Coding:   IDE pair-programming with client-executed tools (T3/T4).
 """
 
 from __future__ import annotations
@@ -18,24 +27,59 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 load_dotenv(pathlib.Path(__file__).parent / ".env")
 
-# Register the workflow plugin before anything else imports model_tools.
+# ---------------------------------------------------------------------------
+# Profile selection
+# ---------------------------------------------------------------------------
+
+_HERMES_PROFILE = os.getenv("HERMES_PROFILE", "workflow").strip().lower()
+logger = logging.getLogger(__name__)
+logger.info("src: selected profile: %s", _HERMES_PROFILE)
+
+# ---------------------------------------------------------------------------
+# Register profile tools before anything else imports model_tools.
 # Our workflow plugin (the top-level plugins/ package) is not on the agent's
-# plugin search path, so it must be wired up explicitly here.
+# plugin search path, so it must be wired up explicitly here via the profile
+# setup module.
+# ---------------------------------------------------------------------------
+
 try:
-    import plugins as _plugins
     from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
 
-    _wf_manifest = PluginManifest(name="workflow", source="bundled", kind="backend")
-    _wf_ctx = PluginContext(_wf_manifest, get_plugin_manager())
-    _plugins.register(_wf_ctx)
+    # Resolve the profile setup module.
+    if _HERMES_PROFILE == "workflow":
+        from profiles.workflow.setup import register_tools, build_router
+    elif _HERMES_PROFILE == "coding":
+        from profiles.coding.setup import register_tools, build_router
+    else:
+        raise ValueError(
+            f"Unknown HERMES_PROFILE value: {_HERMES_PROFILE!r}. "
+            f"Expected 'workflow' or 'coding'."
+        )
+
+    _manifest = PluginManifest(
+        name=_HERMES_PROFILE,
+        source="bundled",
+        kind="backend",
+    )
+    _ctx = PluginContext(_manifest, get_plugin_manager())
+    register_tools(_ctx)
+    logger.info("src: profile %s tools registered", _HERMES_PROFILE)
 except Exception as _exc:
     import logging as _logging
 
     _logging.getLogger(__name__).warning(
-        "src: failed to register workflow plugin: %s", _exc
+        "src: failed to register %s profile tools: %s", _HERMES_PROFILE, _exc
     )
 
-logger = logging.getLogger(__name__)
+    # Fallback: import the workflow profile directly (this keeps the app
+    # functional even if the dynamic import above fails).
+    from profiles.workflow.setup import register_tools as register_tools
+    from profiles.workflow.setup import build_router as build_router
+
+
+# ---------------------------------------------------------------------------
+# Application factory
+# ---------------------------------------------------------------------------
 
 
 @asynccontextmanager
@@ -48,7 +92,7 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not database_url:
         raise RuntimeError(
             "DATABASE_URL is not set. "
-            "Configure it in the environment (e.g. postgresql://user:pass@host/db)."
+            "Configure it in the environment (e.g. postgresql://user:***@host/db)."
         )
 
     # SQLAlchemy asyncpg driver requires the postgresql+asyncpg:// scheme.
@@ -68,9 +112,6 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 
 def create_app() -> FastAPI:
-    # Imported lazily for the same reason as init_db (see _lifespan).
-    from src.api.router import router
-
     app = FastAPI(
         title="hermes workflow gateway",
         description="Workspace-aware AI agent gateway (digital-factory / M3)",
@@ -78,7 +119,7 @@ def create_app() -> FastAPI:
         lifespan=_lifespan,
     )
 
-    app.include_router(router, prefix="/api/v1")
+    app.include_router(build_router(), prefix="/api/v1")
 
     @app.get("/health")
     async def health() -> dict:

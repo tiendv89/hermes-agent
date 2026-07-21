@@ -257,6 +257,13 @@ class TestGetToolsEndpoint:
         """When workflow-backend is configured, request_approval must appear."""
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
+
+        # Populate _TOOLS from the workflow profile so the tools endpoint
+        # sees the real tool set (after the T2 profile split).
+        import plugins
+        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        plugins._TOOLS = _WORKFLOW_TOOLS
+
         client = self._build_client(monkeypatch)
         resp = client.get("/api/v1/tools")
         assert resp.status_code == 200

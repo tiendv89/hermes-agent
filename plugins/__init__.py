@@ -1,14 +1,25 @@
-"""workflow plugin — registers workspace-aware tools for the digital-factory agent."""
+"""workflow plugin — registers workspace-aware tools for the digital-factory agent.
+
+This module provides the shared tool-registration infrastructure used by
+all profiles. Each profile calls ``register(ctx, tools=...)`` with its own
+tool list. The module-level ``_TOOLS`` tuple is kept as an empty backward-
+compatibility fallback; new code should always pass ``tools`` explicitly.
+
+Shared utilities:
+- ``_guardrail_wrapper`` — wraps a handler with pre-dispatch guardrail checks
+- ``_json_result_handler`` — wraps a handler for JSON-stringify + sanitization
+- ``_as_tool_content`` — coerces a handler return value to a string
+- ``_unpack_args`` — merges positional + keyword args into a single kwargs dict
+- ``_get_session_context`` — returns the current session's workspace context
+"""
 
 from __future__ import annotations
 
 import functools
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
-from src.services.workflow_backend_client import check_workflow_available
-from .hooks import inject_context
 from .tools import guardrails as _guardrails
 from .tools import (
     workspace,
@@ -48,7 +59,7 @@ def _as_tool_content(result: Any) -> str:
 
     The agent's tool registry passes a handler's return value straight through
     as the ``tool`` message ``content`` (it only JSON-encodes errors). Our
-    handlers return dicts (``{"ok": True, ...}``). The Anthropic adapter
+    handlers return dicts (``{\"ok\": True, ...}``). The Anthropic adapter
     stringifies dict content, but strict OpenAI-compatible providers (DeepSeek)
     reject it with HTTP 400 "content should be a string or a list". JSON-encode
     here so the wire content is always a string, for every provider.
@@ -77,7 +88,7 @@ def _unpack_args(args: tuple, kwargs: dict) -> dict:
     return {**fn_args, **kwargs}
 
 
-def _get_session_context() -> Optional[dict[str, Any]]:
+def _get_session_context() -> dict[str, Any] | None:
     """Return the current session's workspace context for guardrail G10.
 
     Uses the agent_session_id stored on the thread-local by set_agent_context()
@@ -398,9 +409,43 @@ _TOOLS = (
 )
 
 
-def register(ctx: Any) -> None:
-    """Entry point called by PluginManager.discover_and_load."""
-    for t in _TOOLS:
+# ---------------------------------------------------------------------------
+# Tool registration entry point
+# ---------------------------------------------------------------------------
+
+
+def register(ctx: Any, tools: tuple[dict[str, Any], ...] | None = None) -> None:
+    """Register a set of tools on the agent context.
+
+    Each tool dict must have: ``name``, ``schema``, ``handler``.
+    Optional keys: ``short_description``, ``check_fn``, ``is_async``.
+
+    Args:
+        ctx: Agent PluginContext with a ``register_tool`` method.
+        tools: Tuple of tool dicts to register. If ``None``, falls back to
+               the module-level ``_TOOLS`` (for backward compatibility).
+    """
+    global _TOOLS
+
+    if tools is not None:
+        _tools = tools
+        _TOOLS = tools
+    else:
+        _tools = _TOOLS
+        # If _TOOLS is empty and no explicit tools were passed, try
+        # loading the default workflow tools. This preserves backward
+        # compatibility for callers that do plugins.register(ctx) with
+        # no tools argument after the T2 profile split.
+        if not _tools:
+            try:
+                from profiles.workflow.setup import _WORKFLOW_TOOLS
+
+                _tools = _WORKFLOW_TOOLS
+                _TOOLS = _WORKFLOW_TOOLS
+            except ImportError:
+                pass
+
+    for t in _tools:
         is_async = t.get("is_async", False)
         # Apply JSON-result wrapping first, then the pre-dispatch guardrail gate.
         # Order: AIAgent → _guardrail_wrapper → _json_result_handler → handler
@@ -414,7 +459,6 @@ def register(ctx: Any) -> None:
             check_fn=t.get("check_fn"),
             is_async=is_async,
         )
-        logger.debug("workflow plugin: registered tool %s", t["name"])
+        logger.debug("plugins: registered tool %s", t["name"])
 
-    ctx.register_hook("pre_llm_call", inject_context)
-    logger.info("workflow plugin: registered %d tools + pre_llm_call hook", len(_TOOLS))
+    logger.info("plugins: registered %d tools", len(_tools))

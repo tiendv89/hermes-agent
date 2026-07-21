@@ -159,12 +159,16 @@ class TestHandleReadWorkspaceFile:
 
 
 class TestToolsRegistration:
+    @staticmethod
+    def _get_tools():
+        """Return the workflow tool list from the profile setup module."""
+        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        return _WORKFLOW_TOOLS
+
     def test_read_workspace_file_in_tools(self):
-        plugins = _load_plugins_init()
-        names = [t["name"] for t in plugins._TOOLS]
+        names = [t["name"] for t in self._get_tools()]
         assert "read_workspace_file" in names
 
     def test_read_workspace_file_has_check_fn(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "read_workspace_file")
+        tool = next(t for t in self._get_tools() if t["name"] == "read_workspace_file")
         assert callable(tool.get("check_fn"))

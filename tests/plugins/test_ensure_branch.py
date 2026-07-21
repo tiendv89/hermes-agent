@@ -186,35 +186,35 @@ class TestHandleErrors:
 
 
 class TestToolsRegistration:
+    @staticmethod
+    def _get_tools():
+        """Return the workflow tool list from the profile setup module."""
+        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        return _WORKFLOW_TOOLS
+
     def test_vcs_ensure_branch_in_tools(self):
-        plugins = _load_plugins_init()
-        names = [t["name"] for t in plugins._TOOLS]
+        names = [t["name"] for t in self._get_tools()]
         assert "vcs_ensure_branch" in names
 
     def test_vcs_ensure_branch_has_check_fn(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "vcs_ensure_branch")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_ensure_branch")
         assert callable(tool.get("check_fn"))
 
     def test_vcs_ensure_branch_check_fn_false_without_config(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "vcs_ensure_branch")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_ensure_branch")
         assert tool["check_fn"]() is False
 
     def test_vcs_ensure_branch_check_fn_true_with_config(self, monkeypatch):
         monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8088")
         monkeypatch.setenv("VCS_SERVICE_TOKEN", "tok")
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "vcs_ensure_branch")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_ensure_branch")
         assert tool["check_fn"]() is True
 
     def test_vcs_ensure_branch_has_handler(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "vcs_ensure_branch")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_ensure_branch")
         assert callable(tool.get("handler"))
 
     def test_vcs_ensure_branch_has_schema(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "vcs_ensure_branch")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_ensure_branch")
         assert isinstance(tool.get("schema"), dict)
         assert "parameters" in tool["schema"]
