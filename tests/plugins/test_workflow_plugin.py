@@ -131,6 +131,7 @@ class TestRegisterT3:
         "vcs_create_pr",
         "vcs_ensure_branch",
         "vcs_commit_files",
+        "get_feature_context",
     }
 
     def test_registers_all_tools(self):

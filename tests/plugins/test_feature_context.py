@@ -673,3 +673,75 @@ class TestInjectContextFeatureBlock:
         # get_feature_context was called but returned empty — block not appended
         # Verify the content ends normally (capabilities section)
         assert "get_tasks (live task status)" in content
+
+
+# ---------------------------------------------------------------------------
+# get_feature_context tool handler
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureContextTool:
+    """Tests for plugins/tools/feature_context.py — the get_feature_context tool."""
+
+    def test_happy_path_returns_ok_with_context(self):
+        """Handler returns ok=True and the context block."""
+        _set_thread_context()
+
+        with patch(
+            "plugins.feature_context.check_workflow_available",
+            return_value=True,
+        ), patch(
+            "plugins.feature_context.run_async",
+            side_effect=[
+                {"stage": "in_implementation", "status": "active", "owner": "alice"},
+                [
+                    {
+                        "task_name": "T1",
+                        "title": "Setup",
+                        "status": "done",
+                        "depends_on": [],
+                        "pr": None,
+                    },
+                ],
+            ],
+        ), patch(
+            "plugins.clients.storage_service_client.read_document_content",
+            side_effect=[
+                {"content": "# Product Spec\n\nSpec content.", "version_id": "v1"},
+                {"content": "# Technical Design\n\nDesign content.", "version_id": "v2"},
+            ],
+        ):
+            from plugins.tools.feature_context import handle
+
+            result = handle()
+
+        assert result["ok"] is True
+        assert "## Feature Context (auto-loaded)" in result["context"]
+        assert "in_implementation" in result["context"]
+        assert "Setup" in result["context"]
+
+    def test_no_feature_id_returns_ok_with_message(self):
+        """When there is no feature_id, handler returns ok with a message."""
+        _set_thread_context(feature_id="")
+
+        from plugins.tools.feature_context import handle
+
+        result = handle()
+
+        assert result["ok"] is True
+        assert "no feature_id" in result["context"].lower()
+
+    def test_get_feature_context_raises_returns_error(self):
+        """When get_feature_context raises, handler returns ok=False."""
+        _set_thread_context()
+
+        with patch(
+            "plugins.feature_context.get_feature_context",
+            side_effect=RuntimeError("test error"),
+        ):
+            from plugins.tools.feature_context import handle
+
+            result = handle()
+
+        assert result["ok"] is False
+        assert "test error" in result["error"]
