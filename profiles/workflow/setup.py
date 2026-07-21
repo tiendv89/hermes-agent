@@ -275,8 +275,6 @@ def build_router():
     The router aggregates all sub-routers (chat, sessions, threads, channels,
     DMs, members, tools, etc.) that serve the existing BFF-proxied endpoints.
     """
-    from fastapi import APIRouter
-
     from src.api.router import router
 
     return router

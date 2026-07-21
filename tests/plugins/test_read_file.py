@@ -201,25 +201,29 @@ class TestReadFile:
 
 
 class TestToolRegistrationNames:
-    """Verify plugins/__init__.py registers read_file only — read_document is gone."""
+    """Verify profiles/workflow/setup.py registers read_file — read_document is gone.
+
+    After the profile split (T2), the tool list moved from plugins/__init__.py
+    to profiles/workflow/setup.py.
+    """
 
     def test_read_file_in_registry(self):
-        init_path = REPO_ROOT / "plugins" / "__init__.py"
-        text = init_path.read_text(encoding="utf-8")
+        setup_path = REPO_ROOT / "profiles" / "workflow" / "setup.py"
+        text = setup_path.read_text(encoding="utf-8")
         assert '"read_file"' in text, "read_file must be registered"
 
     def test_read_document_not_in_registry(self):
-        init_path = REPO_ROOT / "plugins" / "__init__.py"
-        text = init_path.read_text(encoding="utf-8")
+        setup_path = REPO_ROOT / "profiles" / "workflow" / "setup.py"
+        text = setup_path.read_text(encoding="utf-8")
         assert '"read_document"' not in text, (
             "read_document must be fully removed from the tool registry"
         )
 
     def test_read_file_entry_uses_canonical_handler(self):
-        init_path = REPO_ROOT / "plugins" / "__init__.py"
-        text = init_path.read_text(encoding="utf-8")
+        setup_path = REPO_ROOT / "profiles" / "workflow" / "setup.py"
+        text = setup_path.read_text(encoding="utf-8")
         idx = text.find('"read_file"')
-        assert idx != -1, "read_file must be in __init__.py"
+        assert idx != -1, "read_file must be in setup.py"
         block = text[idx:idx + 400]
         assert "handle_read_file" in block, (
             "read_file entry must reference handle_read_file"

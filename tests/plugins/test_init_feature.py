@@ -402,35 +402,35 @@ class TestHandleErrors:
 
 
 class TestToolsRegistration:
+    @staticmethod
+    def _get_tools():
+        """Return the workflow tool list from the profile setup module."""
+        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        return _WORKFLOW_TOOLS
+
     def test_workflow_init_feature_in_tools(self):
-        plugins = _load_plugins_init()
-        names = [t["name"] for t in plugins._TOOLS]
+        names = [t["name"] for t in self._get_tools()]
         assert "workflow_init_feature" in names
 
     def test_workflow_init_feature_has_check_fn(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_init_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_init_feature")
         assert callable(tool.get("check_fn"))
 
     def test_workflow_init_feature_check_fn_false_without_db(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_init_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_init_feature")
         assert tool["check_fn"]() is False
 
     def test_workflow_init_feature_check_fn_true_with_db(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_init_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_init_feature")
         assert tool["check_fn"]() is True
 
     def test_workflow_init_feature_has_handler(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_init_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_init_feature")
         assert callable(tool.get("handler"))
 
     def test_workflow_init_feature_has_schema(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_init_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_init_feature")
         assert isinstance(tool.get("schema"), dict)
         assert "parameters" in tool["schema"]

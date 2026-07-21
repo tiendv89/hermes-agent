@@ -197,7 +197,25 @@ def register(ctx: Any, tools: tuple[dict[str, Any], ...] | None = None) -> None:
         tools: Tuple of tool dicts to register. If ``None``, falls back to
                the module-level ``_TOOLS`` (for backward compatibility).
     """
-    _tools = tools if tools is not None else _TOOLS
+    global _TOOLS
+
+    if tools is not None:
+        _tools = tools
+        _TOOLS = tools
+    else:
+        _tools = _TOOLS
+        # If _TOOLS is empty and no explicit tools were passed, try
+        # loading the default workflow tools. This preserves backward
+        # compatibility for callers that do plugins.register(ctx) with
+        # no tools argument after the T2 profile split.
+        if not _tools:
+            try:
+                from profiles.workflow.setup import _WORKFLOW_TOOLS
+
+                _tools = _WORKFLOW_TOOLS
+                _TOOLS = _WORKFLOW_TOOLS
+            except ImportError:
+                pass
 
     for t in _tools:
         is_async = t.get("is_async", False)
