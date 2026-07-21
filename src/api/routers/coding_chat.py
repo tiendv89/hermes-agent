@@ -14,7 +14,7 @@ import os
 import uuid
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
@@ -333,7 +333,7 @@ async def coding_chat(
     translator = HermesSSETranslator(model=resolved["model"])
     loop = asyncio.get_running_loop()
 
-    task = asyncio.ensure_future(
+    asyncio.ensure_future(
         loop.run_in_executor(
             None,
             functools.partial(
