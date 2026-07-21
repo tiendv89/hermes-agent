@@ -271,6 +271,23 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
     if skills_block:
         parts.append(skills_block)
 
+    # --- Feature context (feature-scoped sessions only) ---
+    if feature_id:
+        try:
+            from plugins.feature_context import get_feature_context
+
+            feature_block = get_feature_context()
+            if feature_block:
+                parts.append(feature_block)
+        except Exception as exc:
+            # Non-blocking: log and continue without feature context
+            logger.warning(
+                "inject_context: feature context unavailable: %s", exc
+            )
+            parts.append(
+                f"\n<!-- Feature context unavailable: {exc} -->\n"
+            )
+
     caps = ["get_tasks (live task status)"]
     if os.environ.get("GITNEXUS_MCP_URL"):
         caps.append("query_gitnexus (code structure / call graph / impact)")
