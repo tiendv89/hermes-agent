@@ -202,13 +202,14 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                     files = docs.get("files", [])
                     folders = docs.get("folders", [])
                     if files or folders:
-                        doc_lines = ["## Workspace files (uploaded at the workspace root)"]
+                        doc_lines = [
+                            "## Workspace files (uploaded at the workspace root)"
+                        ]
                         if folders:
                             doc_lines.append("folders: " + ", ".join(folders))
                         if files:
                             doc_lines.append(
-                                "files:\n"
-                                + "\n".join(f"  {f['path']}" for f in files)
+                                "files:\n" + "\n".join(f"  {f['path']}" for f in files)
                             )
                         doc_lines.append(
                             "Use read_workspace_file(path=...) to read a file's content, or "
@@ -226,7 +227,9 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                         "call list_documents directly before concluding none do."
                     )
             except Exception as _exc:
-                logger.warning("inject_context: list_workspace_documents failed: %s", _exc)
+                logger.warning(
+                    "inject_context: list_workspace_documents failed: %s", _exc
+                )
                 parts.append(
                     "note: could not load the workspace file listing this turn "
                     "(unexpected error) — uploaded files may still exist; call "
@@ -281,12 +284,8 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
                 parts.append(feature_block)
         except Exception as exc:
             # Non-blocking: log and continue without feature context
-            logger.warning(
-                "inject_context: feature context unavailable: %s", exc
-            )
-            parts.append(
-                f"\n<!-- Feature context unavailable: {exc} -->\n"
-            )
+            logger.warning("inject_context: feature context unavailable: %s", exc)
+            parts.append(f"\n<!-- Feature context unavailable: {exc} -->\n")
 
     caps = ["get_tasks (live task status)"]
     if os.environ.get("GITNEXUS_MCP_URL"):
