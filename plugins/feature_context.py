@@ -34,7 +34,12 @@ def get_feature_context() -> str:
     block for injection into the system prompt.  Failures are non-blocking —
     missing pieces are noted rather than preventing other data from loading.
     """
-    from plugins.context import get_feature_id, get_org_id, get_user_id, get_workspace_id
+    from plugins.context import (
+        get_feature_id,
+        get_org_id,
+        get_user_id,
+        get_workspace_id,
+    )
 
     workspace_id = get_workspace_id()
     feature_id = get_feature_id()
@@ -95,25 +100,19 @@ def _fetch_feature_state(
         return _Missing("workflow-backend unavailable")
     try:
         return run_async(
-            get_feature_detail(
-                workspace_id, feature_id, user_id=user_id, org_id=org_id
-            )
+            get_feature_detail(workspace_id, feature_id, user_id=user_id, org_id=org_id)
         )
     except Exception as exc:
         return _Missing(f"get_feature_state failed: {exc}")
 
 
-def _fetch_tasks(
-    org_id: str, user_id: str, workspace_id: str, feature_id: str
-) -> Any:
+def _fetch_tasks(org_id: str, user_id: str, workspace_id: str, feature_id: str) -> Any:
     """Fetch live task statuses from workflow-backend."""
     if not check_workflow_available():
         return _Missing("workflow-backend unavailable")
     try:
         return run_async(
-            get_feature_tasks(
-                workspace_id, feature_id, user_id=user_id, org_id=org_id
-            )
+            get_feature_tasks(workspace_id, feature_id, user_id=user_id, org_id=org_id)
         )
     except Exception as exc:
         return _Missing(f"get_tasks failed: {exc}")
@@ -176,9 +175,7 @@ def _format_context_block(
         if not tasks:
             lines.append("No tasks created yet.")
         else:
-            lines.append(
-                "| Task | Title | Status | Depends On | PR |"
-            )
+            lines.append("| Task | Title | Status | Depends On | PR |")
             lines.append("|---|---|---|---|---|")
             for t in tasks:
                 pr_url = "—"
@@ -239,4 +236,6 @@ def _summarize_markdown(content: str, max_lines: int = 20) -> str:
         return content
     truncated = "\n".join(all_lines[:max_lines])
     remaining = len(all_lines) - max_lines
-    return f"{truncated}\n\n*(+{remaining} more lines — use read_file for full content)*"
+    return (
+        f"{truncated}\n\n*(+{remaining} more lines — use read_file for full content)*"
+    )
