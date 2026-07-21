@@ -51,6 +51,8 @@ from .tools import (
     feature_context as feature_context_tool,
 )
 
+from src.services.workflow_backend_client import check_workflow_available
+
 logger = logging.getLogger(__name__)
 
 
