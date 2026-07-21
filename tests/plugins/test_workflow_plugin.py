@@ -131,6 +131,7 @@ class TestRegisterT3:
         "vcs_create_pr",
         "vcs_ensure_branch",
         "vcs_commit_files",
+        "get_feature_context",
     }
 
     def test_registers_all_tools(self):
@@ -267,6 +268,7 @@ class TestRegisterT3:
         hook_name = ctx.register_hook.call_args[0][0]
         assert hook_name == "pre_llm_call"
 
+
 # ---------------------------------------------------------------------------
 # get_tasks — parametrisation
 # ---------------------------------------------------------------------------
@@ -294,7 +296,10 @@ class TestWorkflowGetTasks:
                 "execution": {},
             },
         ]
-        with patch("src.services.workflow_backend_client.get_feature_tasks", AsyncMock(return_value=fake_tasks)):
+        with patch(
+            "src.services.workflow_backend_client.get_feature_tasks",
+            AsyncMock(return_value=fake_tasks),
+        ):
             from plugins.tools.tasks import handle
 
             result = handle(workspace_id="ws-1", feature_id="feat-1")
@@ -332,13 +337,17 @@ class TestWorkflowGetTasks:
         assert mock_fn.call_args.args == (workspace_id, feature_id)
 
     def test_extra_kwargs_ignored(self):
-        with patch("src.services.workflow_backend_client.get_feature_tasks", AsyncMock(return_value=[])):
+        with patch(
+            "src.services.workflow_backend_client.get_feature_tasks",
+            AsyncMock(return_value=[]),
+        ):
             from plugins.tools.tasks import handle
 
             result = handle(
                 workspace_id="ws-1", feature_id="feat-1", extra_param="ignored"
             )
         assert result["ok"] is True
+
 
 # ---------------------------------------------------------------------------
 # query_gitnexus — arg passing
@@ -573,7 +582,9 @@ class TestWorkflowQueryGitnexus:
         )
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_session_org_when_workspace_lookup_fails(self, monkeypatch):
+    async def test_falls_back_to_session_org_when_workspace_lookup_fails(
+        self, monkeypatch
+    ):
         """workflow-backend being unreachable must not hard-fail the query —
         fall back to the session's org context."""
         monkeypatch.setenv("GITNEXUS_MCP_URL", "http://gitnexus:8002")
@@ -620,6 +631,7 @@ class TestWorkflowQueryGitnexus:
         from plugins.tools.gitnexus import check_available
 
         assert check_available() is False
+
 
 # ---------------------------------------------------------------------------
 # _sse_endpoint — URL construction
@@ -705,6 +717,7 @@ class TestSseEndpoint:
 
         result = _sse_endpoint("https://rag.example.com", organization_id="my-org")
         assert result == "https://rag.example.com"
+
 
 # ---------------------------------------------------------------------------
 # call_mcp_tool — passes workspace_id through
@@ -795,6 +808,7 @@ class TestCallMcpToolWorkspaceId:
 
         mock_ep.assert_called_once_with("http://host", "ws1", "org1")
 
+
 # ---------------------------------------------------------------------------
 # gitnexus.handle() — resolves workspace from context
 # ---------------------------------------------------------------------------
@@ -858,7 +872,9 @@ class TestGitnexusHandleWorkspaceScoping:
 
         captured_workspace_ids = []
 
-        async def fake_call(url, tool, args, workspace_id="", organization_id="", api_key=""):
+        async def fake_call(
+            url, tool, args, workspace_id="", organization_id="", api_key=""
+        ):
             captured_workspace_ids.append(workspace_id)
             return [{"type": "text", "text": "data"}]
 
@@ -889,6 +905,7 @@ class TestGitnexusHandleWorkspaceScoping:
         _, kwargs = mock_call.call_args
         assert kwargs.get("workspace_id") == "my-workspace"
 
+
 # ---------------------------------------------------------------------------
 # list_indexed_repos() — per-workspace cache partitioning
 # ---------------------------------------------------------------------------
@@ -908,7 +925,9 @@ class TestListIndexedReposWorkspaceScoping:
             mock_call.return_value = [{"type": "text", "text": '[{"name":"repo-a"}]'}]
             from plugins.tools.gitnexus import list_indexed_repos
 
-            result = list_indexed_repos(workspace_id="ws-alpha", organization_id="test-org")
+            result = list_indexed_repos(
+                workspace_id="ws-alpha", organization_id="test-org"
+            )
 
         assert result == ["repo-a"]
         _, kwargs = mock_call.call_args
@@ -928,15 +947,21 @@ class TestListIndexedReposWorkspaceScoping:
             "ws-b": [{"type": "text", "text": '[{"name":"repo-b"}]'}],
         }
 
-        async def fake_call(url, tool, args, workspace_id="", organization_id="", api_key=""):
+        async def fake_call(
+            url, tool, args, workspace_id="", organization_id="", api_key=""
+        ):
             call_count["n"] += 1
             return responses.get(workspace_id, [])
 
         with patch("plugins.tools.gitnexus.call_mcp_tool", side_effect=fake_call):
             from plugins.tools.gitnexus import list_indexed_repos
 
-            repos_a = list_indexed_repos(workspace_id="ws-a", organization_id="test-org")
-            repos_b = list_indexed_repos(workspace_id="ws-b", organization_id="test-org")
+            repos_a = list_indexed_repos(
+                workspace_id="ws-a", organization_id="test-org"
+            )
+            repos_b = list_indexed_repos(
+                workspace_id="ws-b", organization_id="test-org"
+            )
 
         assert repos_a == ["repo-a"]
         assert repos_b == ["repo-b"]
@@ -1006,6 +1031,7 @@ class TestListIndexedReposWorkspaceScoping:
         assert result is None
         mock_call.assert_not_awaited()
 
+
 # ---------------------------------------------------------------------------
 # db.resolve_workspace_slug() — normalizes slug-or-UUID to the canonical slug
 # (shared by gitnexus.py and rag.py)
@@ -1057,8 +1083,7 @@ class TestRagDoesNotResolveWorkspaceSlug:
         args, _ = mock_call.call_args
         tool_arguments = args[2] if len(args) > 2 else {}
         assert (
-            tool_arguments.get("workspace_id")
-            == "22222222-2222-2222-2222-222222222222"
+            tool_arguments.get("workspace_id") == "22222222-2222-2222-2222-222222222222"
         )
 
     @pytest.mark.asyncio
@@ -1083,6 +1108,7 @@ class TestRagDoesNotResolveWorkspaceSlug:
         tool_arguments = args[2] if len(args) > 2 else {}
         assert tool_arguments.get("workspace_id") == "raw-workspace"
         assert tool_arguments.get("organization_id") == "raw-org"
+
 
 # ---------------------------------------------------------------------------
 # query_rag — arg passing
@@ -1147,9 +1173,7 @@ class TestWorkflowQueryRag:
         ) as mock_call:
             from plugins.tools.rag import handle
 
-            await handle(
-                query="q", workspace_id="specific-ws", organization_id="org-1"
-            )
+            await handle(query="q", workspace_id="specific-ws", organization_id="org-1")
         called_args = mock_call.await_args[0]
         assert called_args[2]["workspace_id"] == "specific-ws"
 
@@ -1163,9 +1187,7 @@ class TestWorkflowQueryRag:
         ) as mock_call:
             from plugins.tools.rag import handle
 
-            await handle(
-                query="q", workspace_id="ws-1", organization_id="specific-org"
-            )
+            await handle(query="q", workspace_id="ws-1", organization_id="specific-org")
         called_args = mock_call.await_args[0]
         assert called_args[2]["organization_id"] == "specific-org"
 
@@ -1248,7 +1270,9 @@ class TestWorkflowQueryRag:
         assert called_args[2]["organization_id"] == "workspace-owning-org"
 
     @pytest.mark.asyncio
-    async def test_falls_back_to_session_org_when_workspace_lookup_fails(self, monkeypatch):
+    async def test_falls_back_to_session_org_when_workspace_lookup_fails(
+        self, monkeypatch
+    ):
         """workflow-backend being unreachable must not hard-fail the query —
         fall back to the session's org context."""
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8003")
@@ -1300,6 +1324,7 @@ class TestWorkflowQueryRag:
 
         assert check_available() is True
 
+
 # ---------------------------------------------------------------------------
 # RAG scoping — connection-scoped endpoint + explicit argument fallback
 # ---------------------------------------------------------------------------
@@ -1344,9 +1369,7 @@ class TestRagScoping:
 
         import plugins.context as ctx
 
-        ctx.set_context(
-            "sess-rag2", "context-workspace", "", org_id="context-org"
-        )
+        ctx.set_context("sess-rag2", "context-workspace", "", org_id="context-org")
 
         from plugins.tools.rag import handle
 
@@ -1362,9 +1385,7 @@ class TestRagScoping:
         assert kwargs.get("workspace_id") == "explicit-workspace"
 
     @pytest.mark.asyncio
-    async def test_rag_handle_no_organization_context_returns_error(
-        self, monkeypatch
-    ):
+    async def test_rag_handle_no_organization_context_returns_error(self, monkeypatch):
         """Without an organization_id in session context, rag.handle() returns
         a clear error instead of querying an unscoped/wrong collection."""
         monkeypatch.setenv("RAG_MCP_URL", "http://rag:8000")
@@ -1383,6 +1404,7 @@ class TestRagScoping:
         assert result["ok"] is False
         assert "organization_id is required" in result["error"]
         mock_call.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # check_available gating — tool omitted when URL unset
@@ -1413,6 +1435,7 @@ class TestCheckAvailableGating:
         from plugins.tools.rag import check_available
 
         assert check_available() is True
+
 
 # ---------------------------------------------------------------------------
 # inject_context — task-summary + capability advertisement
@@ -1608,6 +1631,7 @@ class TestInjectContextT3:
         assert "T1" in content and "Setup DB" in content and "done" in content
         assert "T3" in content and "Frontend" in content and "in_progress" in content
 
+
 # ---------------------------------------------------------------------------
 # inject_context() — passes workspace_id to list_indexed_repos
 # ---------------------------------------------------------------------------
@@ -1707,6 +1731,7 @@ class TestInjectContextGitnexusScoping:
             result = inject_context(session_id="sess-none")
 
         assert result is None
+
 
 # ---------------------------------------------------------------------------
 # write_product_spec — content coercion (regression for
@@ -1811,7 +1836,9 @@ class TestWriteArtifactCoercesContent:
             return {"ok": True, "version_id": "v1"}
 
         with (
-            patch("plugins.tools.artifacts.write_document_content", side_effect=fake_write),
+            patch(
+                "plugins.tools.artifacts.write_document_content", side_effect=fake_write
+            ),
             patch("plugins.context.was_context_gathered", return_value=True),
         ):
             from plugins.tools.artifacts import handle_write_product_spec
@@ -1823,6 +1850,7 @@ class TestWriteArtifactCoercesContent:
         assert result["ok"] is True
         assert isinstance(captured["content"], str)
         assert "My Spec" in captured["content"]
+
 
 # ---------------------------------------------------------------------------
 # GitNexus repo-name parsing + write_tasks repo validation guardrail
@@ -1902,6 +1930,7 @@ class TestWriteTasksRepoValidation:
         assert result["ok"] is False
         assert "not indexed in GitNexus" not in (result.get("error") or "")
 
+
 # ---------------------------------------------------------------------------
 # SkillEntry dataclass
 # ---------------------------------------------------------------------------
@@ -1911,7 +1940,9 @@ class TestSkillEntry:
     def test_fields_accessible(self):
         from plugins.skills.index import SkillEntry
 
-        e = SkillEntry(name="foo", description="A foo skill", path="claude/technical_skills/foo")
+        e = SkillEntry(
+            name="foo", description="A foo skill", path="claude/technical_skills/foo"
+        )
         assert e.name == "foo"
         assert e.description == "A foo skill"
         assert e.path == "claude/technical_skills/foo"
@@ -1929,9 +1960,14 @@ class TestSkillEntry:
     def test_authoring_flag(self):
         from plugins.skills.index import SkillEntry
 
-        e = SkillEntry(name="tech-lead", description="Tech lead authoring skill",
-                       path="claude/workflow_skills/tech-lead", is_authoring=True)
+        e = SkillEntry(
+            name="tech-lead",
+            description="Tech lead authoring skill",
+            path="claude/workflow_skills/tech-lead",
+            is_authoring=True,
+        )
         assert e.is_authoring is True
+
 
 # ---------------------------------------------------------------------------
 # _parse_description
@@ -1942,7 +1978,9 @@ class TestParseDescription:
     def test_extracts_description_from_frontmatter(self):
         from plugins.skills.index import _parse_description
 
-        skill_md = "---\nname: foo\ndescription: A helpful skill for doing things.\n---\n# Foo"
+        skill_md = (
+            "---\nname: foo\ndescription: A helpful skill for doing things.\n---\n# Foo"
+        )
         assert _parse_description(skill_md) == "A helpful skill for doing things."
 
     def test_returns_empty_when_no_frontmatter(self):
@@ -1959,8 +1997,11 @@ class TestParseDescription:
     def test_handles_multiline_frontmatter(self):
         from plugins.skills.index import _parse_description
 
-        skill_md = "---\nname: foo\nother: value\ndescription: This is the description.\n---\n"
+        skill_md = (
+            "---\nname: foo\nother: value\ndescription: This is the description.\n---\n"
+        )
         assert _parse_description(skill_md) == "This is the description."
+
 
 # ---------------------------------------------------------------------------
 # build_index / get_index — loads the real bundle, then caches
@@ -2017,6 +2058,7 @@ class TestGetIndex:
         assert entry.name == "python-best-practices"
         assert entry.description
 
+
 # ---------------------------------------------------------------------------
 # get_shared_rules — CLAUDE.shared.md (injected into the system prompt)
 # ---------------------------------------------------------------------------
@@ -2044,6 +2086,7 @@ class TestSharedRules:
         monkeypatch.setattr(index_mod, "_BUNDLE_ROOT", tmp_path / "missing")
         assert index_mod.get_shared_rules() == ""
 
+
 # ---------------------------------------------------------------------------
 # Bucket assignment — technical = knowledge, workflow = authoring
 # ---------------------------------------------------------------------------
@@ -2062,6 +2105,7 @@ class TestSkillBuckets:
 
         assert get_skill("python-best-practices").path.startswith("technical_skills/")
 
+
 # ---------------------------------------------------------------------------
 # _build_index_from_bundle / _index_skill — directory walking
 # ---------------------------------------------------------------------------
@@ -2069,7 +2113,10 @@ class TestSkillBuckets:
 
 class TestBuildIndexFromBundle:
     def test_indexes_technical_skills(self, tmp_path):
-        _write_skill(tmp_path / "technical_skills" / "python-best-practices", "Python best practices.")
+        _write_skill(
+            tmp_path / "technical_skills" / "python-best-practices",
+            "Python best practices.",
+        )
 
         from plugins.skills.index import _build_index_from_bundle
 
@@ -2090,13 +2137,16 @@ class TestBuildIndexFromBundle:
         _write_skill(ts_dir, "TypeScript skill.")
         (ts_dir / "advanced-types.md").write_text("# Advanced Types", encoding="utf-8")
         (ts_dir / "references").mkdir()
-        (ts_dir / "references" / "patterns.md").write_text("# Patterns", encoding="utf-8")
+        (ts_dir / "references" / "patterns.md").write_text(
+            "# Patterns", encoding="utf-8"
+        )
 
         from plugins.skills.index import _build_index_from_bundle
 
         entry = _build_index_from_bundle(tmp_path)["ts"]
         assert entry.references["advanced-types.md"] == "# Advanced Types"
         assert entry.references["references/patterns.md"] == "# Patterns"
+
 
 # ---------------------------------------------------------------------------
 # load_skill tool handler
@@ -2128,7 +2178,10 @@ class TestLoadSkillHandler:
 
     def test_unknown_skill_returns_error(self):
         with patch("plugins.skills.get_skill", return_value=None):
-            with patch("plugins.skills.get_index", return_value={"python-best-practices": MagicMock()}):
+            with patch(
+                "plugins.skills.get_index",
+                return_value={"python-best-practices": MagicMock()},
+            ):
                 from plugins.tools.skills import handle
 
                 result = handle(name="no-such-skill")
@@ -2207,6 +2260,7 @@ class TestLoadSkillCheckAvailable:
 
             assert check_available() is False
 
+
 # ---------------------------------------------------------------------------
 # _TOOLS registration
 # ---------------------------------------------------------------------------
@@ -2232,9 +2286,12 @@ class TestToolsRegistration:
         from plugins import register
 
         register(ctx)
-        registered_names = [call.kwargs.get("name") or call.args[0]
-                            for call in ctx.register_tool.call_args_list]
+        registered_names = [
+            call.kwargs.get("name") or call.args[0]
+            for call in ctx.register_tool.call_args_list
+        ]
         assert "load_skill" in registered_names
+
 
 # ---------------------------------------------------------------------------
 # _skills_for_repos stack matching
@@ -2273,6 +2330,7 @@ class TestSkillsForRepos:
         skills = _skills_for_repos(["totally-unknown-repo-xyz"])
         assert skills == []
 
+
 # ---------------------------------------------------------------------------
 # inject_context — skills injection
 # ---------------------------------------------------------------------------
@@ -2281,6 +2339,7 @@ class TestSkillsForRepos:
 class TestInjectContextSkills:
     def _call_inject(self, workspace_id: str = "ws-1", feature_id: str = "feat-1"):
         import plugins.context as ctx_mod
+
         ctx_mod.set_context("sess-1", workspace_id, feature_id)
         from plugins.hooks import inject_context
 
@@ -2310,7 +2369,10 @@ class TestInjectContextSkills:
         with (
             patch("plugins.hooks._build_skills_block", return_value=None),
             patch("plugins.hooks.check_workflow_available", return_value=False),
-            patch("plugins.hooks.get_index", return_value={"python-best-practices": MagicMock()}),
+            patch(
+                "plugins.hooks.get_index",
+                return_value={"python-best-practices": MagicMock()},
+            ),
         ):
             content = self._call_inject()
         assert "load_skill" in content
@@ -2337,7 +2399,10 @@ class TestInjectContextSkills:
         }
         with (
             patch("plugins.hooks.check_workflow_available", return_value=True),
-            patch("plugins.tools.workspace.handle", return_value={"ok": True, "workspace": {"repos": []}}),
+            patch(
+                "plugins.tools.workspace.handle",
+                return_value={"ok": True, "workspace": {"repos": []}},
+            ),
             patch("plugins.tools.feature.handle", return_value=fake_feature),
             patch("plugins.tools.tasks.handle", return_value={"ok": True, "tasks": []}),
             patch("plugins.hooks._build_skills_block", return_value=None) as mock_block,
@@ -2360,12 +2425,19 @@ class TestBuildSkillsBlock:
         with patch("plugins.hooks.get_index", return_value={}):
             from plugins.hooks import _build_skills_block
 
-            assert _build_skills_block("feat-1", "technical_design", ["hermes-agent"]) is None
+            assert (
+                _build_skills_block("feat-1", "technical_design", ["hermes-agent"])
+                is None
+            )
 
     def test_knowledge_skills_listed(self):
         index = {
-            "python-best-practices": self._make_entry("python-best-practices", "Python skill"),
-            "tech-lead": self._make_entry("tech-lead", "Authoring skill", is_authoring=True),
+            "python-best-practices": self._make_entry(
+                "python-best-practices", "Python skill"
+            ),
+            "tech-lead": self._make_entry(
+                "tech-lead", "Authoring skill", is_authoring=True
+            ),
         }
         with patch("plugins.hooks.get_index", return_value=index):
             from plugins.hooks import _build_skills_block
@@ -2377,7 +2449,9 @@ class TestBuildSkillsBlock:
 
     def test_authoring_skills_listed(self):
         index = {
-            "tech-lead": self._make_entry("tech-lead", "Tech lead skill", is_authoring=True),
+            "tech-lead": self._make_entry(
+                "tech-lead", "Tech lead skill", is_authoring=True
+            ),
         }
         with patch("plugins.hooks.get_index", return_value=index):
             from plugins.hooks import _build_skills_block
@@ -2389,13 +2463,20 @@ class TestBuildSkillsBlock:
 
     def test_technical_design_stage_surfaces_stack_matched_first(self):
         index = {
-            "python-best-practices": self._make_entry("python-best-practices", "Python skill"),
+            "python-best-practices": self._make_entry(
+                "python-best-practices", "Python skill"
+            ),
             "go-best-practices": self._make_entry("go-best-practices", "Go skill"),
-            "typescript-best-practices": self._make_entry("typescript-best-practices", "TS skill"),
+            "typescript-best-practices": self._make_entry(
+                "typescript-best-practices", "TS skill"
+            ),
         }
         with (
             patch("plugins.hooks.get_index", return_value=index),
-            patch("plugins.hooks._skills_for_repos", return_value=["python-best-practices"]),
+            patch(
+                "plugins.hooks._skills_for_repos",
+                return_value=["python-best-practices"],
+            ),
         ):
             from plugins.hooks import _build_skills_block
 
@@ -2410,7 +2491,9 @@ class TestBuildSkillsBlock:
 
     def test_non_technical_design_stage_no_stack_matching(self):
         index = {
-            "python-best-practices": self._make_entry("python-best-practices", "Python skill"),
+            "python-best-practices": self._make_entry(
+                "python-best-practices", "Python skill"
+            ),
         }
         with patch("plugins.hooks.get_index", return_value=index):
             from plugins.hooks import _build_skills_block
@@ -2418,3 +2501,532 @@ class TestBuildSkillsBlock:
             block = _build_skills_block("feat-1", "in_implementation", ["hermes-agent"])
 
         assert "Stack-matched" not in block
+
+
+# ---------------------------------------------------------------------------
+# TestFeatureContext — unit tests for get_feature_context()
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureContext:
+    """Unit tests for get_feature_context() with mocked fetch helpers."""
+
+    def _set_session(self, feature_id="feat-1"):
+        """Set thread-local session context so get_feature_context can resolve IDs."""
+        import plugins.context as ctx_mod
+
+        ctx_mod.set_context("sess-fc", "ws-1", feature_id, user_id="u1", org_id="o1")
+
+    def test_happy_path_all_fetches_succeed(self):
+        """Happy path: all four fetches succeed, block contains all sections."""
+        self._set_session()
+
+        fake_state = {
+            "stage": "in_implementation",
+            "status": "active",
+            "owner": "alice",
+        }
+        fake_tasks = [
+            {
+                "task_name": "T1",
+                "title": "Setup DB",
+                "status": "done",
+                "depends_on": [],
+                "pr": None,
+            },
+            {
+                "task_name": "T2",
+                "title": "API layer",
+                "status": "in_progress",
+                "depends_on": ["T1"],
+                "pr": {"url": "https://pr.example/1"},
+            },
+        ]
+        fake_spec = "# Product Spec\n\nThis is the spec.\n" + ("line\n" * 30)
+        fake_design = "# Technical Design\n\nDesign details.\n"
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_state
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_tasks
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            if "product_spec" in doc_path:
+                return fake_spec
+            return fake_design
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "## Feature Context (auto-loaded)" in block
+        assert "### Lifecycle" in block
+        assert "in_implementation" in block
+        assert "alice" in block
+        assert "### Tasks (live status)" in block
+        assert "T1" in block
+        assert "T2" in block
+        assert "https://pr.example/1" in block
+        assert "### Product Spec" in block
+        assert "# Product Spec" in block
+        assert "### Technical Design" in block
+        assert "# Technical Design" in block
+
+    def test_workflow_backend_down_shows_unavailable(self):
+        """workflow-backend down → state/tasks unavailable, design still appears."""
+        self._set_session()
+
+        from plugins.feature_context import _Missing
+
+        fake_design = "# Technical Design\n\nDesign details.\n"
+        fake_missing_state = _Missing("workflow-backend unavailable")
+        fake_missing_spec = _Missing("no product_spec yet")
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_missing_state
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return _Missing("workflow-backend unavailable")
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            if "product_spec" in doc_path:
+                return fake_missing_spec
+            return fake_design
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "(unavailable: workflow-backend unavailable)" in block
+        assert "(unavailable: no product_spec yet)" in block
+        assert "# Technical Design" in block
+
+    def test_no_feature_id_returns_empty(self):
+        """No feature_id → returns empty string."""
+        self._set_session(feature_id="")
+
+        from plugins.feature_context import get_feature_context
+
+        block = get_feature_context()
+        assert block == ""
+
+    def test_no_tasks_shows_placeholder(self):
+        """Feature with no tasks → shows 'No tasks created yet.'."""
+        self._set_session()
+
+        fake_state = {"stage": "backlog", "status": "draft"}
+        fake_missing = _make_missing("no product_spec yet")
+        fake_missing_design = _make_missing("no technical_design yet")
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_state
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return []
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            if "product_spec" in doc_path:
+                return fake_missing
+            return fake_missing_design
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "No tasks created yet." in block
+
+    def test_no_spec_shows_unavailable(self):
+        """Feature with no spec → shows '(unavailable: no product_spec yet)'."""
+        self._set_session()
+
+        fake_state = {"stage": "backlog", "status": "draft"}
+        fake_missing_spec = _make_missing("no product_spec yet")
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_state
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return []
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            from plugins.feature_context import _Missing
+
+            if "product_spec" in doc_path:
+                return fake_missing_spec
+            return _Missing("no technical_design yet")
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "(unavailable: no product_spec yet)" in block
+
+    def test_blocked_task_shows_reason_and_suggestion(self):
+        """A blocked task renders its blocked_reason and blocked_suggestion."""
+        self._set_session()
+
+        fake_state = {"stage": "in_implementation", "status": "active"}
+        fake_tasks = [
+            {
+                "task_name": "T3",
+                "title": "Frontend",
+                "status": "blocked",
+                "depends_on": ["T2"],
+                "blocked_reason": "db_unreachable",
+                "blocked_suggestion": "Restart the database",
+                "pr": None,
+            },
+        ]
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_state
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_tasks
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            from plugins.feature_context import _Missing
+
+            return _Missing(f"no {doc_path.replace('.md', '')} yet")
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "⛔ **Blocked:** db_unreachable" in block
+        assert "→ Restart the database" in block
+
+    def test_document_truncation_adds_remaining_note(self):
+        """A document longer than 20 lines includes the +N more lines note."""
+        self._set_session()
+
+        fake_state = {"stage": "in_implementation", "status": "active"}
+        long_spec = "\n".join(f"line {i}" for i in range(1, 35))
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return fake_state
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return []
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            from plugins.feature_context import _Missing
+
+            if "product_spec" in doc_path:
+                return long_spec
+            return _Missing("no technical_design yet")
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "+14 more lines" in block
+        assert "use read_file for full content" in block
+        # First 20 lines present
+        assert "line 1" in block
+        assert "line 20" in block
+        # Line 35 should not appear
+        assert "line 35" not in block
+
+    def test_fetch_exception_turns_into_missing(self):
+        """When a fetch raises, it becomes a _Missing with the exception message."""
+        self._set_session()
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            raise RuntimeError("connection refused")
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            raise RuntimeError("timeout")
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            raise RuntimeError("storage down")
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        # Every fetch failed — each section reports unavailable
+        assert "unavailable" in block
+        assert "unexpected error" in block.lower()
+
+    def test_footer_present(self):
+        """The context block ends with the footer hinting at deeper tools."""
+        self._set_session()
+
+        def fake_state_fn(org_id, user_id, workspace_id, feature_id):
+            return {"stage": "backlog", "status": "draft"}
+
+        def fake_tasks_fn(org_id, user_id, workspace_id, feature_id):
+            return []
+
+        def fake_doc_fn(workspace_id, feature_id, doc_path, user_id, org_id):
+            from plugins.feature_context import _Missing
+
+            return _Missing(f"no {doc_path.replace('.md', '')} yet")
+
+        with (
+            patch(
+                "plugins.feature_context._fetch_feature_state",
+                side_effect=fake_state_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_tasks",
+                side_effect=fake_tasks_fn,
+            ),
+            patch(
+                "plugins.feature_context._fetch_document",
+                side_effect=fake_doc_fn,
+            ),
+        ):
+            from plugins.feature_context import get_feature_context
+
+            block = get_feature_context()
+
+        assert "Use `get_feature_state`, `get_tasks`, and `read_file`" in block
+
+
+def _make_missing(reason: str):
+    """Helper to construct a _Missing sentinel without importing feature_context prematurely."""
+    from plugins.feature_context import _Missing
+
+    return _Missing(reason)
+
+
+# ---------------------------------------------------------------------------
+# TestInjectContextFeatureBlock — inject_context includes feature-context block
+# ---------------------------------------------------------------------------
+
+
+class TestInjectContextFeatureBlock:
+    """Integration tests verifying inject_context includes the feature block
+    when feature_id is set."""
+
+    def _call_inject(self, workspace_id="ws-1", feature_id="feat-1") -> str:
+        """Set session context, call inject_context, return the context string."""
+        import plugins.context as ctx_mod
+        from plugins.hooks import inject_context
+
+        ctx_mod.set_context("sess-featblock", workspace_id, feature_id)
+        result = inject_context(session_id="sess-featblock")
+        return result["context"] if result else ""
+
+    def test_feature_block_injected_when_feature_id_set(self):
+        """When feature_id is set, the feature-context block is included."""
+        fake_block = (
+            "## Feature Context (auto-loaded)\n\n### Lifecycle\n- Stage: backlog\n"
+        )
+
+        with (
+            patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks._build_skills_block", return_value=None),
+            patch(
+                "plugins.feature_context.get_feature_context",
+                return_value=fake_block,
+            ),
+        ):
+            content = self._call_inject()
+
+        assert "## Feature Context (auto-loaded)" in content
+        assert "backlog" in content
+
+    def test_feature_block_not_injected_when_no_feature_id(self):
+        """When feature_id is empty, the feature-context block is absent."""
+        with (
+            patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks._build_skills_block", return_value=None),
+        ):
+            content = self._call_inject(feature_id="")
+
+        assert "## Feature Context (auto-loaded)" not in content
+        # Workspace context still appears
+        assert "## Workflow context" in content
+
+    def test_feature_context_failure_non_blocking(self):
+        """If get_feature_context() raises, inject_context logs and continues."""
+        with (
+            patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks._build_skills_block", return_value=None),
+            patch(
+                "plugins.feature_context.get_feature_context",
+                side_effect=RuntimeError("boom"),
+            ),
+        ):
+            content = self._call_inject()
+
+        # The error is recorded as an HTML comment
+        assert "<!-- Feature context unavailable: boom -->" in content
+        # But the workspace context still appears (non-blocking)
+        assert "## Workflow context" in content
+
+    def test_empty_feature_block_not_injected(self):
+        """When get_feature_context returns empty string, it is not appended."""
+        with (
+            patch("plugins.hooks.check_workflow_available", return_value=False),
+            patch("plugins.hooks._build_skills_block", return_value=None),
+            patch(
+                "plugins.feature_context.get_feature_context",
+                return_value="",
+            ),
+        ):
+            content = self._call_inject()
+
+        assert "## Feature Context (auto-loaded)" not in content
+
+
+# ---------------------------------------------------------------------------
+# TestFeatureContextSkill — get-feature-context tool handler
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureContextSkill:
+    """Tests for the get-feature-context tool handler in plugins/tools/feature_context.py."""
+
+    def test_handler_returns_ok_true_with_context(self):
+        """Happy path: handler returns {'ok': True, 'context': <block>}."""
+        fake_block = "## Feature Context (auto-loaded)\n\n### Lifecycle\n- Stage: in_implementation\n"
+
+        with patch(
+            "plugins.feature_context.get_feature_context",
+            return_value=fake_block,
+        ):
+            from plugins.tools.feature_context import handle
+
+            result = handle()
+
+        assert result["ok"] is True
+        assert result["context"] == fake_block
+
+    def test_handler_returns_ok_true_when_no_feature_id(self):
+        """When there is no feature_id, handler returns ok:True with a message."""
+        with patch(
+            "plugins.feature_context.get_feature_context",
+            return_value="",
+        ):
+            from plugins.tools.feature_context import handle
+
+            result = handle()
+
+        assert result["ok"] is True
+        assert "No feature context available" in result["context"]
+
+    def test_handler_returns_ok_false_on_exception(self):
+        """When get_feature_context raises, handler returns ok:False."""
+        with patch(
+            "plugins.feature_context.get_feature_context",
+            side_effect=RuntimeError("boom"),
+        ):
+            from plugins.tools.feature_context import handle
+
+            result = handle()
+
+        assert result["ok"] is False
+        assert "boom" in result["error"]
+
+    def test_schema_has_expected_shape(self):
+        """The tool schema has description, parameters, and no required params."""
+        from plugins.tools.feature_context import SCHEMA
+
+        assert "description" in SCHEMA
+        assert "parameters" in SCHEMA
+        assert SCHEMA["parameters"]["type"] == "object"
+        assert SCHEMA["parameters"]["required"] == []
+        assert SCHEMA["parameters"]["additionalProperties"] is False
