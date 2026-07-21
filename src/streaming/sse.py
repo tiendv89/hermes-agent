@@ -212,6 +212,26 @@ class HermesSSETranslator:
         **_: Any,
     ) -> None:
         # hermes signature: tool_complete_callback(call_id, name, args, result)
+        result = coerce_tool_output(output)
+
+        # Coding-profile tools return a __deferred__ marker — the IDE
+        # extension must execute them client-side.  Emit a dedicated event
+        # with the tool params so the extension can pick them up.
+        if result.get("__deferred__"):
+            deferred_tool = result.get("tool", name)
+            deferred_params = result.get("params", {})
+            self._emit(
+                self._event(
+                    "hermes.tool.deferred",
+                    {
+                        "tool_call_id": call_id or name,
+                        "tool": deferred_tool,
+                        "params": deferred_params,
+                    },
+                )
+            )
+            return
+
         self._emit(
             self._event(
                 "hermes.tool.progress",
@@ -223,7 +243,7 @@ class HermesSSETranslator:
             )
         )
         artifact = artifact_for_tool(name, args, output)
-        if artifact and coerce_tool_output(output).get("ok"):
+        if artifact and result.get("ok"):
             self._emit(self._event("hermes.artifact.saved", {"artifact": artifact}))
 
     def on_clarify(
