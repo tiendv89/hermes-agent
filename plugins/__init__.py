@@ -37,6 +37,7 @@ from .tools import (
     create_pr as create_pr_tool,
     ensure_branch as ensure_branch_tool,
     commit_files as commit_files_tool,
+    feature_context as feature_context_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -386,6 +387,13 @@ _TOOLS = (
         "schema": commit_files_tool.SCHEMA,
         "handler": commit_files_tool.handle,
         "check_fn": commit_files_tool.check_available,
+    },
+    {
+        "name": "get_feature_context",
+        "short_description": "Load the current feature's lifecycle, tasks, spec, and design.",
+        "schema": feature_context_tool.SCHEMA,
+        "handler": feature_context_tool.handle,
+        "check_fn": check_workflow_available,
     },
 )
 
