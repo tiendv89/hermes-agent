@@ -772,6 +772,7 @@ def _run_agent_turn(
     reply_to_message_id: int | None = None,
     thread_root_id: int | None = None,
     image_ids: list[str] | None = None,
+    file_ids: list[str] | None = None,
     ide_context: IDEContext | None = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
@@ -816,7 +817,7 @@ def _run_agent_turn(
         # image-only send) — skip the classifier rather than let a vague-looking
         # caption get a real request declined.
         is_first_turn = len(history or []) <= 1
-        if is_first_turn and not image_ids and is_out_of_scope(
+        if is_first_turn and not image_ids and not file_ids and is_out_of_scope(
             message, provider=provider, model=model, api_key=api_key, base_url=base_url
         ):
             logger.info(
@@ -1338,6 +1339,7 @@ async def _schedule_follow_up(
                 reply_to_message_id=pending.get("reply_to_message_id"),
                 thread_root_id=pending.get("thread_root_id"),
                 image_ids=pending.get("image_ids"),
+                file_ids=pending.get("file_ids"),
             )
         )
         with _active_runs_lock:
@@ -1375,6 +1377,7 @@ async def schedule_agent_turn(
     reply_to_message_id: int | None = None,
     thread_root_id: int | None = None,
     image_ids: list[str] | None = None,
+    file_ids: list[str] | None = None,
 ) -> bool:
     """Schedule an agent turn with coalescing.
 
@@ -1400,6 +1403,7 @@ async def schedule_agent_turn(
                     "reply_to_message_id": reply_to_message_id,
                     "thread_root_id": thread_root_id,
                     "image_ids": image_ids,
+                    "file_ids": file_ids,
                 }
             logger.debug(
                 "agent_dispatch: coalesced pending turn for %s (turn already in flight)",
@@ -1452,6 +1456,7 @@ async def schedule_agent_turn(
             reply_to_message_id=reply_to_message_id,
             thread_root_id=thread_root_id,
             image_ids=image_ids,
+            file_ids=file_ids,
         )
     )
     with _active_runs_lock:

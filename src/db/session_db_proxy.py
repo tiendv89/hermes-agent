@@ -158,6 +158,8 @@ def make_gateway_session_db(
                         author_id=_author,
                         reply_to_message_id=reply_to_message_id,
                         thread_root_id=thread_root_id,
+                        image_ids=kwargs.get("image_ids"),
+                        file_ids=kwargs.get("file_ids"),
                     )
 
             # Message persistence must be reliable — fire-and-forget would
