@@ -690,10 +690,53 @@ def _run_agent_turn(
                         )
 
         llm_message = message
+        # Chat-attached files: extract text content synchronously BEFORE the
+        # LLM call so the agent can reason about them immediately.  Unlike
+        # images (which require a vision model), file text is injected as a
+        # regular text content block — every model can read it.
+        if file_ids:
+            from plugins.tools.read_uploaded_file import handle as read_uploaded_file_handle
+
+            file_texts: list[str] = []
+            for file_id in file_ids:
+                try:
+                    result = read_uploaded_file_handle(
+                        file_id=file_id,
+                        workspace_id=workspace_id,
+                        user_id=user_id or "",
+                        org_id=org_id or "",
+                    )
+                    if result.get("ok"):
+                        filename = result.get("filename", file_id)
+                        text = result.get("text", "")
+                        file_texts.append(
+                            f"--- {filename} ---\n{text}"
+                        )
+                    else:
+                        file_texts.append(
+                            f"--- {file_id} ---\n[Error reading file: {result.get('error', 'unknown error')}]"
+                        )
+                except Exception:
+                    logger.exception(
+                        "agent_dispatch: failed to read uploaded file %s for session %s",
+                        file_id,
+                        session_id,
+                    )
+                    file_texts.append(
+                        f"--- {file_id} ---\n[Error reading file: unexpected error]"
+                    )
+
+            if file_texts:
+                llm_message = (
+                    "The user attached the following files:\n\n"
+                    + "\n\n".join(file_texts)
+                    + f"\n\n--- User message ---\n{message}"
+                )
+
         if downloaded_image_paths:
             paths_list = "\n".join(f"- {p}" for p in downloaded_image_paths)
             llm_message = (
-                f"{message}\n\n"
+                f"{llm_message}\n\n"
                 "[Attached image(s) saved locally — call vision_analyze on these "
                 f"file paths if relevant to the request:]\n{paths_list}"
             )
@@ -737,7 +780,7 @@ def _run_agent_turn(
         if _is_cancelled():
             agent.interrupt()
 
-        if downloaded_image_paths:
+        if downloaded_image_paths or file_ids:
             agent.run_conversation(
                 llm_message,
                 conversation_history=history,
