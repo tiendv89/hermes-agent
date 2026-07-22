@@ -190,6 +190,10 @@ def _image_url(base_url: str, workspace_id: str, image_id: str) -> str:
     return f"{base_url}/api/workspaces/{workspace_id}/images/{quote(image_id, safe='')}"
 
 
+def _file_url(base_url: str, workspace_id: str, file_id: str) -> str:
+    return f"{base_url}/api/workspaces/{workspace_id}/files/{quote(file_id, safe='')}"
+
+
 def _list_url(base_url: str, workspace_id: str, feature_id: str) -> str:
     if not feature_id:
         # Every non-deleted document across the whole workspace.
@@ -290,6 +294,62 @@ def download_image(
     return {
         "data": resp.content,
         "content_type": resp.headers.get("Content-Type", "application/octet-stream"),
+    }
+
+
+def download_file(
+    workspace_id: str,
+    file_id: str,
+    *,
+    user_id: str = "",
+    org_id: str = "",
+) -> Dict[str, Any]:
+    """Download a previously-uploaded file's raw bytes from storage-service.
+
+    Mirrors :func:`download_image` but hits the file endpoint
+    (``/api/workspaces/{wid}/files/{id}``) instead of the image one.
+
+    Returns a dict with keys:
+      - ``data`` (bytes): the raw file bytes
+      - ``content_type`` (str): e.g. "application/pdf"
+      - ``filename`` (str): the original filename as stored by storage-service,
+        or empty string when unavailable
+
+    Raises StorageServiceError on config errors, 404s, or other non-2xx responses.
+    """
+    base_url, token = _resolve_config()
+    url = _file_url(base_url, workspace_id, file_id)
+    headers = _build_headers(token, user_id, org_id)
+    del headers["Content-Type"]  # GET; avoid implying a JSON body
+    try:
+        resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        raise StorageServiceError(
+            f"storage-service request failed: {exc}", reason_code="request_error"
+        ) from exc
+
+    if not resp.ok:
+        reason = "not_found" if resp.status_code == 404 else ""
+        raise StorageServiceError(
+            f"storage-service GET {url} returned {resp.status_code}",
+            reason_code=reason,
+            status=resp.status_code,
+        )
+
+    content_disposition = resp.headers.get("Content-Disposition", "")
+    filename = ""
+    if "filename=" in content_disposition:
+        # Extract filename from Content-Disposition header
+        for part in content_disposition.split(";"):
+            part = part.strip()
+            if part.startswith("filename="):
+                filename = part[len("filename="):].strip(' "')
+                break
+
+    return {
+        "data": resp.content,
+        "content_type": resp.headers.get("Content-Type", "application/octet-stream"),
+        "filename": filename,
     }
 
 
