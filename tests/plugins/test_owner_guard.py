@@ -48,7 +48,9 @@ def _make_workspace_context():
     }
 
 
-def _make_feature_detail(owner: str = "ts", stages: dict | None = None, id: str | None = None):
+def _make_feature_detail(
+    owner: str = "ts", stages: dict | None = None, id: str | None = None
+):
     detail = {
         "feature_name": _FEATURE_ID,
         "title": "My Feature",
@@ -807,7 +809,10 @@ class TestStorageServiceClient:
             f"{_STORAGE_URL}/api/workspaces/ws1/images/missing", status_code=404
         )
 
-        from plugins.clients.storage_service_client import StorageServiceError, download_image
+        from plugins.clients.storage_service_client import (
+            StorageServiceError,
+            download_image,
+        )
 
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "missing")
@@ -818,7 +823,10 @@ class TestStorageServiceClient:
         monkeypatch.delenv("STORAGE_SERVICE_URL", raising=False)
         monkeypatch.delenv("STORAGE_SERVICE_TOKEN", raising=False)
 
-        from plugins.clients.storage_service_client import StorageServiceError, download_image
+        from plugins.clients.storage_service_client import (
+            StorageServiceError,
+            download_image,
+        )
 
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "img-1")
@@ -913,13 +921,7 @@ class TestReadUploadedFile:
         text_bytes = text.encode("ascii", errors="replace")
 
         # Build the content stream (a minimal PDF page description).
-        stream = (
-            b"BT\n"
-            b"/F1 12 Tf\n"
-            b"72 720 Td\n"
-            b"(" + text_bytes + b") Tj\n"
-            b"ET"
-        )
+        stream = b"BT\n/F1 12 Tf\n72 720 Td\n(" + text_bytes + b") Tj\nET"
 
         # Build a minimal valid PDF by hand with correct xref offsets.
         header = b"%PDF-1.4\n"
@@ -943,8 +945,7 @@ class TestReadUploadedFile:
         obj4 = (
             b"4 0 obj\n"
             b"<< /Length " + str(len(stream)).encode() + b" >>\n"
-            b"stream\n"
-            + stream + b"\n"
+            b"stream\n" + stream + b"\n"
             b"endstream\n"
             b"endobj\n"
         )
@@ -959,19 +960,21 @@ class TestReadUploadedFile:
             b"xref\n"
             b"0 5\n"
             b"0000000000 65535 f \n"
-            + f"{offset1:010d}".encode() + b" 00000 n \n"
-            + f"{offset2:010d}".encode() + b" 00000 n \n"
-            + f"{offset3:010d}".encode() + b" 00000 n \n"
-            + f"{offset4:010d}".encode() + b" 00000 n \n"
+            + f"{offset1:010d}".encode()
+            + b" 00000 n \n"
+            + f"{offset2:010d}".encode()
+            + b" 00000 n \n"
+            + f"{offset3:010d}".encode()
+            + b" 00000 n \n"
+            + f"{offset4:010d}".encode()
+            + b" 00000 n \n"
         )
 
         startxref = offset1 + len(obj1) + len(obj2) + len(obj3) + len(obj4)
         trailer = (
             b"trailer\n"
             b"<< /Size 5 /Root 1 0 R >>\n"
-            b"startxref\n"
-            + str(startxref).encode()
-            + b"\n%%EOF"
+            b"startxref\n" + str(startxref).encode() + b"\n%%EOF"
         )
 
         return header + obj1 + obj2 + obj3 + obj4 + xref + trailer
@@ -1040,7 +1043,9 @@ class TestReadUploadedFile:
 
         result = handle(file_id="missing", workspace_id="ws1")
         assert result["ok"] is False
-        assert "not_found" in result.get("error", "").lower() or "404" in result.get("error", "")
+        assert "not_found" in result.get("error", "").lower() or "404" in result.get(
+            "error", ""
+        )
 
     # -- format-specific parsing tests ------------------------------------
 

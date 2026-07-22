@@ -118,7 +118,9 @@ def _extract_text_as_utf8(data: bytes, filename: str) -> str:
     try:
         return data.decode("utf-8")
     except UnicodeDecodeError as exc:
-        raise ValueError(f"File is not valid UTF-8 text and is not a recognised format (PDF/DOCX/XLSX): {exc}")
+        raise ValueError(
+            f"File is not valid UTF-8 text and is not a recognised format (PDF/DOCX/XLSX): {exc}"
+        )
 
 
 def _detect_parser(content_type: str, filename: str):
@@ -180,10 +182,14 @@ def handle(file_id: str = "", workspace_id: str = "", **_: Any) -> Dict[str, Any
             wid, file_id, user_id=caller_user_id, org_id=caller_org_id
         )
     except StorageServiceError as exc:
-        logger.warning("read_uploaded_file: storage-service error for %s: %s", file_id, exc)
+        logger.warning(
+            "read_uploaded_file: storage-service error for %s: %s", file_id, exc
+        )
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        logger.warning("read_uploaded_file: unexpected download error for %s: %s", file_id, exc)
+        logger.warning(
+            "read_uploaded_file: unexpected download error for %s: %s", file_id, exc
+        )
         return {"ok": False, "error": str(exc)}
 
     data = result["data"]
@@ -204,7 +210,9 @@ def handle(file_id: str = "", workspace_id: str = "", **_: Any) -> Dict[str, Any
         logger.warning("read_uploaded_file: extraction failed for %s: %s", file_id, exc)
         return {"ok": False, "error": str(exc)}
     except Exception as exc:
-        logger.warning("read_uploaded_file: unexpected extraction error for %s: %s", file_id, exc)
+        logger.warning(
+            "read_uploaded_file: unexpected extraction error for %s: %s", file_id, exc
+        )
         return {"ok": False, "error": f"Failed to read file: {exc}"}
 
     # Truncation safeguard.
