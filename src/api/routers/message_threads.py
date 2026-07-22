@@ -27,7 +27,7 @@ from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.api.mentions import parse_mention_handles, resolve_mentions
 from src.api.model_catalog import resolve_model
-from src.api.routers.messages import _image_urls_for, _should_trigger_agent
+from src.api.routers.messages import _image_urls_for, _file_urls_for, _should_trigger_agent
 from src.api.thread_authz import authorize_thread_access
 from src.db import (
     Message,
@@ -70,9 +70,9 @@ async def post_thread_reply(
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
     """Post a reply into the message thread rooted at message_id."""
-    # Empty text is fine for an image-only send — must have at least one or the other.
-    if (not body.content or not body.content.strip()) and not body.image_ids:
-        raise HTTPException(status_code=400, detail="content or image_ids must be non-empty.")
+    # Empty text is fine for an image/file-only send — must have at least one or the other.
+    if (not body.content or not body.content.strip()) and not body.image_ids and not body.file_ids:
+        raise HTTPException(status_code=400, detail="content, image_ids, or file_ids must be non-empty.")
 
     user_id = identity.user_id
     if not user_id:
@@ -141,6 +141,7 @@ async def post_thread_reply(
         thread_root_id=root_id,
         reply_to_message_id=inner_reply_to_id,
         image_ids=body.image_ids,
+        file_ids=body.file_ids,
     )
 
     # --- Persist resolved mentions ---
@@ -174,6 +175,7 @@ async def post_thread_reply(
                 "thread_root_id": str(root_id),
                 "reply_to_message_id": str(inner_reply_to_id),
                 "image_urls": _image_urls_for(ws_id, body.image_ids) if body.image_ids else [],
+                "file_urls": _file_urls_for(ws_id, body.file_ids) if body.file_ids else [],
             },
         },
     )
@@ -228,6 +230,7 @@ async def post_thread_reply(
         reply_to_message_id=inner_reply_to_id,
         thread_root_id=root_id,
         image_ids=body.image_ids,
+        file_ids=body.file_ids,
     )
 
     return JSONResponse(
@@ -281,5 +284,8 @@ async def get_message_thread_replies(
         image_ids = r.pop("image_ids", None)
         if image_ids:
             r["image_urls"] = _image_urls_for(workspace_id, image_ids)
+        file_ids = r.pop("file_ids", None)
+        if file_ids:
+            r["file_urls"] = _file_urls_for(workspace_id, file_ids)
 
     return JSONResponse({"replies": replies})

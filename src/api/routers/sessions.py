@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
 from src.api.identity import Identity, require_identity, require_service_token
-from src.api.routers.messages import _image_urls_for
+from src.api.routers.messages import _image_urls_for, _file_urls_for
 from src.db import (
     create_session,
     delete_session,
@@ -104,6 +104,9 @@ async def get_session_messages_endpoint(
         image_ids = m.pop("image_ids", None)
         if image_ids:
             m["image_urls"] = _image_urls_for(workspace_id, image_ids)
+        file_ids = m.pop("file_ids", None)
+        if file_ids:
+            m["file_urls"] = _file_urls_for(workspace_id, file_ids)
     return JSONResponse({"session_id": session_id, "messages": messages})
 
 

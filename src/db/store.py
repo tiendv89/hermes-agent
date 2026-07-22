@@ -432,6 +432,7 @@ async def append_message(
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
     image_ids: Optional[List[str]] = None,
+    file_ids: Optional[List[str]] = None,
     forwarded_from_message_id: Optional[int] = None,
 ) -> int:
     msg = Message(
@@ -462,6 +463,8 @@ async def append_message(
         # iterates it (e.g. building per-image URLs) walks it character by
         # character instead of element by element.
         image_ids=image_ids or [],
+        # Same pattern as image_ids — native Python list, no json.dumps().
+        file_ids=file_ids or [],
         forwarded_from_message_id=forwarded_from_message_id,
     )
     db.add(msg)
