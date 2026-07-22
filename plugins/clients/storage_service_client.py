@@ -110,11 +110,17 @@ def _get_accessible_org_ids(user_id: str) -> list[str]:
     try:
         resp = requests.get(url, headers=headers, timeout=5)
         if resp.status_code != 200:
-            logger.warning("storage_service_client: accessible-orgs lookup %s -> %s", url, resp.status_code)
+            logger.warning(
+                "storage_service_client: accessible-orgs lookup %s -> %s",
+                url,
+                resp.status_code,
+            )
             return []
         body = resp.json()
     except Exception:
-        logger.exception("storage_service_client: accessible-orgs lookup failed for %s", user_id)
+        logger.exception(
+            "storage_service_client: accessible-orgs lookup failed for %s", user_id
+        )
         return []
 
     org_ids = [str(oid) for oid in (body.get("accessible_org_ids") or []) if oid]
@@ -174,7 +180,9 @@ def _build_headers(token: str, user_id: str, org_id: str) -> dict[str, str]:
             )
             headers["X-BFF-Identity"] = identity_header
         except Exception:
-            logger.exception("storage_service_client: failed to sign BFF identity header")
+            logger.exception(
+                "storage_service_client: failed to sign BFF identity header"
+            )
 
     return headers
 
@@ -188,6 +196,10 @@ def _content_url(base_url: str, workspace_id: str, feature_id: str, path: str) -
 
 def _image_url(base_url: str, workspace_id: str, image_id: str) -> str:
     return f"{base_url}/api/workspaces/{workspace_id}/images/{quote(image_id, safe='')}"
+
+
+def _file_url(base_url: str, workspace_id: str, file_id: str) -> str:
+    return f"{base_url}/api/workspaces/{workspace_id}/files/{quote(file_id, safe='')}"
 
 
 def _list_url(base_url: str, workspace_id: str, feature_id: str) -> str:
@@ -230,9 +242,13 @@ def _create_document(
         "feature_slug": feature_slug,
     }
     try:
-        resp = requests.post(url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT)
+        resp = requests.post(
+            url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT
+        )
     except requests.RequestException as exc:
-        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+        raise StorageServiceError(
+            f"storage-service request failed: {exc}", reason_code="request_error"
+        ) from exc
 
     if not resp.ok:
         body: Any = {}
@@ -277,7 +293,9 @@ def download_image(
     try:
         resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
     except requests.RequestException as exc:
-        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+        raise StorageServiceError(
+            f"storage-service request failed: {exc}", reason_code="request_error"
+        ) from exc
 
     if not resp.ok:
         reason = "not_found" if resp.status_code == 404 else ""
@@ -290,6 +308,62 @@ def download_image(
     return {
         "data": resp.content,
         "content_type": resp.headers.get("Content-Type", "application/octet-stream"),
+    }
+
+
+def download_file(
+    workspace_id: str,
+    file_id: str,
+    *,
+    user_id: str = "",
+    org_id: str = "",
+) -> Dict[str, Any]:
+    """Download a previously-uploaded file's raw bytes from storage-service.
+
+    Mirrors :func:`download_image` but hits the file endpoint
+    (``/api/workspaces/{wid}/files/{id}``) instead of the image one.
+
+    Returns a dict with keys:
+      - ``data`` (bytes): the raw file bytes
+      - ``content_type`` (str): e.g. "application/pdf"
+      - ``filename`` (str): the original filename as stored by storage-service,
+        or empty string when unavailable
+
+    Raises StorageServiceError on config errors, 404s, or other non-2xx responses.
+    """
+    base_url, token = _resolve_config()
+    url = _file_url(base_url, workspace_id, file_id)
+    headers = _build_headers(token, user_id, org_id)
+    del headers["Content-Type"]  # GET; avoid implying a JSON body
+    try:
+        resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
+    except requests.RequestException as exc:
+        raise StorageServiceError(
+            f"storage-service request failed: {exc}", reason_code="request_error"
+        ) from exc
+
+    if not resp.ok:
+        reason = "not_found" if resp.status_code == 404 else ""
+        raise StorageServiceError(
+            f"storage-service GET {url} returned {resp.status_code}",
+            reason_code=reason,
+            status=resp.status_code,
+        )
+
+    content_disposition = resp.headers.get("Content-Disposition", "")
+    filename = ""
+    if "filename=" in content_disposition:
+        # Extract filename from Content-Disposition header
+        for part in content_disposition.split(";"):
+            part = part.strip()
+            if part.startswith("filename="):
+                filename = part[len("filename=") :].strip(' "')
+                break
+
+    return {
+        "data": resp.content,
+        "content_type": resp.headers.get("Content-Type", "application/octet-stream"),
+        "filename": filename,
     }
 
 
@@ -319,7 +393,9 @@ def read_document_content(
     try:
         resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
     except requests.RequestException as exc:
-        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+        raise StorageServiceError(
+            f"storage-service request failed: {exc}", reason_code="request_error"
+        ) from exc
 
     if resp.status_code == 404:
         return {"content": "", "version_id": None}
@@ -380,7 +456,9 @@ def list_documents(
     try:
         resp = requests.get(url, headers=headers, timeout=_DEFAULT_TIMEOUT)
     except requests.RequestException as exc:
-        raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+        raise StorageServiceError(
+            f"storage-service request failed: {exc}", reason_code="request_error"
+        ) from exc
 
     if not resp.ok:
         body: Any = {}
@@ -435,13 +513,19 @@ def write_document_content(
 
     def _put() -> requests.Response:
         try:
-            return requests.put(url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT)
+            return requests.put(
+                url, headers=headers, json=payload, timeout=_DEFAULT_TIMEOUT
+            )
         except requests.RequestException as exc:
-            raise StorageServiceError(f"storage-service request failed: {exc}", reason_code="request_error") from exc
+            raise StorageServiceError(
+                f"storage-service request failed: {exc}", reason_code="request_error"
+            ) from exc
 
     resp = _put()
     if resp.status_code == 404:
-        _create_document(base_url, headers, workspace_id, feature_id, path, feature_slug)
+        _create_document(
+            base_url, headers, workspace_id, feature_id, path, feature_slug
+        )
         resp = _put()
 
     if not resp.ok:

@@ -48,7 +48,9 @@ def _make_workspace_context():
     }
 
 
-def _make_feature_detail(owner: str = "ts", stages: dict | None = None, id: str | None = None):
+def _make_feature_detail(
+    owner: str = "ts", stages: dict | None = None, id: str | None = None
+):
     detail = {
         "feature_name": _FEATURE_ID,
         "title": "My Feature",
@@ -829,3 +831,402 @@ class TestStorageServiceClient:
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "img-1")
         assert exc_info.value.reason_code == "missing_config"
+
+
+# ---------------------------------------------------------------------------
+# download_file unit tests (HTTP-level)
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadFile:
+    """Unit tests for :func:`download_file` in storage_service_client."""
+
+    def test_download_file_success(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/file-1",
+            content=b"fake-file-bytes",
+            headers={
+                "Content-Type": "application/pdf",
+                "Content-Disposition": 'attachment; filename="report.pdf"',
+            },
+        )
+
+        from plugins.clients.storage_service_client import download_file
+
+        result = download_file("ws1", "file-1", user_id="user-1", org_id="org-1")
+        assert result["data"] == b"fake-file-bytes"
+        assert result["content_type"] == "application/pdf"
+        assert result["filename"] == "report.pdf"
+
+        req = requests_mock.last_request
+        assert req.headers["Authorization"] == f"Bearer {_STORAGE_TOKEN}"
+        assert req.headers["X-User-Id"] == "user-1"
+        assert req.headers["X-Org-Id"] == "org-1"
+
+    def test_download_file_not_found(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/missing",
+            status_code=404,
+        )
+
+        from plugins.clients.storage_service_client import (
+            StorageServiceError,
+            download_file,
+        )
+
+        with pytest.raises(StorageServiceError) as exc_info:
+            download_file("ws1", "missing")
+        assert exc_info.value.status == 404
+        assert exc_info.value.reason_code == "not_found"
+
+    def test_download_file_missing_config_raises_error(self, monkeypatch):
+        monkeypatch.delenv("STORAGE_SERVICE_URL", raising=False)
+        monkeypatch.delenv("STORAGE_SERVICE_TOKEN", raising=False)
+
+        from plugins.clients.storage_service_client import (
+            StorageServiceError,
+            download_file,
+        )
+
+        with pytest.raises(StorageServiceError) as exc_info:
+            download_file("ws1", "file-1")
+        assert exc_info.value.reason_code == "missing_config"
+
+
+# ---------------------------------------------------------------------------
+# read_uploaded_file tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestReadUploadedFile:
+    """Unit tests for the read_uploaded_file tool handler."""
+
+    # -- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _make_pdf_bytes(text: str = "Hello PDF world!") -> bytes:
+        """Create a minimal valid PDF in memory readable by PyPDF2.
+
+        Constructs a valid PDF 1.4 document with a single page containing
+        the given text in a content stream.  PyPDF2's PdfReader can parse
+        this and extract_text() will return the embedded text.
+        """
+        # Encode the text content for the PDF stream.
+        text_bytes = text.encode("ascii", errors="replace")
+
+        # Build the content stream (a minimal PDF page description).
+        stream = b"BT\n/F1 12 Tf\n72 720 Td\n(" + text_bytes + b") Tj\nET"
+
+        # Build a minimal valid PDF by hand with correct xref offsets.
+        header = b"%PDF-1.4\n"
+
+        # Object 1: Catalog
+        obj1 = b"1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+
+        # Object 2: Pages
+        obj2 = b"2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+
+        # Object 3: Page
+        obj3 = (
+            b"3 0 obj\n"
+            b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+            b"/Contents 4 0 R /Resources << /Font << /F1 << /Type /Font "
+            b"/Subtype /Type1 /BaseFont /Helvetica >> >> >> >>\n"
+            b"endobj\n"
+        )
+
+        # Object 4: Content stream
+        obj4 = (
+            b"4 0 obj\n"
+            b"<< /Length " + str(len(stream)).encode() + b" >>\n"
+            b"stream\n" + stream + b"\n"
+            b"endstream\n"
+            b"endobj\n"
+        )
+
+        # Compute xref offsets precisely.
+        offset1 = len(header)
+        offset2 = offset1 + len(obj1)
+        offset3 = offset2 + len(obj2)
+        offset4 = offset3 + len(obj3)
+
+        xref = (
+            b"xref\n"
+            b"0 5\n"
+            b"0000000000 65535 f \n"
+            + f"{offset1:010d}".encode()
+            + b" 00000 n \n"
+            + f"{offset2:010d}".encode()
+            + b" 00000 n \n"
+            + f"{offset3:010d}".encode()
+            + b" 00000 n \n"
+            + f"{offset4:010d}".encode()
+            + b" 00000 n \n"
+        )
+
+        startxref = offset1 + len(obj1) + len(obj2) + len(obj3) + len(obj4)
+        trailer = (
+            b"trailer\n"
+            b"<< /Size 5 /Root 1 0 R >>\n"
+            b"startxref\n" + str(startxref).encode() + b"\n%%EOF"
+        )
+
+        return header + obj1 + obj2 + obj3 + obj4 + xref + trailer
+
+    @staticmethod
+    def _make_docx_bytes(text: str = "Hello DOCX world!") -> bytes:
+        """Create a minimal valid DOCX in memory."""
+        import io
+
+        from docx import Document as DocxDocument
+
+        doc = DocxDocument()
+        doc.add_paragraph(text)
+        buf = io.BytesIO()
+        doc.save(buf)
+        return buf.getvalue()
+
+    @staticmethod
+    def _make_xlsx_bytes(data=None) -> bytes:
+        """Create a minimal valid XLSX in memory."""
+        import io
+
+        from openpyxl import Workbook
+
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Sheet1"
+        if data is None:
+            data = [["Name", "Value"], ["Alice", "42"], ["Bob", "7"]]
+        for row in data:
+            ws.append(row)
+        buf = io.BytesIO()
+        wb.save(buf)
+        return buf.getvalue()
+
+    # -- download_file tests (HTTP-level) ---------------------------------
+
+    def test_download_file_success(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/file-1",
+            content=b"hello world",
+            headers={"Content-Type": "text/plain"},
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="file-1", workspace_id="ws1")
+        assert result["ok"] is True
+        assert result["text"] == "hello world"
+        assert result["content_type"] == "text/plain"
+        assert result["truncated"] is False
+
+    def test_download_file_not_found(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/missing",
+            status_code=404,
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="missing", workspace_id="ws1")
+        assert result["ok"] is False
+        assert "not_found" in result.get("error", "").lower() or "404" in result.get(
+            "error", ""
+        )
+
+    # -- format-specific parsing tests ------------------------------------
+
+    def test_read_uploaded_file_txt(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/txt-1",
+            content=b"Hello, this is a text file.\nLine two.",
+            headers={"Content-Type": "text/plain"},
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="txt-1", workspace_id="ws1")
+        assert result["ok"] is True
+        assert "Hello, this is a text file." in result["text"]
+        assert "Line two." in result["text"]
+
+    def test_read_uploaded_file_pdf(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        pdf_bytes = self._make_pdf_bytes("Hello PDF world!")
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/pdf-1",
+            content=pdf_bytes,
+            headers={"Content-Type": "application/pdf"},
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="pdf-1", workspace_id="ws1")
+        assert result["ok"] is True
+        assert "Hello PDF world!" in result["text"]
+
+    def test_read_uploaded_file_docx(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        docx_bytes = self._make_docx_bytes("Hello DOCX world!")
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/docx-1",
+            content=docx_bytes,
+            headers={
+                "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            },
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="docx-1", workspace_id="ws1")
+        assert result["ok"] is True
+        assert "Hello DOCX world!" in result["text"]
+
+    def test_read_uploaded_file_xlsx(self, monkeypatch, requests_mock):
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        xlsx_bytes = self._make_xlsx_bytes()
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/xlsx-1",
+            content=xlsx_bytes,
+            headers={
+                "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            },
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="xlsx-1", workspace_id="ws1")
+        assert result["ok"] is True
+        assert "Sheet: Sheet1" in result["text"]
+        assert "Alice" in result["text"]
+        assert "Bob" in result["text"]
+
+    # -- extension-based fallback tests -----------------------------------
+
+    def test_read_uploaded_file_pdf_by_extension(self, monkeypatch, requests_mock):
+        """Content-Type is generic, but filename ends in .pdf → PDF parser used."""
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        pdf_bytes = self._make_pdf_bytes("PDF via extension")
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/pdf-ext",
+            content=pdf_bytes,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Disposition": 'attachment; filename="myfile.pdf"',
+            },
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="pdf-ext", workspace_id="ws1")
+        assert result["ok"] is True
+        assert "PDF via extension" in result["text"]
+
+    def test_read_uploaded_file_xlsx_by_extension(self, monkeypatch, requests_mock):
+        """Content-Type is generic, but filename ends in .xlsx → XLSX parser used."""
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        xlsx_bytes = self._make_xlsx_bytes([["Col1", "Col2"], ["a", "b"]])
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/xlsx-ext",
+            content=xlsx_bytes,
+            headers={
+                "Content-Type": "application/octet-stream",
+                "Content-Disposition": 'attachment; filename="data.xlsx"',
+            },
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="xlsx-ext", workspace_id="ws1")
+        assert result["ok"] is True
+        assert "Sheet: Sheet1" in result["text"]
+
+    # -- error handling tests ---------------------------------------------
+
+    def test_read_uploaded_file_corrupt(self, monkeypatch, requests_mock):
+        """Random binary that is not valid PDF/DOCX/XLSX and not UTF-8 → error."""
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        # Non-UTF-8 binary bytes
+        corrupt_bytes = b"\x80\x81\x82\xff\xfe\xfd"
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/corrupt",
+            content=corrupt_bytes,
+            headers={"Content-Type": "application/octet-stream"},
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="corrupt", workspace_id="ws1")
+        assert result["ok"] is False
+        assert "error" in result
+
+    # -- truncation tests -------------------------------------------------
+
+    def test_read_uploaded_file_truncation(self, monkeypatch, requests_mock):
+        """Content exceeding 100 KB is truncated with a marker."""
+        monkeypatch.setenv("STORAGE_SERVICE_URL", _STORAGE_URL)
+        monkeypatch.setenv("STORAGE_SERVICE_TOKEN", _STORAGE_TOKEN)
+
+        # Generate text that is ~200 KB (well above 100 KB limit).
+        chunk = "Hello world! This is a line of text.\n"
+        big_text = chunk * 6000  # ~200 KB
+        big_bytes = big_text.encode("utf-8")
+
+        requests_mock.get(
+            f"{_STORAGE_URL}/api/workspaces/ws1/files/big-file",
+            content=big_bytes,
+            headers={"Content-Type": "text/plain"},
+        )
+
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="big-file", workspace_id="ws1")
+        assert result["ok"] is True
+        assert result["truncated"] is True
+        assert "[... truncated ...]" in result["text"]
+        # Truncated text should be <= ~100 KB + marker
+        assert len(result["text"].encode("utf-8")) <= 110_000
+
+    # -- missing file_id / workspace_id -----------------------------------
+
+    def test_read_uploaded_file_missing_file_id(self):
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="", workspace_id="ws1")
+        assert result["ok"] is False
+        assert "file_id" in result.get("error", "").lower()
+
+    def test_read_uploaded_file_missing_workspace_id(self):
+        from plugins.tools.read_uploaded_file import handle
+
+        result = handle(file_id="file-1", workspace_id="")
+        assert result["ok"] is False
+        assert "workspace_id" in result.get("error", "").lower()
