@@ -38,6 +38,7 @@ from .tools import (
     ensure_branch as ensure_branch_tool,
     commit_files as commit_files_tool,
     feature_context as feature_context_tool,
+    read_uploaded_file as read_uploaded_file_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -394,6 +395,12 @@ _TOOLS = (
         "schema": feature_context_tool.SCHEMA,
         "handler": feature_context_tool.handle,
         "check_fn": check_workflow_available,
+    },
+    {
+        "name": "read_uploaded_file",
+        "short_description": "Download and read a chat-uploaded file (PDF, DOCX, XLSX, or text).",
+        "schema": read_uploaded_file_tool.SCHEMA,
+        "handler": read_uploaded_file_tool.handle,
     },
 )
 
