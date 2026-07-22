@@ -77,6 +77,13 @@ class SendMessageRequest(BaseModel):
     # vision tool's SSRF guard would reject fetching it directly.
     image_ids: List[str] = []
 
+    # IDs of files uploaded to storage-service's files bucket (see
+    # storage_service_client.download_file) that the user attached to this
+    # message. Handled alongside image_ids through the entire message
+    # pipeline — persisted, forwarded to the agent turn, and rendered
+    # as file chips in the frontend.
+    file_ids: List[str] = []
+
 
 class ForwardMessageRequest(BaseModel):
     destination_session_ids: List[str]

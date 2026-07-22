@@ -53,6 +53,11 @@ class StreamChatRequest(BaseModel):
     # would reject fetching it directly.
     image_ids: List[str] = []
 
+    # IDs of files uploaded to storage-service's files bucket (see
+    # storage_service_client.download_file). Handled alongside image_ids
+    # through the agent turn — see agent_dispatch.py.
+    file_ids: List[str] = []
+
 
 def _derive_title(message: str) -> str:
     """First 60 chars of the opening message — used to auto-title a session."""

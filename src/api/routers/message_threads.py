@@ -55,6 +55,10 @@ class PostThreadReplyRequest(BaseModel):
     # attached to this reply (see messages.py's SendMessageRequest.image_ids).
     image_ids: List[str] = []
 
+    # IDs of files uploaded to storage-service's files bucket the user
+    # attached to this reply (see messages.py's SendMessageRequest.file_ids).
+    file_ids: List[str] = []
+
 
 @router.post("/threads/{session_id}/messages/{message_id}/replies", status_code=202)
 async def post_thread_reply(
