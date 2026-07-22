@@ -113,6 +113,12 @@ class Message(Base):
     # the reading router, which has the session's workspace_id in scope).
     image_ids = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
 
+    # chat-file-upload: storage-service file ids the user attached to this
+    # message (bare ids, not URLs — resolved to a fetchable relative URL by
+    # the reading router, which has the session's workspace_id in scope).
+    # Same JSONB pattern as image_ids.
+    file_ids = Column(JSONB, nullable=False, server_default=text("'[]'::jsonb"))
+
     # chat-reply-and-thread: message-level reply/thread linkage (nullable;
     # NULL on both = plain message with no reply or thread context).
     reply_to_message_id = Column(BigInteger, ForeignKey("messages.id"), nullable=True)
