@@ -40,36 +40,37 @@ def _mock_db():
 
 @pytest.mark.asyncio
 async def test_add_member_new():
-    """add_member inserts a SessionMember row when none exists."""
+    """add_member issues an atomic upsert (INSERT ... ON CONFLICT DO NOTHING)
+    and commits — it does not check-then-insert via db.get/db.add."""
     from src.db.store import add_member
 
     db = _mock_db()
-    db.get = AsyncMock(return_value=None)
 
     await add_member(db, "sess_1", "user_a", added_by="user_b")
 
-    db.add.assert_called_once()
-    added = db.add.call_args[0][0]
-    assert added.session_id == "sess_1"
-    assert added.user_id == "user_a"
-    assert added.added_by == "user_b"
+    db.execute.assert_called_once()
+    stmt = db.execute.call_args[0][0]
+    params = stmt.compile().params
+    assert params["session_id"] == "sess_1"
+    assert params["user_id"] == "user_a"
+    assert params["added_by"] == "user_b"
     db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio
 async def test_add_member_idempotent():
-    """add_member is a no-op when the member already exists."""
+    """add_member is safe to call when the member already exists — the
+    ON CONFLICT DO NOTHING clause makes the second call a no-op at the DB
+    layer, but add_member still executes and commits exactly as before
+    (idempotency is the database's job, not the caller's)."""
     from src.db.store import add_member
-    from src.db.models import SessionMember
 
-    existing = MagicMock(spec=SessionMember)
     db = _mock_db()
-    db.get = AsyncMock(return_value=existing)
 
     await add_member(db, "sess_1", "user_a", added_by="user_b")
 
-    db.add.assert_not_called()
-    db.commit.assert_not_called()
+    db.execute.assert_called_once()
+    db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio

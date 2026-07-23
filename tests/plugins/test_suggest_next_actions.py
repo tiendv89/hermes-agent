@@ -422,6 +422,7 @@ class TestToolRegistration:
             "create_pr",
             "ensure_branch",
             "commit_files",
+            "feature_context",
         ]
         for tname in tool_names:
             stub = _stub_tool(tname)

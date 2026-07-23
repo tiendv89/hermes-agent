@@ -3,25 +3,34 @@
 Covers:
   - APPROVE / REQUEST_CHANGES happy path (self_review_skipped=False)
   - self-review path (self_review_skipped=True must not fail the call)
-  - vcs-service error propagation (ok=False)
+  - error propagation (ok=False) for both step 6a and step 6b
   - Inline comment formatting for comments[] (passed through to the client)
   - check_available(): gates on VCS_SERVICE_URL/VCS_SERVICE_TOKEN presence
   - Tool registered in plugins.__init__._TOOLS with correct name/schema/check_fn
+
+Note: handle() implements the two-call pattern itself — it calls
+plugins.clients.vcs_client.post_issue_comment (step 6a) then .post_pr_review
+(step 6b) directly, both imported by name into vcs_pr_review's own module
+namespace. So mocks must patch ``plugins.tools.vcs_pr_review.<name>``. There
+is no single "review_and_comment" call to mock. post_pr_review returns a raw
+requests.Response-like object (handle() reads .status_code / .json() / .text),
+so its mock needs those attributes rather than a plain return dict.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import Mock, patch
 
 import pytest
+import requests
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
 
 _PR_URL = "https://github.com/acme/myrepo/pull/42"
-_BODY = "## Review\n\nThis looks good overall. 🟢 Nit: rename variable."
+_BODY = "## Review\n\nThis looks good overall. \U0001f7e2 Nit: rename variable."
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +60,14 @@ def _clear_env(monkeypatch):
 def _set_vcs_env(monkeypatch):
     monkeypatch.setenv("VCS_SERVICE_URL", "http://vcs:8088")
     monkeypatch.setenv("VCS_SERVICE_TOKEN", "tok")
+
+
+def _mock_review_response(status_code, *, html_url="", text=""):
+    resp = Mock(spec=requests.Response)
+    resp.status_code = status_code
+    resp.json.return_value = {"html_url": html_url}
+    resp.text = text
+    return resp
 
 
 # ---------------------------------------------------------------------------
@@ -125,13 +142,13 @@ class TestInputValidation:
 class TestHappyPath:
     def test_approve_returns_review_url_and_not_skipped(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        fake_response = {
-            "review_url": "https://github.com/acme/myrepo/pull/42#pullrequestreview-99",
-            "self_review_skipped": False,
-        }
+        review_url = "https://github.com/acme/myrepo/pull/42#pullrequestreview-99"
         with patch(
-            "src.services.vcs_service_client.review_and_comment",
-            AsyncMock(return_value=fake_response),
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch(
+            "plugins.tools.vcs_pr_review.post_pr_review",
+            Mock(return_value=_mock_review_response(201, html_url=review_url)),
         ):
             from plugins.tools.vcs_pr_review import handle
 
@@ -139,15 +156,17 @@ class TestHappyPath:
 
         assert result["ok"] is True
         assert result["self_review_skipped"] is False
-        assert result["review_url"] == fake_response["review_url"]
+        assert result["review_url"] == review_url
 
     def test_request_changes_happy_path(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        body = "## Review\n\n🔴 **Blocker** — security issue on line 42."
-        fake_response = {"review_url": "https://...", "self_review_skipped": False}
+        body = "## Review\n\n\U0001f534 **Blocker** — security issue on line 42."
         with patch(
-            "src.services.vcs_service_client.review_and_comment",
-            AsyncMock(return_value=fake_response),
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch(
+            "plugins.tools.vcs_pr_review.post_pr_review",
+            Mock(return_value=_mock_review_response(201, html_url="https://...")),
         ):
             from plugins.tools.vcs_pr_review import handle
 
@@ -158,10 +177,11 @@ class TestHappyPath:
 
     def test_owner_repo_number_parsed_from_pr_url(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        mock_review = AsyncMock(
-            return_value={"review_url": "https://...", "self_review_skipped": False}
-        )
-        with patch("src.services.vcs_service_client.review_and_comment", mock_review):
+        mock_review = Mock(return_value=_mock_review_response(201, html_url="https://..."))
+        with patch(
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch("plugins.tools.vcs_pr_review.post_pr_review", mock_review):
             from plugins.tools.vcs_pr_review import handle
 
             handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
@@ -171,13 +191,14 @@ class TestHappyPath:
     def test_inline_comments_forwarded(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         comments = [
-            {"path": "src/auth.py", "line": 42, "body": "🔴 **Blocker** — SQL injection risk."},
-            {"path": "src/utils.py", "line": 10, "body": "🟡 **Warning** — hardcoded timeout."},
+            {"path": "src/auth.py", "line": 42, "body": "\U0001f534 **Blocker** — SQL injection risk."},
+            {"path": "src/utils.py", "line": 10, "body": "\U0001f7e1 **Warning** — hardcoded timeout."},
         ]
-        mock_review = AsyncMock(
-            return_value={"review_url": "https://...", "self_review_skipped": False}
-        )
-        with patch("src.services.vcs_service_client.review_and_comment", mock_review):
+        mock_review = Mock(return_value=_mock_review_response(201, html_url="https://..."))
+        with patch(
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch("plugins.tools.vcs_pr_review.post_pr_review", mock_review):
             from plugins.tools.vcs_pr_review import handle
 
             result = handle(
@@ -193,10 +214,11 @@ class TestHappyPath:
 
     def test_no_comments_forwards_empty_list(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        mock_review = AsyncMock(
-            return_value={"review_url": "https://...", "self_review_skipped": False}
-        )
-        with patch("src.services.vcs_service_client.review_and_comment", mock_review):
+        mock_review = Mock(return_value=_mock_review_response(201, html_url="https://..."))
+        with patch(
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch("plugins.tools.vcs_pr_review.post_pr_review", mock_review):
             from plugins.tools.vcs_pr_review import handle
 
             handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
@@ -213,10 +235,12 @@ class TestSelfReviewPath:
     def test_self_review_skipped_does_not_fail(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         comment_url = "https://github.com/acme/myrepo/issues/42#issuecomment-1"
-        fake_response = {"review_url": comment_url, "self_review_skipped": True}
         with patch(
-            "src.services.vcs_service_client.review_and_comment",
-            AsyncMock(return_value=fake_response),
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": comment_url}),
+        ), patch(
+            "plugins.tools.vcs_pr_review.post_pr_review",
+            Mock(return_value=_mock_review_response(422, text="self-review not allowed")),
         ):
             from plugins.tools.vcs_pr_review import handle
 
@@ -228,10 +252,12 @@ class TestSelfReviewPath:
 
     def test_self_review_skipped_regardless_of_event(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        fake_response = {"review_url": "https://...", "self_review_skipped": True}
         with patch(
-            "src.services.vcs_service_client.review_and_comment",
-            AsyncMock(return_value=fake_response),
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch(
+            "plugins.tools.vcs_pr_review.post_pr_review",
+            Mock(return_value=_mock_review_response(422, text="self-review not allowed")),
         ):
             from plugins.tools.vcs_pr_review import handle
 
@@ -242,24 +268,20 @@ class TestSelfReviewPath:
 
 
 # ---------------------------------------------------------------------------
-# vcs-service error propagation (fatal — comment step failed, or any other
-# non-422 failure on the review step)
+# Error propagation
 # ---------------------------------------------------------------------------
 
 
 class TestErrorPropagation:
-    def test_vcs_service_error_returns_ok_false(self, monkeypatch):
+    def test_step6a_http_error_returns_ok_false(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        from src.services.vcs_service_client import VCSServiceError
-
+        fake_response = Mock(spec=requests.Response)
+        fake_response.status_code = 500
+        http_error = requests.HTTPError("500 Server Error")
+        http_error.response = fake_response
         with patch(
-            "src.services.vcs_service_client.review_and_comment",
-            AsyncMock(
-                side_effect=VCSServiceError(
-                    "vcs-service returned HTTP 500 for .../pr/review_and_comment: post issue comment (step 1): boom",
-                    status=500,
-                )
-            ),
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(side_effect=http_error),
         ):
             from plugins.tools.vcs_pr_review import handle
 
@@ -267,12 +289,30 @@ class TestErrorPropagation:
 
         assert result["ok"] is False
         assert "500" in result["error"]
+        assert "step 6a" in result["error"]
+
+    def test_step6b_non422_failure_returns_ok_false(self, monkeypatch):
+        _set_vcs_env(monkeypatch)
+        with patch(
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(return_value={"html_url": "https://.../issuecomment-1"}),
+        ), patch(
+            "plugins.tools.vcs_pr_review.post_pr_review",
+            Mock(return_value=_mock_review_response(500, text="boom")),
+        ):
+            from plugins.tools.vcs_pr_review import handle
+
+            result = handle(pr_url=_PR_URL, event="APPROVE", body=_BODY)
+
+        assert result["ok"] is False
+        assert "500" in result["error"]
+        assert "step 6b" in result["error"]
 
     def test_network_error_returns_ok_false(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         with patch(
-            "src.services.vcs_service_client.review_and_comment",
-            AsyncMock(side_effect=RuntimeError("connection refused")),
+            "plugins.tools.vcs_pr_review.post_issue_comment",
+            Mock(side_effect=RuntimeError("connection refused")),
         ):
             from plugins.tools.vcs_pr_review import handle
 

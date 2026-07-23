@@ -61,7 +61,9 @@ def _clear_env(monkeypatch):
     """Ensure MCP/workflow-backend URL env vars are unset by default so
     check_available() gates return False unless a test opts in."""
     monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
+    monkeypatch.delenv("GITNEXUS_MCP_TOKEN", raising=False)
     monkeypatch.delenv("RAG_MCP_URL", raising=False)
+    monkeypatch.delenv("RAG_MCP_TOKEN", raising=False)
     monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
     monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
     yield

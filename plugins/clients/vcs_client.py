@@ -7,7 +7,9 @@ routing internally — this client only needs the service URL.
 
 Configuration
 -------------
-``VCS_SERVICE_URL``  — base URL of vcs-service (default: http://vcs-service:8080)
+``VCS_SERVICE_URL``    — base URL of vcs-service (default: http://vcs-service:8080)
+``VCS_SERVICE_TOKEN``  — Bearer token accepted by vcs-service's RequireServiceToken
+                         middleware (must match vcs-service's INTERNAL_ACCESS_TOKEN).
 """
 
 from __future__ import annotations
@@ -32,12 +34,22 @@ def _base_url() -> str:
     return os.environ.get("VCS_SERVICE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
+def _headers() -> Dict[str, str]:
+    token = os.environ.get("VCS_SERVICE_TOKEN", "")
+    if not token:
+        raise RuntimeError(
+            "VCS_SERVICE_TOKEN is not set — cannot authenticate to vcs-service."
+        )
+    return {"Authorization": f"Bearer {token}"}
+
+
 def _post(path: str, payload: Dict[str, Any]) -> requests.Response:
     """POST *payload* as JSON to vcs-service; raises on HTTP errors."""
     url = f"{_base_url()}{path}"
     resp = requests.post(
         url,
         json=payload,
+        headers=_headers(),
         timeout=_DEFAULT_TIMEOUT,
     )
     resp.raise_for_status()
@@ -329,4 +341,6 @@ def post_pr_review(
     if comments:
         payload["comments"] = comments
     url = f"{_base_url()}/api/vcs/pr/reviews"
-    return requests.post(url, json=payload, timeout=_DEFAULT_TIMEOUT)
+    return requests.post(
+        url, json=payload, headers=_headers(), timeout=_DEFAULT_TIMEOUT
+    )

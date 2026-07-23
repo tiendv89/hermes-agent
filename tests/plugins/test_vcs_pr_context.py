@@ -6,13 +6,20 @@ Covers:
   - handle(): missing vcs-service config surfaces as ok=False
   - _parse_pr_url(): valid URL parsing and invalid URL rejection
   - Tool registered in plugins.__init__._TOOLS with correct name/schema/check_fn
+
+Note: plugins/tools/vcs_pr_context.py does ``from plugins.clients.vcs_client
+import get_pr_diff, ...`` — those names are bound into the vcs_pr_context
+module's own namespace at import time, so mocks must patch
+``plugins.tools.vcs_pr_context.<name>``, not ``plugins.clients.vcs_client.<name>``.
+The underlying client functions are synchronous (plain ``requests`` calls), so
+plain ``Mock``s are used rather than ``AsyncMock``.
 """
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -56,32 +63,32 @@ def _set_vcs_env(monkeypatch):
 
 class TestParsePrUrl:
     def test_valid_url(self):
-        from plugins.tools.vcs_pr_context import _parse_pr_url
+        from plugins.tools.vcs_pr_context import parse_pr_url
 
-        owner, repo, num = _parse_pr_url("https://github.com/acme/my-repo/pull/42")
+        owner, repo, num = parse_pr_url("https://github.com/acme/my-repo/pull/42")
         assert owner == "acme"
         assert repo == "my-repo"
         assert num == 42
 
     def test_valid_url_http(self):
-        from plugins.tools.vcs_pr_context import _parse_pr_url
+        from plugins.tools.vcs_pr_context import parse_pr_url
 
-        owner, repo, num = _parse_pr_url("http://github.com/org/repo/pull/1")
+        owner, repo, num = parse_pr_url("http://github.com/org/repo/pull/1")
         assert owner == "org"
         assert repo == "repo"
         assert num == 1
 
     def test_invalid_url_raises(self):
-        from plugins.tools.vcs_pr_context import _parse_pr_url
+        from plugins.tools.vcs_pr_context import parse_pr_url
 
         with pytest.raises(ValueError, match="Invalid GitHub PR URL"):
-            _parse_pr_url("https://example.com/not-a-pr")
+            parse_pr_url("https://example.com/not-a-pr")
 
     def test_missing_pull_number_raises(self):
-        from plugins.tools.vcs_pr_context import _parse_pr_url
+        from plugins.tools.vcs_pr_context import parse_pr_url
 
         with pytest.raises(ValueError):
-            _parse_pr_url("https://github.com/owner/repo/issues/5")
+            parse_pr_url("https://github.com/owner/repo/issues/5")
 
 
 # ---------------------------------------------------------------------------
@@ -133,8 +140,8 @@ class TestHandleDiff:
     def test_happy_path(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         with patch(
-            "src.services.vcs_service_client.get_pr_diff",
-            AsyncMock(return_value="diff --git a/foo.py b/foo.py\n+line"),
+            "plugins.tools.vcs_pr_context.get_pr_diff",
+            Mock(return_value="diff --git a/foo.py b/foo.py\n+line"),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -159,13 +166,11 @@ class TestHandleDiff:
 class TestHandleFiles:
     def test_happy_path(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        fake_files = {
-            "files": [
-                {"filename": "a.py", "status": "modified", "additions": 5, "deletions": 2, "changes": 7}
-            ]
-        }
+        fake_files = [
+            {"filename": "a.py", "status": "modified", "additions": 5, "deletions": 2, "changes": 7}
+        ]
         with patch(
-            "src.services.vcs_service_client.get_pr_files", AsyncMock(return_value=fake_files)
+            "plugins.tools.vcs_pr_context.get_pr_files", Mock(return_value=fake_files)
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -203,8 +208,8 @@ class TestHandleMetadata:
             "updated_at": "2026-01-02T00:00:00Z",
         }
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(return_value=fake_metadata),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(return_value=fake_metadata),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -235,8 +240,8 @@ class TestHandleComments:
             ],
         }
         with patch(
-            "src.services.vcs_service_client.get_pr_comments",
-            AsyncMock(return_value=fake_comments),
+            "plugins.tools.vcs_pr_context.get_pr_comments",
+            Mock(return_value=fake_comments),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -256,15 +261,13 @@ class TestHandleComments:
 class TestHandleReviews:
     def test_happy_path(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        fake_reviews = {
-            "reviews": [
-                {"id": 100, "user": "alice", "state": "APPROVED", "body": "Looks good",
-                 "submitted_at": "2026-01-01T00:00:00Z", "html_url": "https://..."}
-            ]
-        }
+        fake_reviews = [
+            {"id": 100, "user": "alice", "state": "APPROVED", "body": "Looks good",
+             "submitted_at": "2026-01-01T00:00:00Z", "html_url": "https://..."}
+        ]
         with patch(
-            "src.services.vcs_service_client.get_pr_reviews",
-            AsyncMock(return_value=fake_reviews),
+            "plugins.tools.vcs_pr_context.get_pr_reviews",
+            Mock(return_value=fake_reviews),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -291,11 +294,11 @@ class TestHandleChecks:
             ],
         }
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(return_value=fake_metadata),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(return_value=fake_metadata),
         ), patch(
-            "src.services.vcs_service_client.get_check_runs",
-            AsyncMock(return_value=fake_checks),
+            "plugins.tools.vcs_pr_context.get_check_runs",
+            Mock(return_value=fake_checks),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -307,8 +310,8 @@ class TestHandleChecks:
     def test_missing_head_sha_returns_error(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(return_value={"head_sha": ""}),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(return_value={"head_sha": ""}),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -316,28 +319,32 @@ class TestHandleChecks:
         assert result["ok"] is False
         assert "head SHA" in result["error"]
 
-    def test_poll_timeout_forwarded_from_env(self, monkeypatch):
+    def test_checks_called_with_owner_repo_and_head_sha_only(self, monkeypatch):
+        """handle() resolves head_sha from metadata and calls get_check_runs with
+        exactly (owner, repo, head_sha) — it does not forward poll_timeout_seconds;
+        that env-driven default lives inside vcs_client.get_check_runs itself."""
         _set_vcs_env(monkeypatch)
         monkeypatch.setenv("CHAT_REVIEW_CI_POLL_TIMEOUT_SECONDS", "5")
-        mock_checks = AsyncMock(return_value={"status": "pending", "check_runs": []})
+        mock_checks = Mock(return_value={"status": "pending", "check_runs": []})
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(return_value={"head_sha": "sha999"}),
-        ), patch("src.services.vcs_service_client.get_check_runs", mock_checks):
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(return_value={"head_sha": "sha999"}),
+        ), patch("plugins.tools.vcs_pr_context.get_check_runs", mock_checks):
             from plugins.tools.vcs_pr_context import handle
 
             result = handle(action="checks", pr_url="https://github.com/o/r/pull/5")
         assert result["ok"] is True
-        assert mock_checks.call_args.kwargs["poll_timeout_seconds"] == 5
+        assert result["status"] == "pending"
+        mock_checks.assert_called_once_with("o", "r", "sha999")
 
     def test_failed_ci(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(return_value={"head_sha": "sha999"}),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(return_value={"head_sha": "sha999"}),
         ), patch(
-            "src.services.vcs_service_client.get_check_runs",
-            AsyncMock(return_value={"status": "failed", "check_runs": []}),
+            "plugins.tools.vcs_pr_context.get_check_runs",
+            Mock(return_value={"status": "failed", "check_runs": []}),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -348,11 +355,11 @@ class TestHandleChecks:
     def test_no_checks_returns_no_checks(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(return_value={"head_sha": "sha000"}),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(return_value={"head_sha": "sha000"}),
         ), patch(
-            "src.services.vcs_service_client.get_check_runs",
-            AsyncMock(return_value={"status": "no_checks", "check_runs": []}),
+            "plugins.tools.vcs_pr_context.get_check_runs",
+            Mock(return_value={"status": "no_checks", "check_runs": []}),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -369,16 +376,14 @@ class TestHandleChecks:
 class TestHandleCommits:
     def test_happy_path(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        fake_commits = {
-            "commits": [
-                {"sha": "abc", "message": "feat: add thing", "author": "Alice",
-                 "author_email": "alice@example.com", "date": "2026-01-01T00:00:00Z",
-                 "html_url": "https://..."}
-            ]
-        }
+        fake_commits = [
+            {"sha": "abc", "message": "feat: add thing", "author": "Alice",
+             "author_email": "alice@example.com", "date": "2026-01-01T00:00:00Z",
+             "html_url": "https://..."}
+        ]
         with patch(
-            "src.services.vcs_service_client.get_pr_commits",
-            AsyncMock(return_value=fake_commits),
+            "plugins.tools.vcs_pr_context.get_pr_commits",
+            Mock(return_value=fake_commits),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -401,8 +406,8 @@ class TestHandleCompare:
             "commits": [], "files": [],
         }
         with patch(
-            "src.services.vcs_service_client.compare_refs",
-            AsyncMock(return_value=fake_compare),
+            "plugins.tools.vcs_pr_context.compare_refs",
+            Mock(return_value=fake_compare),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -441,8 +446,8 @@ class TestHandleFileAtRef:
             "content": "def hello():\n    pass\n",
         }
         with patch(
-            "src.services.vcs_service_client.get_file_at_ref",
-            AsyncMock(return_value=fake_file),
+            "plugins.tools.vcs_pr_context.get_file_at_ref",
+            Mock(return_value=fake_file),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -475,15 +480,13 @@ class TestHandleFileAtRef:
 class TestHandleListPrs:
     def test_happy_path(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        fake_list = {
-            "prs": [
-                {"number": 7, "title": "Open PR", "state": "open", "draft": False,
-                 "author": "dev", "base_branch": "main", "head_branch": "feat",
-                 "head_sha": "aaa", "html_url": "https://...", "created_at": "c", "updated_at": "u"}
-            ]
-        }
+        fake_list = [
+            {"number": 7, "title": "Open PR", "state": "open", "draft": False,
+             "author": "dev", "base_branch": "main", "head_branch": "feat",
+             "head_sha": "aaa", "html_url": "https://...", "created_at": "c", "updated_at": "u"}
+        ]
         with patch(
-            "src.services.vcs_service_client.list_prs", AsyncMock(return_value=fake_list)
+            "plugins.tools.vcs_pr_context.list_open_prs", Mock(return_value=fake_list)
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -507,13 +510,13 @@ class TestHandleListPrs:
 
 
 class TestApiErrorPropagation:
-    def test_vcs_service_error_returns_ok_false(self, monkeypatch):
+    def test_http_error_returns_ok_false(self, monkeypatch):
         _set_vcs_env(monkeypatch)
-        from src.services.vcs_service_client import VCSServiceError
+        import requests
 
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(side_effect=VCSServiceError("vcs-service returned HTTP 404: Not Found", status=404)),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(side_effect=requests.HTTPError("404 Client Error: Not Found")),
         ):
             from plugins.tools.vcs_pr_context import handle
 
@@ -524,8 +527,8 @@ class TestApiErrorPropagation:
     def test_network_error_returns_ok_false(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         with patch(
-            "src.services.vcs_service_client.get_pr_metadata",
-            AsyncMock(side_effect=RuntimeError("connection refused")),
+            "plugins.tools.vcs_pr_context.get_pr_metadata",
+            Mock(side_effect=RuntimeError("connection refused")),
         ):
             from plugins.tools.vcs_pr_context import handle
 

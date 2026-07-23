@@ -61,7 +61,19 @@ def _inject_stubs() -> None:
         stub.SessionDB = _FakeSessionDB
         sys.modules["hermes_state"] = stub
 
-    for _mod in ("plugins", "plugins.context", "plugins.skills"):
+    plugins_stub = sys.modules.get("plugins")
+    if plugins_stub is None:
+        plugins_stub = types.ModuleType("plugins")
+        sys.modules["plugins"] = plugins_stub
+    if not getattr(plugins_stub, "__path__", None):
+        # Other test modules' stub helpers sometimes leave a bare, path-less
+        # "plugins" module cached in sys.modules. Repair it here so
+        # `plugins.tools.guardrails` etc. (needed by src.api.scope_guard)
+        # import for real via normal package machinery, without running the
+        # heavy plugins/__init__.py import chain.
+        plugins_stub.__path__ = [str(REPO_ROOT / "plugins")]
+
+    for _mod in ("plugins.context", "plugins.skills"):
         if _mod not in sys.modules:
             sys.modules[_mod] = types.ModuleType(_mod)
 
