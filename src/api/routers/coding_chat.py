@@ -12,13 +12,16 @@ import functools
 import logging
 import os
 import uuid
-from typing import Any, List, Optional
+from typing import Annotated, Any, List, Optional
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.coding_identity import CodingIdentity, require_coding_identity
+from src.api.deps import get_db
+from src.api.model_catalog import resolve_model
 from src.services.cost_client import QuotaCheckResult, check_quota, emit_turn_cost
 from src.streaming import HermesSSETranslator
 
@@ -217,10 +220,25 @@ def _run_coding_agent_turn(
         conversation_history = messages[:-1] if len(messages) > 1 else []
         last_message = messages[-1]["content"] if messages else ""
 
-        agent.run_conversation(
+        turn_result = agent.run_conversation(
             last_message,
             conversation_history=conversation_history,
         )
+
+        # run_conversation() does not raise on a failed LLM call (invalid
+        # model, provider outage, exhausted quota/rate limit, etc.) — it
+        # retries internally and returns {"failed": True, "error": ...}
+        # without ever invoking stream_delta_callback. Left unchecked, the
+        # turn silently completes as if nothing went wrong: finish_reason
+        # "stop" with zero content, indistinguishable client-side from the
+        # agent genuinely having nothing to say.
+        if isinstance(turn_result, dict) and turn_result.get("failed"):
+            error_message = turn_result.get("error") or "The agent turn failed."
+            logger.warning(
+                "coding_chat: agent turn failed for run %s: %s", run_id, error_message
+            )
+            translator.on_error(str(error_message))
+            return
 
         # ── Post-turn cost emission ──────────────────────────────────
         try:
@@ -287,14 +305,45 @@ def _make_delta_cb(cb: Any) -> Any:
     return _fixed_cb
 
 
-def _resolve_model() -> dict:
-    """Resolve the coding agent model from environment or fallback."""
+def _env_default_model() -> dict:
+    """Resolve the coding agent model from environment or fallback.
+
+    Pre-model-picker behavior — used when the request doesn't name a catalog
+    model id (older clients) or names one that turns out to be unknown/inactive.
+    """
     return {
         "model": os.environ.get("CODING_AGENT_MODEL", "claude-sonnet-4-6"),
         "provider": os.environ.get("CODING_AGENT_PROVIDER") or None,
         "api_key": os.environ.get("CODING_AGENT_API_KEY") or None,
         "base_url": os.environ.get("CODING_AGENT_BASE_URL") or None,
     }
+
+
+async def _resolve_model(db: AsyncSession, requested_model: str) -> dict:
+    """Resolve the model+provider+credentials for this turn.
+
+    An explicit ``model`` id from the request (the IDE's model picker,
+    resolved against the same ``model_catalog`` table the browser app's
+    picker uses — see src/api/model_catalog.py) takes priority; otherwise
+    falls back to the CODING_AGENT_* env vars.
+    """
+    requested_model = (requested_model or "").strip()
+    if requested_model:
+        try:
+            resolved = await resolve_model(db, requested_model)
+            return {
+                "model": resolved["model"],
+                "provider": resolved["provider"],
+                "api_key": resolved["api_key"],
+                "base_url": resolved["base_url"],
+            }
+        except ValueError:
+            logger.warning(
+                "coding_chat: unknown/inactive model %r requested, falling back to env default",
+                requested_model,
+            )
+
+    return _env_default_model()
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +355,7 @@ def _resolve_model() -> dict:
 async def coding_chat(
     body: CodingChatRequest,
     request: Request,
+    db: Annotated[AsyncSession, Depends(get_db)],
     identity: CodingIdentity = Depends(require_coding_identity),
 ) -> StreamingResponse:
     """Run one agent turn with coding tools and stream the reply via SSE.
@@ -326,7 +376,7 @@ async def coding_chat(
     run_id = uuid.uuid4().hex
     caller_id = identity.user_id
 
-    resolved = _resolve_model()
+    resolved = await _resolve_model(db, body.model)
 
     system_context = _build_system_context(body.context)
 

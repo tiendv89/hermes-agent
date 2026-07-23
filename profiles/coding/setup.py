@@ -12,7 +12,10 @@ imported from ``plugins/tools/``.  Coding-specific tools live in
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Annotated, Any
+
+from fastapi import Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from plugins.tools import (
     feature,
@@ -23,6 +26,9 @@ from plugins.tools import (
     workspace,
 )
 from profiles.coding.tools import git_ops, local_file_ops, terminal
+from src.api.deps import get_db
+from src.api.model_catalog import get_active_models
+from src.db.store import get_default_catalog_model
 
 logger = logging.getLogger(__name__)
 
@@ -196,6 +202,9 @@ def build_router():
 
     * ``POST /coding/chat`` — SSE endpoint (JWT auth, deferred tools).
     * ``GET  /coding/version`` — public, per-IDE version info.
+    * ``GET  /coding/models`` — selectable chat models for the IDE's model
+      picker, sourced from the same ``model_catalog`` table the browser
+      app's picker uses (see src/api/model_catalog.py).
     """
     import os
 
@@ -207,6 +216,16 @@ def build_router():
 
     # ── Coding chat (SSE, JWT auth, deferred tools) ──────────────────
     router.include_router(chat_router)
+
+    # ── Model catalog (coding_jwt_auth — same gate as /coding/chat) ──
+    @router.get("/coding/models")
+    async def coding_models(db: Annotated[AsyncSession, Depends(get_db)]):
+        models = await get_active_models(db)
+        default_row = await get_default_catalog_model(db)
+        return {
+            "models": models,
+            "default": default_row.model_id if default_row else "",
+        }
 
     # ── Version endpoint (public, no auth) ───────────────────────────
     @router.get("/coding/version")

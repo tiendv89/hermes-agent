@@ -4,14 +4,13 @@ Covers:
   - SSE stream with chat.completion.chunk + [DONE] sentinel.
   - hermes.tool.deferred events when the agent uses a coding (deferred) tool.
   - check_quota is called before every turn.
-  - 401/422 when no Authorization header is present.
+  - 401 when the shared GATEWAY_SERVICE_TOKEN is missing/wrong (workflow-bff
+    verifies the IDE's device-flow JWT itself and forwards trusted identity
+    headers — see src/api/coding_identity.py).
 """
 
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
 import json
 import sys
 import types
@@ -64,25 +63,6 @@ _hc.get_hermes_home = MagicMock(return_value=REPO_ROOT)  # type: ignore[attr-def
 
 
 # ---------------------------------------------------------------------------
-# JWT helper
-# ---------------------------------------------------------------------------
-
-
-def _b64url(data: bytes) -> str:
-    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("utf-8")
-
-
-def _make_jwt(payload: dict, secret: str = "test-coding-secret") -> str:
-    header = _b64url(json.dumps({"alg": "HS256", "typ": "JWT"}).encode())
-    payload_b64 = _b64url(json.dumps(payload).encode())
-    signing_input = f"{header}.{payload_b64}"
-    sig = _b64url(
-        hmac.new(secret.encode(), signing_input.encode(), hashlib.sha256).digest()
-    )
-    return f"{header}.{payload_b64}.{sig}"
-
-
-# ---------------------------------------------------------------------------
 # Stub AIAgent
 # ---------------------------------------------------------------------------
 
@@ -122,6 +102,30 @@ class _StubCodingAgent:
                 )
 
 
+class _FailingCodingAgent:
+    """Stub AIAgent mirroring a real run_conversation() failure — it returns
+    {"failed": True, "error": ...} without ever calling stream_delta_callback
+    (matches agent.conversation_loop.run_conversation's real behavior on an
+    exhausted-retries LLM call: invalid model, provider outage, rate limit,
+    quota exhaustion, etc. all surface this way, not as a raised exception)."""
+
+    def __init__(self, **kwargs):
+        self.session_input_tokens = 0
+        self.session_output_tokens = 0
+        self.session_cache_read_tokens = 0
+        self.session_cache_write_tokens = 0
+
+    def run_conversation(
+        self, message, conversation_history=None, persist_user_message=None
+    ):
+        return {
+            "final_response": "API call failed after 3 retries: HTTP 404: Error code: 404",
+            "completed": False,
+            "failed": True,
+            "error": "HTTP 404: Error code: 404",
+        }
+
+
 def _parse_sse_events(body: bytes) -> list:
     events = []
     current_event = None
@@ -153,31 +157,45 @@ def _parse_sse_events(body: bytes) -> list:
 
 @pytest.fixture(autouse=True)
 def _cleanup_env(monkeypatch):
-    monkeypatch.setenv("CODING_JWT_SECRET", "test-coding-secret")
+    monkeypatch.setenv("GATEWAY_SERVICE_TOKEN", "test-service-token")
     monkeypatch.setenv("CODING_AGENT_MODEL", "test-model")
     yield
 
 
 @pytest.fixture
 def coding_app():
-    """Minimal FastAPI app with the coding profile router."""
+    """Minimal FastAPI app with the coding profile router.
+
+    /coding/chat and /coding/models both depend on get_db (model-catalog
+    lookups) — overridden here with a stub since none of these tests send an
+    explicit body.model (empty string short-circuits _resolve_model before
+    it ever touches the session), so the stub is never actually queried.
+    """
     sys.modules["run_agent"].AIAgent = _StubCodingAgent  # type: ignore[attr-defined]
 
     from fastapi import FastAPI
 
     from profiles.coding.setup import build_router
+    from src.api.deps import get_db
+
+    async def _fake_get_db():
+        yield MagicMock()
 
     app = FastAPI()
     app.include_router(build_router(), prefix="/api/v1")
+    app.dependency_overrides[get_db] = _fake_get_db
     return app
 
 
 @pytest.fixture
 def auth_headers():
-    token = _make_jwt(
-        {"sub": "test-user", "org": "test-org", "workspaces": ["ws-1"]}
-    )
-    return {"Authorization": f"Bearer {token}"}
+    """Trusted headers workflow-bff injects after verifying the IDE's JWT itself."""
+    return {
+        "Authorization": "Bearer test-service-token",
+        "X-User-Id": "test-user",
+        "X-Org-Id": "test-org",
+        "X-Accessible-Org-Ids": "test-org",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -367,8 +385,65 @@ async def test_coding_chat_quota_blocked(coding_app, auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_coding_chat_agent_failure_surfaces_error(coding_app, auth_headers):
+    """A run_conversation() failure (e.g. exhausted-retries LLM call) must
+    surface as an error frame, not silently complete as an empty success —
+    the real hermes-agent run_conversation() returns {"failed": True, ...}
+    rather than raising, so _run_coding_agent_turn must check for it."""
+    sys.modules["run_agent"].AIAgent = _FailingCodingAgent  # type: ignore[attr-defined]
+
+    with patch(
+        "src.api.routers.coding_chat.check_quota",
+        AsyncMock(return_value=MagicMock(allowed=True)),
+    ), patch(
+        "src.api.routers.coding_chat.emit_turn_cost",
+        AsyncMock(),
+    ) as mock_emit_cost:
+        async with AsyncClient(
+            transport=ASGITransport(app=coding_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.post(
+                "/api/v1/coding/chat",
+                json={
+                    "messages": [{"role": "user", "content": "hi"}],
+                    "workspace_id": "ws-1",
+                    "repo_path": "/tmp/test",
+                    "context": {"workspace_root": "/tmp/test"},
+                },
+                headers=auth_headers,
+                timeout=15.0,
+            )
+
+    assert resp.status_code == 200
+    events = _parse_sse_events(resp.content)
+
+    finish_reasons = [
+        e.get("choices", [{}])[0].get("finish_reason")
+        for e in events
+        if e.get("object") == "chat.completion.chunk"
+    ]
+    assert "error" in finish_reasons, f"Expected an error finish_reason, got: {events}"
+
+    error_frame = next(
+        e
+        for e in events
+        if e.get("object") == "chat.completion.chunk"
+        and e.get("choices", [{}])[0].get("finish_reason") == "error"
+    )
+    assert "404" in error_frame["hermes"]["error"]
+
+    # A failed turn never reaches the post-turn cost emission.
+    mock_emit_cost.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_coding_chat_requires_auth(coding_app):
-    """POST without Authorization header returns 401 or 422."""
+    """POST without the shared service token returns 401.
+
+    workflow-bff verifies the IDE's device-flow JWT itself and only forwards
+    requests behind GATEWAY_SERVICE_TOKEN — this service never sees the JWT.
+    """
     async with AsyncClient(
         transport=ASGITransport(app=coding_app),
         base_url="http://testserver",
@@ -384,6 +459,6 @@ async def test_coding_chat_requires_auth(coding_app):
             timeout=15.0,
         )
 
-    assert resp.status_code in (401, 422), (
-        f"Expected 401 or 422, got {resp.status_code}: {resp.text}"
+    assert resp.status_code == 401, (
+        f"Expected 401, got {resp.status_code}: {resp.text}"
     )
