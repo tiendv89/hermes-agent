@@ -1,9 +1,10 @@
 """workflow plugin — registers workspace-aware tools for the digital-factory agent.
 
 This module provides the shared tool-registration infrastructure used by
-all profiles. Each profile calls ``register(ctx, tools=...)`` with its own
-tool list. The module-level ``_TOOLS`` tuple is kept as an empty backward-
-compatibility fallback; new code should always pass ``tools`` explicitly.
+src/tool_setup.py. It calls ``register(ctx, tools=...)`` once per tool set
+(workflow, coding) with its own tool list. The module-level ``_TOOLS`` tuple
+is kept as an empty backward-compatibility fallback; new code should always
+pass ``tools`` explicitly.
 
 Shared utilities:
 - ``_guardrail_wrapper`` — wraps a handler with pre-dispatch guardrail checks
@@ -424,7 +425,11 @@ _TOOLS = (
 # ---------------------------------------------------------------------------
 
 
-def register(ctx: Any, tools: tuple[dict[str, Any], ...] | None = None) -> None:
+def register(
+    ctx: Any,
+    tools: tuple[dict[str, Any], ...] | None = None,
+    toolset: str = "workflow",
+) -> None:
     """Register a set of tools on the agent context.
 
     Each tool dict must have: ``name``, ``schema``, ``handler``.
@@ -434,6 +439,15 @@ def register(ctx: Any, tools: tuple[dict[str, Any], ...] | None = None) -> None:
         ctx: Agent PluginContext with a ``register_tool`` method.
         tools: Tuple of tool dicts to register. If ``None``, falls back to
                the module-level ``_TOOLS`` (for backward compatibility).
+        toolset: Toolset label passed to ``ctx.register_tool``. Each profile
+                 must pass its own value (e.g. ``"coding"``) — the vendored
+                 ``ToolRegistry`` is a single flat, name-keyed dict shared by
+                 every profile in the process, and its shadow-protection
+                 guard only rejects a re-registration when the toolset
+                 differs from what's already there. Leaving this hardcoded
+                 let two profiles' same-named-but-different tools silently
+                 overwrite each other with no warning when both were
+                 registered in one process.
     """
     global _TOOLS
 
@@ -448,7 +462,7 @@ def register(ctx: Any, tools: tuple[dict[str, Any], ...] | None = None) -> None:
         # no tools argument after the T2 profile split.
         if not _tools:
             try:
-                from profiles.workflow.setup import _WORKFLOW_TOOLS
+                from src.tool_setup import _WORKFLOW_TOOLS
 
                 _tools = _WORKFLOW_TOOLS
                 _TOOLS = _WORKFLOW_TOOLS
@@ -463,7 +477,11 @@ def register(ctx: Any, tools: tuple[dict[str, Any], ...] | None = None) -> None:
         guarded_handler = _guardrail_wrapper(json_handler, t["name"], is_async)
         ctx.register_tool(
             name=t["name"],
-            toolset="workflow",
+            # A tool dict may pin its own toolset (e.g. "shared" for a
+            # handler both profiles register) to override the call-level
+            # default — see the "shared" entries in _WORKFLOW_TOOLS /
+            # _CODING_TOOLS.
+            toolset=t.get("toolset", toolset),
             schema=t["schema"],
             handler=guarded_handler,
             check_fn=t.get("check_fn"),

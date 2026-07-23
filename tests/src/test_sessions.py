@@ -84,6 +84,45 @@ async def test_list_sessions_uses_untitled_fallback():
 
 
 @pytest.mark.asyncio
+async def test_list_sessions_coding_ide_filters_by_user_id():
+    """source='coding-ide' scopes the query to the caller — other users' IDE
+    sessions must never appear, unlike ordinary (org-public) sessions."""
+    from src.db.store import list_sessions
+
+    result_mock = MagicMock()
+    result_mock.all.return_value = []
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    await list_sessions(db, workspace_id="ws-1", feature_id="feat-1", user_id="user-42", source="coding-ide")
+
+    stmt = db.execute.call_args[0][0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "sessions.user_id = 'user-42'" in compiled
+    assert "sessions.source = 'coding-ide'" in compiled
+
+
+@pytest.mark.asyncio
+async def test_list_sessions_ordinary_source_ignores_user_id():
+    """Without source='coding-ide', user_id is accepted but does NOT filter —
+    ordinary sessions stay org-public (m3-chat-public-session)."""
+    from src.db.store import list_sessions
+
+    result_mock = MagicMock()
+    result_mock.all.return_value = []
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=result_mock)
+
+    await list_sessions(db, workspace_id="ws-1", feature_id="feat-1", user_id="user-42")
+
+    stmt = db.execute.call_args[0][0]
+    compiled = str(stmt.compile(compile_kwargs={"literal_binds": True}))
+    assert "sessions.user_id" not in compiled
+
+
+@pytest.mark.asyncio
 async def test_last_assistant_excerpt_returns_up_to_120_chars():
     """_last_assistant_excerpt returns first 120 chars of last assistant message."""
     from src.db.store import _last_assistant_excerpt
@@ -465,6 +504,93 @@ async def test_get_session_messages_endpoint_404_when_session_missing(gateway_ap
             resp = await client.get("/api/v5/sessions/nope/messages")
 
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_session_messages_endpoint_403_for_other_users_coding_ide_session(gateway_app):
+    """A coding-ide session is private to its creator — another user gets 403, not the transcript."""
+    from httpx import ASGITransport, AsyncClient
+
+    fake_session = MagicMock(source="coding-ide", user_id="owner-1")
+
+    with (
+        patch(
+            "src.api.routers.sessions.get_session",
+            AsyncMock(return_value=fake_session),
+        ),
+        patch(
+            "src.api.routers.sessions.get_session_messages",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=gateway_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get(
+                "/api/v5/sessions/sess_ide/messages",
+                headers={"X-User-Id": "other-user"},
+            )
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_get_session_messages_endpoint_allows_owner_for_coding_ide_session(gateway_app):
+    """The creator of a coding-ide session can still fetch its own transcript."""
+    from httpx import ASGITransport, AsyncClient
+
+    fake_session = MagicMock(source="coding-ide", user_id="owner-1")
+
+    with (
+        patch(
+            "src.api.routers.sessions.get_session",
+            AsyncMock(return_value=fake_session),
+        ),
+        patch(
+            "src.api.routers.sessions.get_session_messages",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=gateway_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get(
+                "/api/v5/sessions/sess_ide/messages",
+                headers={"X-User-Id": "owner-1"},
+            )
+
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_get_session_messages_endpoint_ordinary_session_stays_org_public(gateway_app):
+    """A non-coding-ide session is unaffected — any workspace member can still read it."""
+    from httpx import ASGITransport, AsyncClient
+
+    fake_session = MagicMock(source="hermes-agent", user_id="owner-1")
+
+    with (
+        patch(
+            "src.api.routers.sessions.get_session",
+            AsyncMock(return_value=fake_session),
+        ),
+        patch(
+            "src.api.routers.sessions.get_session_messages",
+            AsyncMock(return_value=[]),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=gateway_app),
+            base_url="http://testserver",
+        ) as client:
+            resp = await client.get(
+                "/api/v5/sessions/sess_web/messages",
+                headers={"X-User-Id": "other-user"},
+            )
+
+    assert resp.status_code == 200
 
 
 # ---------------------------------------------------------------------------

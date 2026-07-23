@@ -165,6 +165,20 @@ class HermesSSETranslator:
         """Accumulated assistant text from streamed deltas."""
         return "".join(self._full_parts)
 
+    @property
+    def reasoning_text(self) -> str:
+        """Accumulated reasoning-trace text from streamed deltas."""
+        return "".join(self._reasoning_parts)
+
+    def on_session(self, session_id: str) -> None:
+        """Emit the resolved (created-or-reused) DB session id for this turn.
+
+        Sent once, before any content, so a client that omitted session_id on
+        its first message (starting a new conversation) learns the id to
+        reuse on subsequent turns of the same conversation.
+        """
+        self._emit(self._event("hermes.session", {"session_id": session_id}))
+
     def on_delta(self, delta: Any = None, **_: Any) -> None:
         # The agent fires a None delta to flush its display before a tool runs;
         # that's not text and not end-of-stream, so skip falsy deltas.

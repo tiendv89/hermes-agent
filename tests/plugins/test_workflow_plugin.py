@@ -102,7 +102,7 @@ def _get_workflow_tools():
 
     # Reload the profile setup so its imports from plugins.tools pick up the
     # freshly-loaded plugins module.
-    import profiles.workflow.setup as wf_setup
+    import src.tool_setup as wf_setup
 
     importlib.reload(wf_setup)
     return wf_setup._WORKFLOW_TOOLS
@@ -287,7 +287,7 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("check_fn") is rag.check_available
 
     def test_registers_pre_llm_call_hook(self):
-        """Hook registration moved to profiles/workflow/setup.py::register_tools().
+        """Hook registration moved to src/tool_setup.py::register_tools().
 
         ``plugins.register()`` no longer registers the hook itself — the
         profile's ``register_tools()`` does.  This test verifies the profile
@@ -297,7 +297,7 @@ class TestRegisterT3:
         _load_plugins_register()
         import importlib
 
-        import profiles.workflow.setup as wf_setup
+        import src.tool_setup as wf_setup
 
         importlib.reload(wf_setup)
 
@@ -2309,7 +2309,7 @@ class TestToolsRegistration:
     """Tests that the workflow profile's tool list includes expected tools.
 
     The module-level ``_TOOLS`` in plugins/__init__.py is now empty — the
-    real tool list lives in ``profiles/workflow/setup._WORKFLOW_TOOLS``.
+    real tool list lives in ``src/tool_setup._WORKFLOW_TOOLS``.
     """
 
     def test_load_skill_in_tools_list(self):

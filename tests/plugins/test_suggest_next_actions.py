@@ -504,7 +504,7 @@ class TestToolRegistration:
 
         # _TOOLS is now populated by the profile setup, not at module load time.
         # Check the workflow profile's tool list instead.
-        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        from src.tool_setup import _WORKFLOW_TOOLS
 
         names = {t["name"] for t in _WORKFLOW_TOOLS}
         assert "suggest_next_actions" in names, (

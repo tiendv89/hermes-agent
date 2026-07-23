@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from profiles.coding.tools import deferred
+from plugins.tools.deferred import deferred
 
 # ---------------------------------------------------------------------------
 # schema

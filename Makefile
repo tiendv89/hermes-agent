@@ -1,15 +1,9 @@
 -include .env
 export
-PORT           ?= 8000
-# HERMES_PROFILE selects which profile's tools + router get mounted (see
-# src/app.py) — "workflow" (BFF-proxied web chat) or "coding" (IDE agent).
-# Only one profile can run per process (see profiles/*/setup.py — both
-# register overlapping tool names into the same global registry, so running
-# both in one process silently corrupts whichever registered second).
-HERMES_PROFILE ?= workflow
+PORT ?= 8000
 
 .PHONY: help submodules update-submodules install lint test run dev \
-	dev-workflow dev-coding run-workflow run-coding
+	install-opencode opencode-serve
 help:
 	@echo "Usage: make <target>"
 	@echo ""
@@ -18,12 +12,13 @@ help:
 	@echo "  install            Install dependencies (gateway + vendored hermes-agent)"
 	@echo "  lint               Run ruff over the project (vendor excluded)"
 	@echo "  test               Run the test suite"
-	@echo "  dev                Start with auto-reload (HERMES_PROFILE=$(HERMES_PROFILE) PORT=$(PORT); override e.g. HERMES_PROFILE=coding PORT=8010 make dev)"
-	@echo "  run                Start in production mode (same HERMES_PROFILE/PORT overrides)"
-	@echo "  dev-workflow       Shortcut: HERMES_PROFILE=workflow PORT=8000, auto-reload"
-	@echo "  dev-coding         Shortcut: HERMES_PROFILE=coding PORT=8010, auto-reload"
-	@echo "  run-workflow       Shortcut: HERMES_PROFILE=workflow PORT=8000, production mode"
-	@echo "  run-coding         Shortcut: HERMES_PROFILE=coding PORT=8010, production mode"
+	@echo "  dev                Start with auto-reload (PORT=$(PORT); override e.g. PORT=8010 make dev)"
+	@echo "  run                Start in production mode (same PORT override)"
+	@echo "  install-opencode   Install the pinned opencode server (vendor/opencode, pnpm)"
+	@echo "  opencode-serve     Run the opencode server on 0.0.0.0:4096 (non-Docker dev)"
+	@echo ""
+	@echo "One process serves both the workflow (web chat) and coding (IDE)"
+	@echo "profiles — see src/app.py. There is no more per-profile split."
 
 lint:
 	uvx ruff check .
@@ -55,14 +50,8 @@ dev:
 run:
 	uv run uvicorn src.app:app --host 0.0.0.0 --port $(PORT)
 
-dev-workflow:
-	$(MAKE) dev HERMES_PROFILE=workflow PORT=8010
+install-opencode:
+	cd vendor/opencode && pnpm install
 
-dev-coding:
-	$(MAKE) dev HERMES_PROFILE=coding PORT=8011
-
-run-workflow:
-	$(MAKE) run HERMES_PROFILE=workflow PORT=8010
-
-run-coding:
-	$(MAKE) run HERMES_PROFILE=coding PORT=8011
+opencode-serve:
+	cd vendor/opencode && pnpm exec opencode serve --hostname 0.0.0.0 --port 4096 --print-logs

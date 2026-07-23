@@ -111,6 +111,44 @@ def test_mentions_agent_false():
 
 
 # ---------------------------------------------------------------------------
+# canonical <p:handle> tag form (workflow-extension/digital-factory-ui's
+# people-mention picker inserts this now, not bare @handle) — both forms
+# must keep working since digital-factory-ui's own "auto-tag @agent for a
+# channel message" convenience logic still produces the bare form.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_handles_tag_form():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("Hello <p:agent>, cc <p:alice>!") == ["agent", "alice"]
+
+
+def test_parse_handles_mixed_bare_and_tag_form():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("<p:agent> please loop in @bob") == ["agent", "bob"]
+
+
+def test_parse_handles_tag_form_deduped_with_bare_form():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("@agent <p:agent> @agent") == ["agent"]
+
+
+def test_parse_handles_tag_form_case_insensitive():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("<p:Agent> says hi") == ["agent"]
+
+
+def test_mentions_agent_true_via_tag_form():
+    from src.api.mentions import mentions_agent
+
+    assert mentions_agent("Hey <p:agent>, help!") is True
+
+
+# ---------------------------------------------------------------------------
 # mention resolution tests
 # ---------------------------------------------------------------------------
 

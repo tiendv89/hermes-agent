@@ -184,6 +184,337 @@ _active_runs_lock = threading.Lock()
 _pending_agent_turns: Dict[str, Dict[str, Any]] = {}
 _pending_lock = threading.Lock()
 
+# ---------------------------------------------------------------------------
+# IDE context (opencode coding-verdict turns only)
+# ---------------------------------------------------------------------------
+
+from pydantic import BaseModel  # noqa: E402
+
+
+class IDEFileContext(BaseModel):
+    """A single file's state as reported by the IDE extension."""
+
+    path: str = ""
+    language: str = ""
+    cursor_line: int = 0
+    selection: Optional[str] = None
+
+
+class IDEContext(BaseModel):
+    """Context gathered by the IDE extension on every message.
+
+    Set on ``StreamChatRequest.ide_context`` (src/api/routers/chat.py) only
+    by the IDE extension — its mere presence, not its content, is what tells
+    the coding-triage branch below this turn can dispatch to opencode
+    instead of redirecting to "use your IDE".
+    """
+
+    active_file: str = ""
+    active_file_language: str = ""
+    cursor_line: int = 0
+    selection: Optional[str] = None
+    open_files: List[IDEFileContext] = []
+    git_branch: str = ""
+    git_status: str = ""
+    diagnostics: str = ""
+    workspace_root: str = ""
+
+
+def _build_ide_system_context(ctx: IDEContext) -> str:
+    """Render the IDE context block injected into the opencode turn's system prompt."""
+    lines: List[str] = [
+        "## IDE context (from the developer's editor)",
+        f"- Workspace root: {ctx.workspace_root or '(unknown)'}",
+        f"- Active file: {ctx.active_file or '(none)'}",
+        f"- Cursor: line {ctx.cursor_line}",
+    ]
+
+    if ctx.selection:
+        sel = ctx.selection
+        if len(sel) > 2000:
+            sel = sel[:2000] + "\n... (selection truncated)"
+        lines.append(f"- Selection:\n```\n{sel}\n```")
+
+    if ctx.open_files:
+        open_list = ", ".join(f.path for f in ctx.open_files[:10])
+        lines.append(f"- Open files: {open_list}")
+
+    if ctx.diagnostics:
+        diag = ctx.diagnostics
+        if len(diag) > 2000:
+            diag = diag[:2000] + "\n... (truncated)"
+        lines.append(f"- Diagnostics:\n```\n{diag}\n```")
+
+    if ctx.git_branch:
+        lines.append(f"- Git branch: {ctx.git_branch}")
+
+    if ctx.git_status:
+        gs = ctx.git_status
+        if len(gs) > 1000:
+            gs = gs[:1000] + "\n... (truncated)"
+        lines.append(f"- Git status:\n```\n{gs}\n```")
+
+    return "\n".join(lines)
+
+
+# Maps our chat session_id -> the opencode server's own session id, so a
+# multi-turn IDE conversation continues the SAME opencode session (opencode
+# keeps conversation history server-side per session, unlike Hermes's
+# AIAgent which is reconstructed fresh each turn from conversation_history).
+# Process-lifetime cache; never proactively evicted (mirrors how DB sessions
+# themselves persist indefinitely).
+_opencode_sessions: Dict[str, str] = {}
+_opencode_sessions_lock = threading.Lock()
+
+# opencode's own built-in tool ids (confirmed via GET /experimental/tool/ids
+# against a live v1.18.4 server) that touch the filesystem/shell — disabled
+# per-message so opencode is forced through the MCP bridge's IDE-deferred
+# tools instead of its own local execution. Left enabled: question, task,
+# webfetch, todowrite, websearch, skill — none of these touch the
+# developer's machine.
+_OPENCODE_DISABLE_BUILTIN_TOOLS = {
+    "bash": False,
+    "read": False,
+    "glob": False,
+    "grep": False,
+    "edit": False,
+    "write": False,
+    "apply_patch": False,
+}
+
+
+def _run_opencode_turn(
+    *,
+    run_id: str,
+    session_id: str,
+    message: str,
+    ide_context: IDEContext,
+    workspace_id: str,
+    feature_id: str,
+    user_id: str,
+    org_id: Optional[str],
+    model: str,
+    provider: Optional[str],
+    translator: HermesSSETranslator,
+    db_factory: Callable,
+    loop: asyncio.AbstractEventLoop,
+    author_id: Optional[str],
+    skip_user_persist: bool,
+    reply_to_message_id: Optional[int],
+    thread_root_id: Optional[int],
+) -> None:
+    """Run one CODING-verdict /chat turn via opencode for an IDE-originated call.
+
+    Called from ``_run_agent_turn`` (below), already on a worker thread — so
+    like every other cross-thread call in that function, opencode_client's
+    async HTTP calls are bridged back onto the request's event loop via
+    ``run_coroutine_threadsafe`` rather than needing their own executor.
+
+    Bypasses the vendored ``AIAgent``/``GatewaySessionDB`` mirror entirely
+    (opencode is a one-shot blocking HTTP turn, not a Hermes conversation
+    loop), so — unlike the DOC path above it — this persists the user and
+    assistant messages itself, mirroring the explicit ``append_message``
+    calls the scope-guard/quota-block/coding-redirect branches already use
+    in this same function.
+    """
+    from src.services import deferred_tool_gateway as gw
+    from src.services import opencode_client
+
+    def _run(coro: Any, timeout: float) -> Any:
+        return asyncio.run_coroutine_threadsafe(coro, loop).result(timeout=timeout)
+
+    if not skip_user_persist:
+
+        async def _persist_user() -> None:
+            from src.db.store import append_message
+
+            async with db_factory() as db:
+                await append_message(
+                    db,
+                    session_id,
+                    role="user",
+                    content=message,
+                    author_id=author_id,
+                    reply_to_message_id=reply_to_message_id,
+                    thread_root_id=thread_root_id,
+                )
+
+        try:
+            _run(_persist_user(), 10)
+        except Exception:
+            logger.exception(
+                "agent_dispatch: failed to persist user message for session %s",
+                session_id,
+            )
+
+    try:
+        quota: QuotaCheckResult = _run(
+            check_quota(session_id, user_id, org_id=org_id), 5
+        )
+    except Exception:
+        logger.exception(
+            "agent_dispatch: quota check failed for session %s (fail-open)",
+            session_id,
+        )
+        quota = QuotaCheckResult.fail_open()
+
+    if not quota.allowed:
+        reason = quota.reason or "quota_exceeded"
+        resets_at = quota.resets_at or ""
+        cap_label = (
+            (
+                f"daily credit limit ({quota.daily_cap})"
+                if quota.daily_cap
+                else "daily credit limit"
+            )
+            if reason == "daily_exceeded"
+            else (
+                f"weekly credit limit ({quota.weekly_cap})"
+                if quota.weekly_cap
+                else "weekly credit limit"
+            )
+            if reason == "weekly_exceeded"
+            else "credit limit"
+        )
+        block_msg = (
+            f"You've reached your {cap_label}. Your quota resets at {resets_at}."
+            if resets_at
+            else f"You've reached your {cap_label}."
+        )
+        logger.info(
+            "agent_dispatch: quota blocked opencode turn for session %s reason=%s",
+            session_id,
+            reason,
+        )
+        translator.on_delta(block_msg)
+        return
+
+    try:
+        with _opencode_sessions_lock:
+            opencode_session_id = _opencode_sessions.get(session_id)
+        is_new_opencode_session = opencode_session_id is None
+        if is_new_opencode_session:
+            opencode_session_id = _run(
+                opencode_client.create_session(title=f"hermes-chat-{session_id}"), 30
+            )
+            with _opencode_sessions_lock:
+                _opencode_sessions[session_id] = opencode_session_id
+
+        bridge_name = f"hermes-ide-bridge-{session_id}"
+        if is_new_opencode_session:
+            # Only needed when opencode can't reach this gateway at
+            # localhost:$PORT — e.g. opencode running in a container while
+            # this process runs on the host, or a remote opencode instance.
+            # Same-host dev (the common case) needs no explicit config.
+            mcp_bridge_base_url = os.environ.get(
+                "OPENCODE_MCP_BRIDGE_BASE_URL", ""
+            ).rstrip("/") or f"http://localhost:{os.environ.get('PORT', '8000')}"
+            bridge_url = f"{mcp_bridge_base_url}/api/v1/coding/mcp-bridge/{session_id}/mcp"
+            _run(opencode_client.register_mcp_bridge(bridge_name, bridge_url), 30)
+
+        gw.register_translator(session_id, translator)
+        try:
+            system_context = _build_ide_system_context(ide_context)
+            # Without an explicit variant, opencode falls back to some
+            # default of its own rather than one of the model's actual
+            # higher-effort reasoning variants (confirmed via a live
+            # server's GET /config/providers: e.g. deepseek-v4-pro only
+            # exposes "high"/"max", nothing lower) — that default is what
+            # was producing the sparse "Thought for Ns" reasoning traces
+            # reported for opencode turns. "high" is deliberately a
+            # separate env var from HERMES_REASONING_EFFORT (the native
+            # AIAgent path's effort vocabulary below) rather than reusing
+            # it, since opencode's variant IDs are model-specific strings
+            # that don't reliably overlap with that vocabulary (no
+            # "medium"/"low" for every model).
+            _opencode_variant = os.environ.get("OPENCODE_REASONING_VARIANT", "high").strip().lower()
+            if _opencode_variant in ("", "off", "none", "disabled"):
+                _opencode_variant = ""
+            response = _run(
+                opencode_client.send_message(
+                    opencode_session_id,
+                    message,
+                    provider_id=provider or "anthropic",
+                    model_id=model,
+                    tools=dict(_OPENCODE_DISABLE_BUILTIN_TOOLS),
+                    system=system_context,
+                    variant=_opencode_variant,
+                ),
+                300,
+            )
+        finally:
+            gw.unregister_translator(session_id)
+
+        error_message = opencode_client.extract_error(response)
+        if error_message:
+            logger.warning(
+                "agent_dispatch: opencode turn failed for session %s: %s",
+                session_id,
+                error_message,
+            )
+            translator.on_error(error_message)
+            return
+
+        text = opencode_client.extract_text(response)
+        reasoning = opencode_client.extract_reasoning(response)
+        if reasoning:
+            translator.on_reasoning(reasoning)
+        if text:
+            translator.on_delta(text)
+
+        final_text = (getattr(translator, "full_text", "") or "").strip()
+        if final_text:
+
+            async def _persist_assistant() -> None:
+                from src.db.store import append_message
+
+                async with db_factory() as db:
+                    await append_message(
+                        db,
+                        session_id,
+                        role="assistant",
+                        content=final_text,
+                        reasoning=(getattr(translator, "reasoning_text", "") or None),
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
+                    )
+
+            try:
+                _run(_persist_assistant(), 10)
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: failed to persist assistant message for session %s",
+                    session_id,
+                )
+
+        try:
+            usage = opencode_client.extract_usage(response)
+            _run(
+                emit_turn_cost(
+                    session_id,
+                    user_id,
+                    model,
+                    input_tokens=usage["input_tokens"],
+                    output_tokens=usage["output_tokens"],
+                    cache_read_tokens=usage["cache_read_tokens"],
+                    cache_write_tokens=usage["cache_write_tokens"],
+                    stopped=False,
+                    turn_id=run_id,
+                    org_id=org_id,
+                    source_label=feature_id or workspace_id or session_id,
+                ),
+                15,
+            )
+        except Exception:
+            logger.exception(
+                "agent_dispatch: post-turn cost emission failed for session %s",
+                session_id,
+            )
+
+    except Exception as exc:
+        logger.exception("agent_dispatch: opencode turn failed for session %s", session_id)
+        translator.on_error(str(exc))
+
 
 async def _backfill_assistant(
     db_factory: Callable,
@@ -441,6 +772,7 @@ def _run_agent_turn(
     reply_to_message_id: Optional[int] = None,
     thread_root_id: Optional[int] = None,
     image_ids: Optional[List[str]] = None,
+    ide_context: Optional[IDEContext] = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
 
@@ -523,6 +855,99 @@ def _run_agent_turn(
             except Exception:
                 logger.exception(
                     "agent_dispatch: scope-decline persist failed for session %s",
+                    session_id,
+                )
+            return  # finally-block runs: done(), clear context, release run, coalesce
+
+        # Per-turn doc-vs-coding triage. Unlike the scope guard above (gated
+        # to the session's first turn), this runs on every turn — intent can
+        # flip mid-thread ("write the tech design" -> "now implement it").
+        # A CODING verdict's handling depends on who's asking: the browser
+        # has no code-editing capability at all — there's no filesystem/
+        # sandbox on this side (confirmed: every workflow tool is a GitHub
+        # Contents-API call via vcs-service, no local clone anywhere
+        # server-side) — so it always redirects to the IDE. The IDE extension
+        # itself DOES have local file/git/terminal access, signaled by
+        # ide_context being set (see IDEContext above) — its coding turns
+        # dispatch to opencode instead of being redirected to itself.
+        from src.api.triage import is_coding_request
+
+        if is_coding_request(
+            message,
+            history=history,
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+        ):
+            if ide_context is not None:
+                logger.info(
+                    "agent_dispatch: coding_triage dispatched session %s to opencode",
+                    session_id,
+                )
+                _run_opencode_turn(
+                    run_id=run_id,
+                    session_id=session_id,
+                    message=message,
+                    ide_context=ide_context,
+                    workspace_id=workspace_id,
+                    feature_id=feature_id,
+                    user_id=user_id,
+                    org_id=org_id,
+                    model=model,
+                    provider=provider,
+                    translator=translator,
+                    db_factory=db_factory,
+                    loop=loop,
+                    author_id=author_id,
+                    skip_user_persist=skip_user_persist,
+                    reply_to_message_id=reply_to_message_id,
+                    thread_root_id=thread_root_id,
+                )
+                return  # finally-block runs: done(), clear context, release run, coalesce
+
+            logger.info(
+                "agent_dispatch: coding_triage redirected session %s to the IDE",
+                session_id,
+            )
+            redirect_msg = (
+                "This looks like a coding request — I can help you design and "
+                "document it here, but making the actual code changes needs "
+                "your IDE, where I can edit files directly. Want me to write "
+                "up the plan first, or head to your IDE to implement it?"
+            )
+            _make_delta_callback(translator.on_delta)(redirect_msg)
+
+            async def _persist_coding_redirect() -> None:
+                from src.db.store import append_message
+
+                async with db_factory() as db:
+                    if not skip_user_persist:
+                        await append_message(
+                            db,
+                            session_id,
+                            role="user",
+                            content=message,
+                            author_id=author_id,
+                            reply_to_message_id=reply_to_message_id,
+                            thread_root_id=thread_root_id,
+                        )
+                    await append_message(
+                        db,
+                        session_id,
+                        role="assistant",
+                        content=redirect_msg,
+                        reply_to_message_id=reply_to_message_id,
+                        thread_root_id=thread_root_id,
+                    )
+
+            try:
+                asyncio.run_coroutine_threadsafe(
+                    _persist_coding_redirect(), loop
+                ).result(timeout=15)
+            except Exception:
+                logger.exception(
+                    "agent_dispatch: coding-redirect persist failed for session %s",
                     session_id,
                 )
             return  # finally-block runs: done(), clear context, release run, coalesce
@@ -705,9 +1130,9 @@ def _run_agent_turn(
             api_key=api_key,
             base_url=base_url,
             enabled_toolsets=(
-                ["workflow", "web", "clarify", "vision"]
+                ["workflow", "web", "clarify", "vision", "shared"]
                 if downloaded_image_paths
-                else ["workflow", "web", "clarify"]
+                else ["workflow", "web", "clarify", "shared"]
             ),
             max_iterations=int(os.environ.get("HERMES_MAX_ITERATIONS", "90")),
             quiet_mode=True,

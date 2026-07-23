@@ -464,7 +464,7 @@ class TestToolsRegistration:
     @staticmethod
     def _get_tools():
         """Return the workflow tool list from the profile setup module."""
-        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        from src.tool_setup import _WORKFLOW_TOOLS
         return _WORKFLOW_TOOLS
 
     def test_workflow_lookup_feature_in_tools(self):

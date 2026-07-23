@@ -24,6 +24,9 @@ venv.old/
 .ruff_cache/
 .mypy_cache/
 
+# Node (opencode/ only — see opencode/package.json)
+node_modules/
+
 # OS
 .DS_Store
 

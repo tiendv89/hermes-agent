@@ -199,15 +199,18 @@ class TestGetToolsEndpoint:
     def test_returns_tools_json(self, monkeypatch):
         monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
         monkeypatch.delenv("RAG_MCP_URL", raising=False)
-        # Patch _TOOLS to a known fixture.
+        # list_tools_endpoint reads src.tool_setup._WORKFLOW_TOOLS/_CODING_TOOLS
+        # directly (not plugins._TOOLS, which only reflects whichever
+        # profile's register() call happened to run last at startup — see
+        # test_tools_endpoint.py's own module docstring for the full story).
+        # No `source` param defaults to _WORKFLOW_TOOLS.
         fake_tools = (
             {"name": "tool_alpha", "schema": {"description": "Alpha tool."}, "check_fn": None},
             {"name": "tool_beta", "schema": {"description": "Beta tool."}, "check_fn": lambda: True},
         )
-        with patch("src.api.router._TOOLS", new=fake_tools, create=True):
-            with patch("plugins._TOOLS", fake_tools):
-                client = self._build_client(monkeypatch)
-                resp = client.get("/api/v1/tools")
+        with patch("src.tool_setup._WORKFLOW_TOOLS", fake_tools):
+            client = self._build_client(monkeypatch)
+            resp = client.get("/api/v1/tools")
 
         assert resp.status_code == 200
         data = resp.json()
@@ -222,7 +225,7 @@ class TestGetToolsEndpoint:
             {"name": "always_on", "schema": {"description": "Always available."}, "check_fn": None},
             {"name": "gated_off", "schema": {"description": "Gated."}, "check_fn": lambda: False},
         )
-        with patch("plugins._TOOLS", fake_tools):
+        with patch("src.tool_setup._WORKFLOW_TOOLS", fake_tools):
             client = self._build_client(monkeypatch)
             resp = client.get("/api/v1/tools")
 
@@ -235,7 +238,7 @@ class TestGetToolsEndpoint:
         fake_tools = (
             {"name": "described", "schema": {"description": "My tool description."}, "check_fn": None},
         )
-        with patch("plugins._TOOLS", fake_tools):
+        with patch("src.tool_setup._WORKFLOW_TOOLS", fake_tools):
             client = self._build_client(monkeypatch)
             resp = client.get("/api/v1/tools")
 
@@ -246,7 +249,7 @@ class TestGetToolsEndpoint:
         fake_tools = (
             {"name": "nodesc", "schema": {}, "check_fn": None},
         )
-        with patch("plugins._TOOLS", fake_tools):
+        with patch("src.tool_setup._WORKFLOW_TOOLS", fake_tools):
             client = self._build_client(monkeypatch)
             resp = client.get("/api/v1/tools")
 
@@ -258,12 +261,9 @@ class TestGetToolsEndpoint:
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
 
-        # Populate _TOOLS from the workflow profile so the tools endpoint
-        # sees the real tool set (after the T2 profile split).
-        import plugins
-        from profiles.workflow.setup import _WORKFLOW_TOOLS
-        plugins._TOOLS = _WORKFLOW_TOOLS
-
+        # No `source` param already gets the real _WORKFLOW_TOOLS list by
+        # default — no patching needed (unlike before the T2/merged-process
+        # fix, which required manually repointing plugins._TOOLS at it).
         client = self._build_client(monkeypatch)
         resp = client.get("/api/v1/tools")
         assert resp.status_code == 200

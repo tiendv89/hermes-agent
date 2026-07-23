@@ -198,6 +198,31 @@ async def test_list_workspace_threads_untitled_fallback():
 
 
 @pytest.mark.asyncio
+async def test_list_workspace_threads_scopes_to_hermes_agent_source():
+    """An IDE coding session (source='coding-ide') has the same kind='thread'/
+    feature_id='' shape as a genuine web workspace thread (the VS Code
+    extension's POST /session never sets a feature_id, and every session
+    defaults to kind='thread') — without an explicit source filter it would
+    leak into the browser's workspace-threads sidebar as an empty,
+    unopenable "thread". Asserts the query Session.execute() actually
+    receives includes a source='hermes-agent' predicate, not just that the
+    (mocked, source-blind) row mapping still works."""
+    from src.db.store import list_workspace_threads
+
+    db = _mock_db()
+    result_mock = MagicMock()
+    result_mock.all.return_value = []
+    db.execute = AsyncMock(return_value=result_mock)
+
+    await list_workspace_threads(db, workspace_id="ws_1", user_id="user_a")
+
+    statement = db.execute.call_args[0][0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "source" in compiled
+    assert "hermes-agent" in compiled
+
+
+@pytest.mark.asyncio
 async def test_list_member_sessions_includes_workspace_threads():
     """list_member_sessions returns both feature threads and workspace threads (no feature_id filter)."""
     from src.db.store import list_member_sessions

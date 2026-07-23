@@ -87,11 +87,12 @@ async def create_session(
     workspace_id: str = "",
     feature_id: str = "",
     metadata: Optional[Dict[str, Any]] = None,
+    source: str = "hermes-agent",
 ) -> str:
     now = time.time()
     session = Session(
         id=_new_session_id(),
-        source="hermes-agent",
+        source=source,
         user_id=user_id,
         workspace_id=workspace_id,
         feature_id=feature_id,
@@ -939,6 +940,7 @@ async def list_sessions(
     feature_id: str,
     user_id: Optional[str] = None,
     limit: int = 50,
+    source: Optional[str] = None,
 ) -> list[Dict[str, Any]]:
     """Return non-archived agent-chat sessions for a workspace+feature, newest-first.
 
@@ -949,7 +951,19 @@ async def list_sessions(
     non-archived session for the workspace+feature is returned regardless of
     who created it, matching can_view_session's org-public policy for
     kind='thread' sessions. ``user_id`` is accepted for interface stability but
-    no longer filters the result.
+    otherwise no longer filters the result — EXCEPT for ``source="coding-ide"``
+    sessions (below), which stay creator-only.
+
+    ``source`` is optional and, when given, scopes the list to one session
+    source (e.g. the IDE's own chats, tagged ``"coding-ide"`` at creation —
+    see ``create_session``) so a client whose sessions all share one source
+    doesn't see every other client's sessions mixed in.
+
+    An IDE session is one developer's local coding session, never a shared
+    team thread — unlike ordinary web sessions, the org-public policy above
+    does NOT apply to ``source="coding-ide"``: it stays scoped to its creator
+    (``user_id``) so other workspace members never see each other's IDE chats
+    (which can reference local file paths/code not meant for the whole team).
     """
     conditions = [
         Session.workspace_id == workspace_id,
@@ -957,6 +971,10 @@ async def list_sessions(
         Session.kind != "channel",
         Session.archived == False,  # noqa: E712
     ]
+    if source:
+        conditions.append(Session.source == source)
+    if source == "coding-ide" and user_id:
+        conditions.append(Session.user_id == user_id)
 
     result = await db.execute(
         select(
@@ -1714,6 +1732,15 @@ async def list_workspace_threads(
     can_view_session's org-public policy for kind='thread' sessions.
     ``user_id`` is accepted for interface stability but no longer filters the
     result.
+
+    Also scoped to source='hermes-agent' (create_workspace_thread's own
+    hardcoded value) — without this, an IDE coding session (source=
+    'coding-ide') incidentally satisfies the same kind='thread'/feature_id=''
+    shape (the VS Code extension's POST /session never sets a feature_id, and
+    every session defaults to kind='thread'), so it would otherwise show up
+    in the browser's workspace-threads sidebar as an empty, unopenable
+    "thread" — it's a real session, just not one the web UI's message-loading
+    path understands.
     """
     result = await db.execute(
         select(
@@ -1730,6 +1757,7 @@ async def list_workspace_threads(
             Session.archived == False,  # noqa: E712
             Session.kind == "thread",
             Session.feature_id == "",
+            Session.source == "hermes-agent",
         )
         .order_by(Session.last_active_at.desc())
         .limit(limit)

@@ -41,17 +41,27 @@ See `.env.example` for the full list. Key variables:
 | `HERMES_MODEL` | no | Model (default: `claude-sonnet-4-6`) |
 | `HERMES_PROVIDER` | no | Provider (default: `anthropic`) |
 | `GITNEXUS_MCP_URL` / `RAG_MCP_URL` | no | MCP endpoints used by plugin tools |
+| `OPENCODE_SERVER_URL` | coding chat | Base URL of the opencode server (see below), e.g. `http://localhost:4096` |
+| `OPENCODE_SERVER_PASSWORD` | no | opencode server auth; omit for a server unsecured behind this gateway's own network perimeter |
 
 ## Run locally
 
 ```bash
-# 1. Start Postgres (compose brings it up on localhost:25434)
+# 1. Start Postgres + opencode (compose brings them up on localhost:25434 / :4096)
 docker compose up -d
 
 # 2. Make sure DATABASE_URL in .env points at that Postgres, then:
 make dev          # auto-reload on port 8000
 # or
 make run          # production mode
+```
+
+opencode powers coding-verdict turns on `/coding/chat` (see `src/services/opencode_client.py`).
+To run it outside Docker instead:
+
+```bash
+make install-opencode   # pnpm install into vendor/opencode
+make opencode-serve     # opencode serve --hostname 0.0.0.0 --port 4096
 ```
 
 Migrations in `migrations/` are applied automatically on startup.
@@ -73,6 +83,8 @@ docker run --rm -p 8000:8000 --env-file .env hermes-workflow-gateway
 | `make lint` | Run ruff over the project (vendor excluded) |
 | `make dev` | Start with auto-reload |
 | `make run` | Start in production mode |
+| `make install-opencode` | Install the pinned opencode server (`vendor/opencode`, pnpm) |
+| `make opencode-serve` | Run the opencode server on `0.0.0.0:4096` (non-Docker dev) |
 
 ## API
 

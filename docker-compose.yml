@@ -17,5 +17,14 @@ services:
       timeout: 5s
       retries: 5
 
+  opencode:
+    build: ./vendor/opencode
+    container_name: hermes-agent-opencode
+    restart: unless-stopped
+    environment:
+      OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:-}
+    ports:
+      - "4096:4096"
+
 volumes:
   postgres_data:

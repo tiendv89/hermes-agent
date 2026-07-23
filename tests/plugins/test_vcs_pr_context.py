@@ -546,7 +546,7 @@ class TestToolRegistration:
     @staticmethod
     def _get_tools():
         """Return the workflow tool list from the profile setup module."""
-        from profiles.workflow.setup import _WORKFLOW_TOOLS
+        from src.tool_setup import _WORKFLOW_TOOLS
         return _WORKFLOW_TOOLS
 
     def test_vcs_pr_context_registered(self, monkeypatch):

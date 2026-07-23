@@ -85,7 +85,7 @@ def _get_coding_tools():
     import importlib
 
     _load_plugins_register()
-    import profiles.coding.setup as coding_setup
+    import src.tool_setup as coding_setup
 
     importlib.reload(coding_setup)
     return coding_setup._CODING_TOOLS
@@ -105,7 +105,7 @@ def _register_coding_tools(ctx):
 
 class TestDeferredHelper:
     def test_returns_correct_structure(self):
-        from profiles.coding.tools import deferred
+        from plugins.tools.deferred import deferred
 
         result = deferred("edit_file", {"path": "a.py", "edits": []})
         assert result == {
@@ -115,14 +115,14 @@ class TestDeferredHelper:
         }
 
     def test_tool_name_is_string(self):
-        from profiles.coding.tools import deferred
+        from plugins.tools.deferred import deferred
 
         result = deferred("run_command", {"command": "ls"})
         assert isinstance(result["tool"], str)
         assert result["tool"] == "run_command"
 
     def test_params_can_be_empty(self):
-        from profiles.coding.tools import deferred
+        from plugins.tools.deferred import deferred
 
         result = deferred("git_status", {})
         assert result["params"] == {}
@@ -178,10 +178,10 @@ class TestCodingToolSchemas:
 
 
 class TestLocalFileOpsHandlers:
-    """Test handlers in profiles/coding/tools/local_file_ops.py."""
+    """Test handlers in plugins/tools/local_file_ops.py."""
 
     def test_handle_read_file_returns_deferred(self):
-        from profiles.coding.tools.local_file_ops import handle_read_file
+        from plugins.tools.local_file_ops import handle_read_file
 
         result = handle_read_file(path="src/main.py")
         assert result["__deferred__"] is True
@@ -189,20 +189,20 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {"path": "src/main.py"}
 
     def test_handle_read_file_with_line_range(self):
-        from profiles.coding.tools.local_file_ops import handle_read_file
+        from plugins.tools.local_file_ops import handle_read_file
 
         result = handle_read_file(path="src/main.py", start_line=10, end_line=20)
         assert result["params"] == {"path": "src/main.py", "start_line": 10, "end_line": 20}
 
     def test_handle_read_file_rejects_empty_path(self):
-        from profiles.coding.tools.local_file_ops import handle_read_file
+        from plugins.tools.local_file_ops import handle_read_file
 
         result = handle_read_file(path="")
         assert result["ok"] is False
         assert "path" in result["error"]
 
     def test_handle_edit_file_returns_deferred(self):
-        from profiles.coding.tools.local_file_ops import handle_edit_file
+        from plugins.tools.local_file_ops import handle_edit_file
 
         edits = [{"old_string": "foo", "new_string": "bar"}]
         result = handle_edit_file(path="a.py", edits=edits)
@@ -211,21 +211,21 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {"path": "a.py", "edits": edits}
 
     def test_handle_edit_file_rejects_empty_path(self):
-        from profiles.coding.tools.local_file_ops import handle_edit_file
+        from plugins.tools.local_file_ops import handle_edit_file
 
         result = handle_edit_file(path="", edits=[{"old_string": "x", "new_string": "y"}])
         assert result["ok"] is False
         assert "path" in result["error"]
 
     def test_handle_edit_file_rejects_empty_edits(self):
-        from profiles.coding.tools.local_file_ops import handle_edit_file
+        from plugins.tools.local_file_ops import handle_edit_file
 
         result = handle_edit_file(path="a.py", edits=[])
         assert result["ok"] is False
         assert "edits" in result["error"]
 
     def test_handle_write_file_returns_deferred(self):
-        from profiles.coding.tools.local_file_ops import handle_write_file
+        from plugins.tools.local_file_ops import handle_write_file
 
         result = handle_write_file(path="new.py", content="print('hi')")
         assert result["__deferred__"] is True
@@ -233,20 +233,20 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {"path": "new.py", "content": "print('hi')"}
 
     def test_handle_write_file_allows_empty_content(self):
-        from profiles.coding.tools.local_file_ops import handle_write_file
+        from plugins.tools.local_file_ops import handle_write_file
 
         result = handle_write_file(path="empty.txt", content="")
         assert result["__deferred__"] is True
         assert result["params"]["content"] == ""
 
     def test_handle_write_file_rejects_empty_path(self):
-        from profiles.coding.tools.local_file_ops import handle_write_file
+        from plugins.tools.local_file_ops import handle_write_file
 
         result = handle_write_file(path="", content="stuff")
         assert result["ok"] is False
 
     def test_handle_create_directory_returns_deferred(self):
-        from profiles.coding.tools.local_file_ops import handle_create_directory
+        from plugins.tools.local_file_ops import handle_create_directory
 
         result = handle_create_directory(path="src/middleware/")
         assert result["__deferred__"] is True
@@ -254,13 +254,13 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {"path": "src/middleware/"}
 
     def test_handle_create_directory_rejects_empty_path(self):
-        from profiles.coding.tools.local_file_ops import handle_create_directory
+        from plugins.tools.local_file_ops import handle_create_directory
 
         result = handle_create_directory(path="")
         assert result["ok"] is False
 
     def test_handle_browse_directory_defaults_to_root(self):
-        from profiles.coding.tools.local_file_ops import handle_browse_directory
+        from plugins.tools.local_file_ops import handle_browse_directory
 
         result = handle_browse_directory()
         assert result["__deferred__"] is True
@@ -268,13 +268,13 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {}
 
     def test_handle_browse_directory_with_path(self):
-        from profiles.coding.tools.local_file_ops import handle_browse_directory
+        from plugins.tools.local_file_ops import handle_browse_directory
 
         result = handle_browse_directory(path="src/")
         assert result["params"] == {"path": "src/"}
 
     def test_handle_search_code_returns_deferred(self):
-        from profiles.coding.tools.local_file_ops import handle_search_code
+        from plugins.tools.local_file_ops import handle_search_code
 
         result = handle_search_code(pattern="def test_")
         assert result["__deferred__"] is True
@@ -282,7 +282,7 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {"pattern": "def test_"}
 
     def test_handle_search_code_with_filters(self):
-        from profiles.coding.tools.local_file_ops import handle_search_code
+        from plugins.tools.local_file_ops import handle_search_code
 
         result = handle_search_code(
             pattern="TODO", path="src/", file_glob="*.py"
@@ -294,14 +294,14 @@ class TestLocalFileOpsHandlers:
         }
 
     def test_handle_search_code_rejects_empty_pattern(self):
-        from profiles.coding.tools.local_file_ops import handle_search_code
+        from plugins.tools.local_file_ops import handle_search_code
 
         result = handle_search_code(pattern="")
         assert result["ok"] is False
         assert "pattern" in result["error"]
 
     def test_handle_search_files_returns_deferred(self):
-        from profiles.coding.tools.local_file_ops import handle_search_files
+        from plugins.tools.local_file_ops import handle_search_files
 
         result = handle_search_files(pattern="*.py")
         assert result["__deferred__"] is True
@@ -309,13 +309,13 @@ class TestLocalFileOpsHandlers:
         assert result["params"] == {"pattern": "*.py"}
 
     def test_handle_search_files_with_path(self):
-        from profiles.coding.tools.local_file_ops import handle_search_files
+        from plugins.tools.local_file_ops import handle_search_files
 
         result = handle_search_files(pattern="**/test_*.ts", path="src/")
         assert result["params"] == {"pattern": "**/test_*.ts", "path": "src/"}
 
     def test_handle_search_files_rejects_empty_pattern(self):
-        from profiles.coding.tools.local_file_ops import handle_search_files
+        from plugins.tools.local_file_ops import handle_search_files
 
         result = handle_search_files(pattern="")
         assert result["ok"] is False
@@ -328,7 +328,7 @@ class TestLocalFileOpsHandlers:
 
 class TestTerminalHandler:
     def test_handle_run_command_returns_deferred(self):
-        from profiles.coding.tools.terminal import handle_run_command
+        from plugins.tools.terminal import handle_run_command
 
         result = handle_run_command(command="pytest")
         assert result["__deferred__"] is True
@@ -336,7 +336,7 @@ class TestTerminalHandler:
         assert result["params"] == {"command": "pytest"}
 
     def test_handle_run_command_with_workdir_and_timeout(self):
-        from profiles.coding.tools.terminal import handle_run_command
+        from plugins.tools.terminal import handle_run_command
 
         result = handle_run_command(
             command="npm test", workdir="packages/core", timeout=120
@@ -348,7 +348,7 @@ class TestTerminalHandler:
         }
 
     def test_handle_run_command_rejects_empty_command(self):
-        from profiles.coding.tools.terminal import handle_run_command
+        from plugins.tools.terminal import handle_run_command
 
         result = handle_run_command(command="")
         assert result["ok"] is False
@@ -362,7 +362,7 @@ class TestTerminalHandler:
 
 class TestGitOpsHandlers:
     def test_handle_git_status_returns_deferred(self):
-        from profiles.coding.tools.git_ops import handle_git_status
+        from plugins.tools.git_ops import handle_git_status
 
         result = handle_git_status()
         assert result["__deferred__"] is True
@@ -370,7 +370,7 @@ class TestGitOpsHandlers:
         assert result["params"] == {}
 
     def test_handle_git_diff_defaults(self):
-        from profiles.coding.tools.git_ops import handle_git_diff
+        from plugins.tools.git_ops import handle_git_diff
 
         result = handle_git_diff()
         assert result["__deferred__"] is True
@@ -378,25 +378,25 @@ class TestGitOpsHandlers:
         assert result["params"] == {}
 
     def test_handle_git_diff_staged_only(self):
-        from profiles.coding.tools.git_ops import handle_git_diff
+        from plugins.tools.git_ops import handle_git_diff
 
         result = handle_git_diff(staged=True)
         assert result["params"] == {"staged": True}
 
     def test_handle_git_diff_unstaged_only(self):
-        from profiles.coding.tools.git_ops import handle_git_diff
+        from plugins.tools.git_ops import handle_git_diff
 
         result = handle_git_diff(staged=False)
         assert result["params"] == {"staged": False}
 
     def test_handle_git_diff_with_path(self):
-        from profiles.coding.tools.git_ops import handle_git_diff
+        from plugins.tools.git_ops import handle_git_diff
 
         result = handle_git_diff(path="src/main.py")
         assert result["params"] == {"path": "src/main.py"}
 
     def test_handle_git_commit_returns_deferred(self):
-        from profiles.coding.tools.git_ops import handle_git_commit
+        from plugins.tools.git_ops import handle_git_commit
 
         result = handle_git_commit(message="feat: add login")
         assert result["__deferred__"] is True
@@ -404,14 +404,14 @@ class TestGitOpsHandlers:
         assert result["params"] == {"message": "feat: add login"}
 
     def test_handle_git_commit_rejects_empty_message(self):
-        from profiles.coding.tools.git_ops import handle_git_commit
+        from plugins.tools.git_ops import handle_git_commit
 
         result = handle_git_commit(message="")
         assert result["ok"] is False
         assert "message" in result["error"]
 
     def test_handle_git_push_defaults(self):
-        from profiles.coding.tools.git_ops import handle_git_push
+        from plugins.tools.git_ops import handle_git_push
 
         result = handle_git_push()
         assert result["__deferred__"] is True
@@ -419,7 +419,7 @@ class TestGitOpsHandlers:
         assert result["params"] == {}
 
     def test_handle_git_push_with_all_options(self):
-        from profiles.coding.tools.git_ops import handle_git_push
+        from plugins.tools.git_ops import handle_git_push
 
         result = handle_git_push(
             remote="upstream", branch="main", set_upstream=True
@@ -431,7 +431,7 @@ class TestGitOpsHandlers:
         }
 
     def test_handle_git_checkout_returns_deferred(self):
-        from profiles.coding.tools.git_ops import handle_git_checkout
+        from plugins.tools.git_ops import handle_git_checkout
 
         result = handle_git_checkout(branch="feature/x")
         assert result["__deferred__"] is True
@@ -439,20 +439,20 @@ class TestGitOpsHandlers:
         assert result["params"] == {"branch": "feature/x"}
 
     def test_handle_git_checkout_create_branch(self):
-        from profiles.coding.tools.git_ops import handle_git_checkout
+        from plugins.tools.git_ops import handle_git_checkout
 
         result = handle_git_checkout(branch="feature/y", create=True)
         assert result["params"] == {"branch": "feature/y", "create": True}
 
     def test_handle_git_checkout_rejects_empty_branch(self):
-        from profiles.coding.tools.git_ops import handle_git_checkout
+        from plugins.tools.git_ops import handle_git_checkout
 
         result = handle_git_checkout(branch="")
         assert result["ok"] is False
         assert "branch" in result["error"]
 
     def test_handle_git_log_defaults(self):
-        from profiles.coding.tools.git_ops import handle_git_log
+        from plugins.tools.git_ops import handle_git_log
 
         result = handle_git_log()
         assert result["__deferred__"] is True
@@ -460,7 +460,7 @@ class TestGitOpsHandlers:
         assert result["params"] == {}
 
     def test_handle_git_log_with_count_and_branch(self):
-        from profiles.coding.tools.git_ops import handle_git_log
+        from plugins.tools.git_ops import handle_git_log
 
         result = handle_git_log(count=5, branch="develop")
         assert result["params"] == {"count": 5, "branch": "develop"}
@@ -482,10 +482,12 @@ class TestCodingProfileSetup:
         "get_feature_state",
         "get_tasks",
         "load_skill",
-        # Coding (client-executed, deferred)
-        "read_file",
-        "edit_file",
-        "write_file",
+        # Coding (client-executed, deferred) — coding_-prefixed to avoid
+        # colliding with the workflow profile's read_file/write_file/edit_file
+        # in the shared tool registry.
+        "coding_read_file",
+        "coding_edit_file",
+        "coding_write_file",
         "create_directory",
         "browse_directory",
         "search_code",
@@ -530,9 +532,9 @@ class TestCodingProfileSetup:
         ctx = MagicMock()
         _register_coding_tools(ctx)
         deferred_names = {
-            "read_file",
-            "edit_file",
-            "write_file",
+            "coding_read_file",
+            "coding_edit_file",
+            "coding_write_file",
             "create_directory",
             "browse_directory",
             "search_code",
@@ -563,7 +565,7 @@ class TestCodingProfileSetup:
         edit_call = next(
             c
             for c in ctx.register_tool.call_args_list
-            if (c.kwargs.get("name") or c.args[0]) == "edit_file"
+            if (c.kwargs.get("name") or c.args[0]) == "coding_edit_file"
         )
         wrapped = edit_call.kwargs["handler"]
 
@@ -585,7 +587,7 @@ class TestCodingProfileSetup:
         edit_call = next(
             c
             for c in ctx.register_tool.call_args_list
-            if (c.kwargs.get("name") or c.args[0]) == "edit_file"
+            if (c.kwargs.get("name") or c.args[0]) == "coding_edit_file"
         )
         wrapped = edit_call.kwargs["handler"]
 
@@ -703,7 +705,7 @@ class TestProfileIsolation:
         import importlib
 
         _load_plugins_register()
-        import profiles.workflow.setup as wf_setup
+        import src.tool_setup as wf_setup
 
         importlib.reload(wf_setup)
         ctx = MagicMock()
