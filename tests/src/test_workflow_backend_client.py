@@ -300,9 +300,9 @@ class TestCreateFeatureTasks:
             patch("src.services.workflow_backend_client.aiohttp.ClientSession", return_value=_fake_session(fake_resp)),
             patch("plugins.context.get_user_id", return_value="u-1"),
             patch("plugins.context.get_org_id", return_value="o-1"),
+            pytest.raises(WorkflowBackendError) as exc_info,
         ):
-            with pytest.raises(WorkflowBackendError) as exc_info:
-                await create("ws-1", "feat-1", _SAMPLE_TASKS)
+            await create("ws-1", "feat-1", _SAMPLE_TASKS)
 
         assert exc_info.value.reason_code == "feature_not_tasks_approved"
         assert exc_info.value.status == 422
@@ -324,9 +324,9 @@ class TestCreateFeatureTasks:
             patch("src.services.workflow_backend_client.aiohttp.ClientSession", return_value=_fake_session(fake_resp)),
             patch("plugins.context.get_user_id", return_value="u-1"),
             patch("plugins.context.get_org_id", return_value="o-1"),
+            pytest.raises(WorkflowBackendError) as exc_info,
         ):
-            with pytest.raises(WorkflowBackendError) as exc_info:
-                await create("ws-1", "feat-1", _SAMPLE_TASKS)
+            await create("ws-1", "feat-1", _SAMPLE_TASKS)
 
         assert exc_info.value.reason_code == "tasks_already_exist"
 
@@ -347,9 +347,9 @@ class TestCreateFeatureTasks:
             patch("src.services.workflow_backend_client.aiohttp.ClientSession", return_value=_fake_session(fake_resp)),
             patch("plugins.context.get_user_id", return_value="u-1"),
             patch("plugins.context.get_org_id", return_value="o-1"),
+            pytest.raises(WorkflowBackendError) as exc_info,
         ):
-            with pytest.raises(WorkflowBackendError) as exc_info:
-                await create("ws-1", "feat-1", _SAMPLE_TASKS)
+            await create("ws-1", "feat-1", _SAMPLE_TASKS)
 
         assert exc_info.value.reason_code == ""
         assert exc_info.value.status == 500
@@ -613,15 +613,14 @@ class TestCall:
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
             return_value=_fake_request_session(fake_resp),
-        ):
-            with pytest.raises(ValueError, match="not found"):
-                await mod._call(
-                    "GET",
-                    "/api/workspaces/missing",
-                    user_id="u",
-                    org_id="o",
-                    not_found_message="Workspace not found: 'missing'",
-                )
+        ), pytest.raises(ValueError, match="not found"):
+            await mod._call(
+                "GET",
+                "/api/workspaces/missing",
+                user_id="u",
+                org_id="o",
+                not_found_message="Workspace not found: 'missing'",
+            )
 
     @pytest.mark.asyncio
     async def test_404_without_not_found_message_raises_backend_error(self, monkeypatch):
@@ -633,9 +632,8 @@ class TestCall:
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
             return_value=_fake_request_session(fake_resp),
-        ):
-            with pytest.raises(mod.WorkflowBackendError) as exc_info:
-                await mod._call("GET", "/api/workspaces/missing", user_id="u", org_id="o")
+        ), pytest.raises(mod.WorkflowBackendError) as exc_info:
+            await mod._call("GET", "/api/workspaces/missing", user_id="u", org_id="o")
         assert exc_info.value.status == 404
 
     @pytest.mark.asyncio
@@ -878,9 +876,8 @@ class TestGetWorkspaceIdForFeature:
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
             return_value=_fake_request_session(fake_resp),
-        ):
-            with pytest.raises(ValueError, match="Feature not found"):
-                await mod.get_workspace_id_for_feature("feat-1", user_id="u", org_id="o")
+        ), pytest.raises(ValueError, match="Feature not found"):
+            await mod.get_workspace_id_for_feature("feat-1", user_id="u", org_id="o")
 
 
 class TestGetFeatureDetailAndTasks:
@@ -1004,12 +1001,14 @@ class TestGetFeatureDetailAndTasks:
         fake_session.__aenter__ = AsyncMock(return_value=fake_session)
         fake_session.__aexit__ = AsyncMock(return_value=False)
 
-        with patch(
-            "src.services.workflow_backend_client.aiohttp.ClientSession",
-            return_value=fake_session,
+        with (
+            patch(
+                "src.services.workflow_backend_client.aiohttp.ClientSession",
+                return_value=fake_session,
+            ),
+            pytest.raises(ValueError, match="not found"),
         ):
-            with pytest.raises(ValueError, match="not found"):
-                await mod.get_feature_detail("ws-1", "no-such-feature", user_id="u", org_id="o")
+            await mod.get_feature_detail("ws-1", "no-such-feature", user_id="u", org_id="o")
 
     @pytest.mark.asyncio
     async def test_get_feature_tasks_shapes_response(self, monkeypatch):
@@ -1186,14 +1185,16 @@ class TestUpdateFeatureStage:
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
 
         fake_resp = _fake_response(404, {"success": False, "error": {}})
-        with patch(
-            "src.services.workflow_backend_client.aiohttp.ClientSession",
-            return_value=_fake_request_session(fake_resp),
+        with (
+            patch(
+                "src.services.workflow_backend_client.aiohttp.ClientSession",
+                return_value=_fake_request_session(fake_resp),
+            ),
+            pytest.raises(ValueError),
         ):
-            with pytest.raises(ValueError):
-                await mod.update_feature_stage(
-                    "ws-1", "feat-1", "tasks", "approved", "s", "c", "n", "actor", user_id="u", org_id="o"
-                )
+            await mod.update_feature_stage(
+                "ws-1", "feat-1", "tasks", "approved", "s", "c", "n", "actor", user_id="u", org_id="o"
+            )
 
 
 class TestActivateReadyTasks:
@@ -1237,6 +1238,5 @@ class TestActivateReadyTasks:
         with patch(
             "src.services.workflow_backend_client.aiohttp.ClientSession",
             return_value=_fake_request_session(fake_resp),
-        ):
-            with pytest.raises(ValueError):
-                await mod.activate_ready_tasks("ws-1", "feat-1", user_id="u", org_id="o")
+        ), pytest.raises(ValueError):
+            await mod.activate_ready_tasks("ws-1", "feat-1", user_id="u", org_id="o")

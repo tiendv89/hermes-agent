@@ -26,7 +26,6 @@ import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +48,7 @@ class SkillEntry:
     description: str
     path: str
     is_authoring: bool = False
-    references: Dict[str, str] = field(default_factory=dict)
+    references: dict[str, str] = field(default_factory=dict)
 
     @property
     def body(self) -> str:
@@ -69,7 +68,7 @@ class SkillEntry:
 # ---------------------------------------------------------------------------
 
 _index_lock = threading.Lock()
-_index: Optional[Dict[str, SkillEntry]] = None
+_index: dict[str, SkillEntry] | None = None
 _index_built = False
 
 
@@ -82,18 +81,18 @@ def _parse_description(skill_md: str) -> str:
     return ""
 
 
-def _read(path: Path) -> Optional[str]:
+def _read(path: Path) -> str | None:
     try:
         return path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return None
 
 
-def _collect_references(skill_dir: Path) -> Dict[str, str]:
+def _collect_references(skill_dir: Path) -> dict[str, str]:
     """Gather a skill's reference files: direct (non-SKILL.md) children plus the
     files in a ``references/`` subdirectory. Nested directories like ``rules/``
     or ``scripts/`` are intentionally ignored — the gateway can't execute them."""
-    refs: Dict[str, str] = {}
+    refs: dict[str, str] = {}
 
     for child in sorted(skill_dir.iterdir()):
         if child.is_file() and child.name != "SKILL.md":
@@ -114,7 +113,7 @@ def _collect_references(skill_dir: Path) -> Dict[str, str]:
     return refs
 
 
-def _index_skill(skill_dir: Path) -> Optional[SkillEntry]:
+def _index_skill(skill_dir: Path) -> SkillEntry | None:
     """Build a SkillEntry from a skill directory, or None if it has no SKILL.md
     with a frontmatter description."""
     content = _read(skill_dir / "SKILL.md")
@@ -136,9 +135,9 @@ def _index_skill(skill_dir: Path) -> Optional[SkillEntry]:
     return entry
 
 
-def _build_index_from_bundle(root: Path) -> Dict[str, SkillEntry]:
+def _build_index_from_bundle(root: Path) -> dict[str, SkillEntry]:
     """Walk the bundled skills tree and build the loadable-skill index."""
-    index: Dict[str, SkillEntry] = {}
+    index: dict[str, SkillEntry] = {}
 
     technical_dir = root / "technical_skills"
     if technical_dir.is_dir():
@@ -153,7 +152,7 @@ def _build_index_from_bundle(root: Path) -> Dict[str, SkillEntry]:
     return index
 
 
-def build_index() -> Dict[str, SkillEntry]:
+def build_index() -> dict[str, SkillEntry]:
     """Build and cache the skills index from the bundled claude/ tree.
 
     Thread-safe; walks the bundle once and caches it for the process lifetime.
@@ -180,7 +179,7 @@ def build_index() -> Dict[str, SkillEntry]:
         return _index
 
 
-def get_index() -> Dict[str, SkillEntry]:
+def get_index() -> dict[str, SkillEntry]:
     """Return the cached skill index, building it on first call."""
     with _index_lock:
         if _index_built:
@@ -188,7 +187,7 @@ def get_index() -> Dict[str, SkillEntry]:
     return build_index()
 
 
-def get_skill(name: str) -> Optional[SkillEntry]:
+def get_skill(name: str) -> SkillEntry | None:
     """Return a SkillEntry by name, or None if not found."""
     return get_index().get(name)
 
@@ -198,7 +197,7 @@ def get_skill(name: str) -> Optional[SkillEntry]:
 # ---------------------------------------------------------------------------
 
 _shared_rules_lock = threading.Lock()
-_shared_rules: Optional[str] = None
+_shared_rules: str | None = None
 _shared_rules_loaded = False
 
 

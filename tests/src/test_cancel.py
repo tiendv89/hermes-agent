@@ -78,6 +78,7 @@ def cancel_app():
     _inject_stubs()
 
     from fastapi import FastAPI
+
     from src.api.router import router
 
     app = FastAPI()
@@ -101,6 +102,7 @@ async def test_cancel_no_active_turn_returns_404(cancel_app):
     """POST /threads/{id}/cancel with no in-flight turn → 404."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import _active_runs, _active_runs_lock
 
     session_id = "sess_cancel_404"
@@ -123,6 +125,7 @@ async def test_cancel_non_triggering_member_returns_403(cancel_app):
     """Cancel by a member who did not trigger the turn → 403."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_cancel_403"
@@ -153,6 +156,7 @@ async def test_cancel_by_triggering_member_returns_202(cancel_app):
     """Cancel by the triggering member → 202, task.cancel() called."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_cancel_202"
@@ -185,6 +189,7 @@ async def test_cancel_interrupts_agent_and_sets_event(cancel_app):
     cancel the asyncio task — so the blocking worker thread actually stops."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_cancel_interrupt"
@@ -219,6 +224,7 @@ async def test_cancel_with_no_agent_still_sets_event(cancel_app):
     (the worker bails at its next checkpoint) and no interrupt is attempted."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_cancel_no_agent"
@@ -250,6 +256,7 @@ async def test_cancel_missing_identity_returns_400(cancel_app):
     """Cancel with no X-User-Id header → 400."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_cancel_no_identity"
@@ -426,25 +433,24 @@ async def test_cancelled_session_freed_from_active_runs():
     with patch(
         "src.api.agent_dispatch.get_bus",
         MagicMock(return_value=MagicMock(publish=MagicMock())),
-    ):
-        with patch.object(loop, "run_in_executor", side_effect=_cancelled_executor):
-            await _run_agent_turn_async(
-                run_id=test_run_id,
-                session_id=session_id,
-                triggered_by="user_a",
-                message="hello",
-                history=[],
-                workspace_id="ws-1",
-                feature_id="feat-1",
-                user_id="user_a",
-                model="test-model",
-                provider=None,
-                api_key=None,
-                base_url=None,
-                db_factory=_db_factory,
-                loop=loop,
-                translator=translator,
-            )
+    ), patch.object(loop, "run_in_executor", side_effect=_cancelled_executor):
+        await _run_agent_turn_async(
+            run_id=test_run_id,
+            session_id=session_id,
+            triggered_by="user_a",
+            message="hello",
+            history=[],
+            workspace_id="ws-1",
+            feature_id="feat-1",
+            user_id="user_a",
+            model="test-model",
+            provider=None,
+            api_key=None,
+            base_url=None,
+            db_factory=_db_factory,
+            loop=loop,
+            translator=translator,
+        )
 
     with _active_runs_lock:
         assert session_id not in _active_runs, (
@@ -560,6 +566,7 @@ async def test_session_cancel_no_active_turn_returns_404(cancel_app):
     """POST /sessions/{id}/cancel with no in-flight turn → 404."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import _active_runs, _active_runs_lock
 
     session_id = "sess_session_cancel_404"
@@ -582,6 +589,7 @@ async def test_session_cancel_non_triggering_member_returns_403(cancel_app):
     """POST /sessions/{id}/cancel by a non-triggering member → 403."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_session_cancel_403"
@@ -612,6 +620,7 @@ async def test_session_cancel_by_triggering_member_returns_202(cancel_app):
     """POST /sessions/{id}/cancel by the triggering member → 202, task.cancel() called."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_session_cancel_202"
@@ -643,6 +652,7 @@ async def test_session_cancel_interrupts_agent_and_sets_event(cancel_app):
     """POST /sessions/{id}/cancel sets cancel_event and calls agent.interrupt()."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_session_cancel_interrupt"
@@ -676,6 +686,7 @@ async def test_session_cancel_missing_identity_returns_400(cancel_app):
     """POST /sessions/{id}/cancel with no X-User-Id header → 400."""
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_session_cancel_no_identity"
@@ -706,6 +717,7 @@ async def test_session_and_thread_cancel_share_same_run(cancel_app):
     """
     _inject_stubs()
     from httpx import ASGITransport, AsyncClient
+
     from src.api.agent_dispatch import ActiveRun, _active_runs, _active_runs_lock
 
     session_id = "sess_shared_run_test"

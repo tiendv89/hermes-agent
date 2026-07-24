@@ -13,12 +13,12 @@ import asyncio
 import functools
 import logging
 import os
+import re as _re
 import threading
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
-
-import re as _re
+from typing import Any
 
 from src.realtime.bus import get_bus
 from src.services.cost_client import QuotaCheckResult, check_quota, emit_turn_cost
@@ -98,7 +98,7 @@ def _make_clarify_callback(session_id: str, translator: Any) -> Callable[..., st
     publish fails) so the pending entry is never leaked.
     """
 
-    def _clarify_callback(question: str, choices: Optional[List[str]] = None) -> str:
+    def _clarify_callback(question: str, choices: list[str] | None = None) -> str:
         from tools import clarify_gateway
 
         clarify_id = uuid.uuid4().hex
@@ -164,13 +164,13 @@ class ActiveRun:
     """Tracks a live agent turn for the cancellation endpoint."""
 
     run_id: str  # unique run sentinel; guards finally-block pop against stale threads
-    task: Optional[asyncio.Task]  # asyncio Task wrapping the worker thread
+    task: asyncio.Task | None  # asyncio Task wrapping the worker thread
     triggered_by: str  # X-User-Id that started this turn (required; no empty default)
     cancel_event: threading.Event = field(default_factory=threading.Event)
-    agent: Optional[Any] = None
+    agent: Any | None = None
 
 
-_active_runs: Dict[str, ActiveRun] = {}
+_active_runs: dict[str, ActiveRun] = {}
 _active_runs_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
@@ -181,14 +181,14 @@ _active_runs_lock = threading.Lock()
 # its finally-block checks this dict and schedules one follow-up turn.
 # ---------------------------------------------------------------------------
 
-_pending_agent_turns: Dict[str, Dict[str, Any]] = {}
+_pending_agent_turns: dict[str, dict[str, Any]] = {}
 _pending_lock = threading.Lock()
 
 # ---------------------------------------------------------------------------
 # IDE context (opencode coding-verdict turns only)
 # ---------------------------------------------------------------------------
 
-from pydantic import BaseModel  # noqa: E402
+from pydantic import BaseModel
 
 
 class IDEFileContext(BaseModel):
@@ -197,7 +197,7 @@ class IDEFileContext(BaseModel):
     path: str = ""
     language: str = ""
     cursor_line: int = 0
-    selection: Optional[str] = None
+    selection: str | None = None
 
 
 class IDEContext(BaseModel):
@@ -212,8 +212,8 @@ class IDEContext(BaseModel):
     active_file: str = ""
     active_file_language: str = ""
     cursor_line: int = 0
-    selection: Optional[str] = None
-    open_files: List[IDEFileContext] = []
+    selection: str | None = None
+    open_files: list[IDEFileContext] = []
     git_branch: str = ""
     git_status: str = ""
     diagnostics: str = ""
@@ -222,7 +222,7 @@ class IDEContext(BaseModel):
 
 def _build_ide_system_context(ctx: IDEContext) -> str:
     """Render the IDE context block injected into the opencode turn's system prompt."""
-    lines: List[str] = [
+    lines: list[str] = [
         "## IDE context (from the developer's editor)",
         f"- Workspace root: {ctx.workspace_root or '(unknown)'}",
         f"- Active file: {ctx.active_file or '(none)'}",
@@ -263,7 +263,7 @@ def _build_ide_system_context(ctx: IDEContext) -> str:
 # AIAgent which is reconstructed fresh each turn from conversation_history).
 # Process-lifetime cache; never proactively evicted (mirrors how DB sessions
 # themselves persist indefinitely).
-_opencode_sessions: Dict[str, str] = {}
+_opencode_sessions: dict[str, str] = {}
 _opencode_sessions_lock = threading.Lock()
 
 # opencode's own built-in tool ids (confirmed via GET /experimental/tool/ids
@@ -292,16 +292,16 @@ def _run_opencode_turn(
     workspace_id: str,
     feature_id: str,
     user_id: str,
-    org_id: Optional[str],
+    org_id: str | None,
     model: str,
-    provider: Optional[str],
+    provider: str | None,
     translator: HermesSSETranslator,
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
-    author_id: Optional[str],
+    author_id: str | None,
     skip_user_persist: bool,
-    reply_to_message_id: Optional[int],
-    thread_root_id: Optional[int],
+    reply_to_message_id: int | None,
+    thread_root_id: int | None,
 ) -> None:
     """Run one CODING-verdict /chat turn via opencode for an IDE-originated call.
 
@@ -520,8 +520,8 @@ async def _backfill_assistant(
     db_factory: Callable,
     session_id: str,
     content: str,
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
 ) -> None:
     """Safety-net persist of the assistant reply.
 
@@ -622,8 +622,8 @@ async def _run_agent_turn_async(
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
     translator: HermesSSETranslator,
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
     **kwargs: Any,
 ) -> None:
     """Async Task wrapper for the blocking turn executor.
@@ -656,7 +656,7 @@ async def _run_agent_turn_async(
         cancelled = True
         partial = translator.mark_stopped()
 
-        message_id: Optional[str] = None
+        message_id: str | None = None
         if partial.strip():
             try:
                 from src.db.store import append_message
@@ -759,20 +759,20 @@ def _run_agent_turn(
     feature_id: str,
     user_id: str,
     model: str,
-    provider: Optional[str],
-    api_key: Optional[str],
-    base_url: Optional[str],
+    provider: str | None,
+    api_key: str | None,
+    base_url: str | None,
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
     translator: HermesSSETranslator,
-    org_id: Optional[str] = None,
-    author_id: Optional[str] = None,
+    org_id: str | None = None,
+    author_id: str | None = None,
     skip_user_persist: bool = False,
-    cancel_event: Optional[threading.Event] = None,
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
-    image_ids: Optional[List[str]] = None,
-    ide_context: Optional[IDEContext] = None,
+    cancel_event: threading.Event | None = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
+    image_ids: list[str] | None = None,
+    ide_context: IDEContext | None = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
 
@@ -787,7 +787,7 @@ def _run_agent_turn(
         return cancel_event is not None and cancel_event.is_set()
 
     workflow_context = None
-    downloaded_image_paths: List[str] = []
+    downloaded_image_paths: list[str] = []
     try:
         from plugins import context as workflow_context
 
@@ -1084,6 +1084,7 @@ def _run_agent_turn(
             import mimetypes
 
             import hermes_constants
+
             from plugins.clients import storage_service_client
 
             image_cache_dir = hermes_constants.get_hermes_home() / "cache" / "chat_images"
@@ -1267,13 +1268,17 @@ def _run_agent_turn(
 
 async def _schedule_follow_up(
     session_id: str,
-    pending: Dict[str, Any],
+    pending: dict[str, Any],
     loop: asyncio.AbstractEventLoop,
 ) -> None:
     """Re-load history and schedule the coalesced follow-up turn."""
     try:
-        from src.db import get_messages_as_conversation, get_thread_messages_as_conversation, touch_session
         from src.api.model_catalog import resolve_model
+        from src.db import (
+            get_messages_as_conversation,
+            get_thread_messages_as_conversation,
+            touch_session,
+        )
 
         thread_root_id = pending.get("thread_root_id")
         async with pending["db_factory"]() as db:
@@ -1359,17 +1364,17 @@ async def schedule_agent_turn(
     feature_id: str,
     user_id: str,
     model: str,
-    provider: Optional[str],
-    api_key: Optional[str],
-    base_url: Optional[str],
+    provider: str | None,
+    api_key: str | None,
+    base_url: str | None,
     db_factory: Callable,
     loop: asyncio.AbstractEventLoop,
-    org_id: Optional[str] = None,
-    author_id: Optional[str] = None,
+    org_id: str | None = None,
+    author_id: str | None = None,
     skip_user_persist: bool = False,
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
-    image_ids: Optional[List[str]] = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
+    image_ids: list[str] | None = None,
 ) -> bool:
     """Schedule an agent turn with coalescing.
 

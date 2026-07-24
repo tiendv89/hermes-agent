@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 AGENT_HANDLE = "agent"
 
@@ -21,9 +21,9 @@ AGENT_HANDLE = "agent"
 _MENTION_RE = re.compile(r"@(\w+(?:[._-]\w+)*)|<p:(\w+(?:[._-]\w+)*)>")
 
 
-def parse_mention_handles(content: str) -> List[str]:
+def parse_mention_handles(content: str) -> list[str]:
     """Extract @handle / <p:handle> tokens from content (lowercased, order-preserving, deduped)."""
-    seen: Dict[str, None] = {}
+    seen: dict[str, None] = {}
     for bare, tagged in _MENTION_RE.findall(content):
         handle = bare or tagged
         seen.setdefault(handle.lower(), None)
@@ -36,9 +36,9 @@ def mentions_agent(content: str) -> bool:
 
 
 def resolve_mentions(
-    handles: List[str],
-    members: List[Dict[str, Any]],
-) -> List[Dict[str, str]]:
+    handles: list[str],
+    members: list[dict[str, Any]],
+) -> list[dict[str, str]]:
     """Resolve @handle tokens to mention dicts.
 
     members: list of dicts with 'user_id' and optionally 'handle' / 'username'.
@@ -47,14 +47,14 @@ def resolve_mentions(
 
     Returns list of {'mentioned_id': ..., 'mentioned_kind': 'user'|'agent'}.
     """
-    handle_map: Dict[str, str] = {}
+    handle_map: dict[str, str] = {}
     for m in members:
         h = (m.get("handle") or m.get("username") or "").strip().lower()
         if h:
             handle_map[h] = m["user_id"]
 
-    resolved: List[Dict[str, str]] = []
-    seen_ids: Dict[str, None] = {}
+    resolved: list[dict[str, str]] = []
+    seen_ids: dict[str, None] = {}
 
     for handle in handles:
         if handle == AGENT_HANDLE:

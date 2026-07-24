@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -73,16 +72,18 @@ async def test_backfill_assistant_propagates_thread_context_when_writing():
         captured.append(kwargs)
         return 99
 
-    with patch("src.db.get_thread_replies", mock_get_thread_replies):
-        with patch("src.db.store.append_message", mock_append):
-            db_factory, _ = _mock_db_factory()
-            await _backfill_assistant(
-                db_factory,
-                "sess-1",
-                "agent answer",
-                reply_to_message_id=10,
-                thread_root_id=5,
-            )
+    with (
+        patch("src.db.get_thread_replies", mock_get_thread_replies),
+        patch("src.db.store.append_message", mock_append),
+    ):
+        db_factory, _ = _mock_db_factory()
+        await _backfill_assistant(
+            db_factory,
+            "sess-1",
+            "agent answer",
+            reply_to_message_id=10,
+            thread_root_id=5,
+        )
 
     assert len(captured) == 1
     assert captured[0]["reply_to_message_id"] == 10
@@ -109,16 +110,18 @@ async def test_backfill_assistant_skips_when_assistant_already_present():
         append_calls.append(kwargs)
         return 100
 
-    with patch("src.db.get_thread_replies", mock_get_thread_replies):
-        with patch("src.db.store.append_message", mock_append):
-            db_factory, _ = _mock_db_factory()
-            await _backfill_assistant(
-                db_factory,
-                "sess-1",
-                "new content",
-                reply_to_message_id=10,
-                thread_root_id=5,
-            )
+    with (
+        patch("src.db.get_thread_replies", mock_get_thread_replies),
+        patch("src.db.store.append_message", mock_append),
+    ):
+        db_factory, _ = _mock_db_factory()
+        await _backfill_assistant(
+            db_factory,
+            "sess-1",
+            "new content",
+            reply_to_message_id=10,
+            thread_root_id=5,
+        )
 
     assert append_calls == [], "backfill must not write when mirror already captured it"
 
@@ -152,17 +155,19 @@ async def test_backfill_assistant_thread_reply_ignores_main_channel_query():
         append_calls.append(kwargs)
         return 100
 
-    with patch("src.db.get_session_messages", mock_get_session_messages):
-        with patch("src.db.get_thread_replies", mock_get_thread_replies):
-            with patch("src.db.store.append_message", mock_append):
-                db_factory, _ = _mock_db_factory()
-                await _backfill_assistant(
-                    db_factory,
-                    "sess-1",
-                    "new content",
-                    reply_to_message_id=10,
-                    thread_root_id=5,
-                )
+    with (
+        patch("src.db.get_session_messages", mock_get_session_messages),
+        patch("src.db.get_thread_replies", mock_get_thread_replies),
+        patch("src.db.store.append_message", mock_append),
+    ):
+        db_factory, _ = _mock_db_factory()
+        await _backfill_assistant(
+            db_factory,
+            "sess-1",
+            "new content",
+            reply_to_message_id=10,
+            thread_root_id=5,
+        )
 
     assert append_calls == [], "threaded backfill must consult get_thread_replies, not get_session_messages"
 
@@ -181,10 +186,12 @@ async def test_backfill_assistant_no_thread_context_defaults_null():
         captured.append(kwargs)
         return 55
 
-    with patch("src.db.get_session_messages", mock_get_session_messages):
-        with patch("src.db.store.append_message", mock_append):
-            db_factory, _ = _mock_db_factory()
-            await _backfill_assistant(db_factory, "sess-1", "hi back")
+    with (
+        patch("src.db.get_session_messages", mock_get_session_messages),
+        patch("src.db.store.append_message", mock_append),
+    ):
+        db_factory, _ = _mock_db_factory()
+        await _backfill_assistant(db_factory, "sess-1", "hi back")
 
     assert len(captured) == 1
     assert captured[0]["reply_to_message_id"] is None
@@ -275,7 +282,7 @@ async def test_schedule_agent_turn_coalesce_preserves_thread_context():
     reply_to_message_id / thread_root_id so the eventual follow-up turn (run
     via _schedule_follow_up) still persists as a thread reply instead of
     silently reverting to a top-level channel message."""
-    import src.api.agent_dispatch as agent_dispatch
+    from src.api import agent_dispatch
     from src.api.agent_dispatch import ActiveRun, schedule_agent_turn
 
     loop = asyncio.get_running_loop()
@@ -320,7 +327,7 @@ async def test_schedule_follow_up_passes_thread_context_to_run_agent_turn_async(
     from src.api.agent_dispatch import _schedule_follow_up
 
     loop = asyncio.get_running_loop()
-    db_factory, db = _mock_db_factory()
+    db_factory, _db = _mock_db_factory()
     session_id = "sess-follow-up"
 
     pending = {
@@ -389,33 +396,35 @@ async def test_run_agent_turn_async_cancelled_partial_has_thread_context():
     async def mock_run_in_executor(executor, fn):
         raise asyncio.CancelledError()
 
-    with patch("src.api.agent_dispatch.emit_turn_cost", new_callable=AsyncMock):
-        with patch("src.db.store.append_message", mock_append):
-            with patch("src.api.agent_dispatch.get_bus") as mock_bus:
-                mock_bus.return_value.publish = MagicMock()
-                with patch.object(loop, "run_in_executor", mock_run_in_executor):
-                    try:
-                        await _run_agent_turn_async(
-                            run_id="run-1",
-                            session_id="sess-cancel",
-                            triggered_by="u-1",
-                            db_factory=db_factory,
-                            loop=loop,
-                            translator=translator,
-                            message="hey",
-                            history=[],
-                            workspace_id="ws-1",
-                            feature_id="feat-1",
-                            user_id="u-1",
-                            model="claude-3-5-sonnet-20241022",
-                            provider=None,
-                            api_key=None,
-                            base_url=None,
-                            reply_to_message_id=20,
-                            thread_root_id=15,
-                        )
-                    except asyncio.CancelledError:
-                        pass  # Some paths re-raise, some don't — both are valid.
+    with (
+        patch("src.api.agent_dispatch.emit_turn_cost", new_callable=AsyncMock),
+        patch("src.db.store.append_message", mock_append),
+        patch("src.api.agent_dispatch.get_bus") as mock_bus,
+    ):
+        mock_bus.return_value.publish = MagicMock()
+        with patch.object(loop, "run_in_executor", mock_run_in_executor):
+            try:
+                await _run_agent_turn_async(
+                    run_id="run-1",
+                    session_id="sess-cancel",
+                    triggered_by="u-1",
+                    db_factory=db_factory,
+                    loop=loop,
+                    translator=translator,
+                    message="hey",
+                    history=[],
+                    workspace_id="ws-1",
+                    feature_id="feat-1",
+                    user_id="u-1",
+                    model="claude-3-5-sonnet-20241022",
+                    provider=None,
+                    api_key=None,
+                    base_url=None,
+                    reply_to_message_id=20,
+                    thread_root_id=15,
+                )
+            except asyncio.CancelledError:
+                pass  # Some paths re-raise, some don't — both are valid.
 
     assert len(captured) >= 1
     assert captured[0]["reply_to_message_id"] == 20
@@ -444,31 +453,33 @@ async def test_run_agent_turn_async_cancelled_partial_no_thread_is_null():
     async def mock_run_in_executor(executor, fn):
         raise asyncio.CancelledError()
 
-    with patch("src.api.agent_dispatch.emit_turn_cost", new_callable=AsyncMock):
-        with patch("src.db.store.append_message", mock_append):
-            with patch("src.api.agent_dispatch.get_bus") as mock_bus:
-                mock_bus.return_value.publish = MagicMock()
-                with patch.object(loop, "run_in_executor", mock_run_in_executor):
-                    try:
-                        await _run_agent_turn_async(
-                            run_id="run-2",
-                            session_id="sess-cancel2",
-                            triggered_by="u-1",
-                            db_factory=db_factory,
-                            loop=loop,
-                            translator=translator,
-                            message="hi",
-                            history=[],
-                            workspace_id="ws-1",
-                            feature_id="feat-1",
-                            user_id="u-1",
-                            model="claude-3-5-sonnet-20241022",
-                            provider=None,
-                            api_key=None,
-                            base_url=None,
-                        )
-                    except asyncio.CancelledError:
-                        pass
+    with (
+        patch("src.api.agent_dispatch.emit_turn_cost", new_callable=AsyncMock),
+        patch("src.db.store.append_message", mock_append),
+        patch("src.api.agent_dispatch.get_bus") as mock_bus,
+    ):
+        mock_bus.return_value.publish = MagicMock()
+        with patch.object(loop, "run_in_executor", mock_run_in_executor):
+            try:
+                await _run_agent_turn_async(
+                    run_id="run-2",
+                    session_id="sess-cancel2",
+                    triggered_by="u-1",
+                    db_factory=db_factory,
+                    loop=loop,
+                    translator=translator,
+                    message="hi",
+                    history=[],
+                    workspace_id="ws-1",
+                    feature_id="feat-1",
+                    user_id="u-1",
+                    model="claude-3-5-sonnet-20241022",
+                    provider=None,
+                    api_key=None,
+                    base_url=None,
+                )
+            except asyncio.CancelledError:
+                pass
 
     assert len(captured) >= 1
     assert captured[0]["reply_to_message_id"] is None

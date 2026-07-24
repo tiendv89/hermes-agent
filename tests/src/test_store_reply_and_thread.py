@@ -22,7 +22,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -113,16 +112,18 @@ async def test_append_message_with_both_reply_fields():
 
     db.flush.side_effect = _flush_set_id
 
-    with patch("src.db.store.mark_session_read", new_callable=AsyncMock):
-        with patch("src.db.store._emit_message_notifications", new_callable=AsyncMock):
-            await append_message(
-                db,
-                session_id="sess-1",
-                role="user",
-                content="hello",
-                reply_to_message_id=10,
-                thread_root_id=5,
-            )
+    with (
+        patch("src.db.store.mark_session_read", new_callable=AsyncMock),
+        patch("src.db.store._emit_message_notifications", new_callable=AsyncMock),
+    ):
+        await append_message(
+            db,
+            session_id="sess-1",
+            role="user",
+            content="hello",
+            reply_to_message_id=10,
+            thread_root_id=5,
+        )
 
     assert len(captured) == 1
     msg = captured[0]
@@ -170,16 +171,18 @@ async def test_append_message_only_reply_to():
 
     db.flush.side_effect = _flush_set_id
 
-    with patch("src.db.store.mark_session_read", new_callable=AsyncMock):
-        with patch("src.db.store._emit_message_notifications", new_callable=AsyncMock):
-            await append_message(
-                db,
-                session_id="sess-1",
-                role="user",
-                content="inline",
-                author_id="u1",
-                reply_to_message_id=3,
-            )
+    with (
+        patch("src.db.store.mark_session_read", new_callable=AsyncMock),
+        patch("src.db.store._emit_message_notifications", new_callable=AsyncMock),
+    ):
+        await append_message(
+            db,
+            session_id="sess-1",
+            role="user",
+            content="inline",
+            author_id="u1",
+            reply_to_message_id=3,
+        )
 
     msg = captured[0]
     assert msg.reply_to_message_id == 3
@@ -201,16 +204,18 @@ async def test_append_message_only_thread_root():
 
     db.flush.side_effect = _flush_set_id
 
-    with patch("src.db.store.mark_session_read", new_callable=AsyncMock):
-        with patch("src.db.store._emit_message_notifications", new_callable=AsyncMock):
-            await append_message(
-                db,
-                session_id="sess-1",
-                role="user",
-                content="thread reply",
-                author_id="u2",
-                thread_root_id=6,
-            )
+    with (
+        patch("src.db.store.mark_session_read", new_callable=AsyncMock),
+        patch("src.db.store._emit_message_notifications", new_callable=AsyncMock),
+    ):
+        await append_message(
+            db,
+            session_id="sess-1",
+            role="user",
+            content="thread reply",
+            author_id="u2",
+            thread_root_id=6,
+        )
 
     msg = captured[0]
     assert msg.thread_root_id == 6

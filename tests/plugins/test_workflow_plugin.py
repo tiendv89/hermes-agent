@@ -30,6 +30,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -137,7 +138,7 @@ def _write_skill(skill_dir: Path, description: str | None) -> None:
 
 class TestRegisterT3:
     # The full registered toolset (see plugins/__init__.py _TOOLS).
-    EXPECTED_TOOLS = {
+    EXPECTED_TOOLS: ClassVar[set[str]] = {
         "get_workspace_context",
         "get_feature_state",
         "write_product_spec",
@@ -1742,8 +1743,8 @@ class TestInjectContextGitnexusScoping:
             patch("plugins.tools.tasks.handle", return_value={"ok": True, "tasks": []}),
             patch("plugins.hooks._build_skills_block", return_value=None),
         ):
-            from plugins.hooks import inject_context
             import plugins.context as ctx
+            from plugins.hooks import inject_context
 
             ctx.set_context("sess-b", "workspace-b", "")
             result_b = inject_context(session_id="sess-b")
@@ -2216,14 +2217,13 @@ class TestLoadSkillHandler:
         assert "ref.md" in skill["references"]
 
     def test_unknown_skill_returns_error(self):
-        with patch("plugins.skills.get_skill", return_value=None):
-            with patch(
-                "plugins.skills.get_index",
-                return_value={"python-best-practices": MagicMock()},
-            ):
-                from plugins.tools.skills import handle
+        with patch("plugins.skills.get_skill", return_value=None), patch(
+            "plugins.skills.get_index",
+            return_value={"python-best-practices": MagicMock()},
+        ):
+            from plugins.tools.skills import handle
 
-                result = handle(name="no-such-skill")
+            result = handle(name="no-such-skill")
 
         assert result["ok"] is False
         assert "no-such-skill" in result["error"]

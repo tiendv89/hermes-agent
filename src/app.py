@@ -26,8 +26,8 @@ from __future__ import annotations
 import logging
 import os
 import pathlib
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import AsyncIterator
 
 from dotenv import load_dotenv
 from fastapi import FastAPI

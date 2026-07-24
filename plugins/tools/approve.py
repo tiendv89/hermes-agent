@@ -10,10 +10,9 @@ from __future__ import annotations
 import datetime
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from plugins.clients.storage_service_client import read_document_content
-from ..validation import _validate_id
 from src.services.approval_notifications import notify_stage_approved
 from src.services.workflow_backend_client import (
     activate_ready_tasks,
@@ -21,6 +20,8 @@ from src.services.workflow_backend_client import (
     run_async,
     update_feature_stage,
 )
+
+from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +70,7 @@ def _run_async_create_tasks(workspace_id: str, feature_id: str, tasks: list) -> 
 _VALID_STAGES = frozenset({"product_spec", "technical_design", "tasks", "handoff"})
 _VALID_ACTIONS = frozenset({"approve", "reject", "reopen"})
 
-_APPROVE_EFFECTS: Dict[str, Dict[str, str]] = {
+_APPROVE_EFFECTS: dict[str, dict[str, str]] = {
     "product_spec": {
         "feature_status": "in_tdd",
         "current_stage": "technical_design",
@@ -92,7 +93,7 @@ _APPROVE_EFFECTS: Dict[str, Dict[str, str]] = {
     },
 }
 
-_REOPEN_EFFECTS: Dict[str, Dict] = {
+_REOPEN_EFFECTS: dict[str, dict] = {
     "product_spec": {
         "feature_status": "in_design",
         "current_stage": "product_spec",
@@ -119,7 +120,7 @@ _REOPEN_EFFECTS: Dict[str, Dict] = {
     },
 }
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Approve, reject, or reopen a feature lifecycle stage. "
         "Only humans may trigger approvals — use this when a human instructs "
@@ -180,7 +181,7 @@ def _activate_tasks_db(workspace_id: str, feature_id: str, actor: str) -> list:
 
 
 def _now_utc() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).strftime(
+    return datetime.datetime.now(datetime.UTC).strftime(
         "%Y-%m-%dT%H:%M:%S+0000"
     )
 
@@ -188,11 +189,11 @@ def _now_utc() -> str:
 def handle(
     stage: str,
     action: str = "approve",
-    comment: Optional[str] = None,
+    comment: str | None = None,
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
@@ -228,7 +229,7 @@ def handle(
 
     actor = os.environ.get("GIT_AUTHOR_EMAIL", os.environ.get("HERMES_ACTOR", "agent"))
 
-    detail: Dict[str, Any] = {}
+    detail: dict[str, Any] = {}
     try:
         detail = run_async(get_feature_detail(wid, fid, user_id=caller_user_id, org_id=caller_org_id))
     except Exception as exc:
@@ -400,7 +401,7 @@ def handle(
 
     commit_sha = ""
     activated_tasks: list = []
-    model_confirmation: List[Dict[str, Any]] = []
+    model_confirmation: list[dict[str, Any]] = []
 
     if _is_tasks_approve:
         # tasks-approve pipeline: status lives entirely in workflow-backend's
@@ -500,7 +501,7 @@ def handle(
         # Build the confirmation preview for the response (every agent task with
         # its resolved model display name — shown to the human before tasks are
         # actually created, per product spec Goal 4).
-        model_confirmation: List[Dict[str, Any]] = [
+        model_confirmation: list[dict[str, Any]] = [
             {
                 "task_name": t["name"],
                 "title": t.get("title", ""),
@@ -574,7 +575,7 @@ def handle(
         except Exception:
             logger.exception("approve_feature: notify_stage_approved failed for feature %s", fid)
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "ok": True,
         "feature_id": fid,
         "stage": stage,

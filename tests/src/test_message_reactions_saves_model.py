@@ -14,7 +14,6 @@ from __future__ import annotations
 import os
 import time
 
-
 # ---------------------------------------------------------------------------
 # MessageReaction model
 # ---------------------------------------------------------------------------
@@ -289,7 +288,8 @@ def test_migration_creates_message_reactions_table():
     migration_path = os.path.join(
         repo_root, "migrations", "011_message_reactions_saves.sql"
     )
-    content = open(migration_path).read()
+    with open(migration_path) as f:
+        content = f.read()
     assert "message_reactions" in content
     assert "CREATE TABLE" in content
 
@@ -301,7 +301,8 @@ def test_migration_creates_message_saves_table():
     migration_path = os.path.join(
         repo_root, "migrations", "011_message_reactions_saves.sql"
     )
-    content = open(migration_path).read()
+    with open(migration_path) as f:
+        content = f.read()
     assert "message_saves" in content
 
 
@@ -312,7 +313,8 @@ def test_migration_adds_edited_at_column():
     migration_path = os.path.join(
         repo_root, "migrations", "011_message_reactions_saves.sql"
     )
-    content = open(migration_path).read()
+    with open(migration_path) as f:
+        content = f.read()
     assert "edited_at" in content
     assert "ALTER TABLE messages" in content
 
@@ -324,7 +326,8 @@ def test_migration_adds_forwarded_from_message_id_column():
     migration_path = os.path.join(
         repo_root, "migrations", "011_message_reactions_saves.sql"
     )
-    content = open(migration_path).read()
+    with open(migration_path) as f:
+        content = f.read()
     assert "forwarded_from_message_id" in content
 
 
@@ -335,7 +338,8 @@ def test_migration_wrapped_in_transaction():
     migration_path = os.path.join(
         repo_root, "migrations", "011_message_reactions_saves.sql"
     )
-    content = open(migration_path).read()
+    with open(migration_path) as f:
+        content = f.read()
     assert "BEGIN;" in content
     assert "COMMIT;" in content
 
@@ -347,6 +351,7 @@ def test_migration_unique_index_on_reactions():
     migration_path = os.path.join(
         repo_root, "migrations", "011_message_reactions_saves.sql"
     )
-    content = open(migration_path).read()
+    with open(migration_path) as f:
+        content = f.read()
     assert "UNIQUE" in content
     assert "uq_message_reactions_user_emoji" in content

@@ -33,12 +33,12 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-async def _defer_and_wait(session_id: str, tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
+async def _defer_and_wait(session_id: str, tool: str, params: dict[str, Any]) -> dict[str, Any]:
     """Publish a deferred-tool event to the IDE and block for its real result."""
     from src.services import deferred_tool_gateway as gw
 
@@ -95,14 +95,14 @@ def build_bridge_app(session_id: str):
         transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False),
     )
 
-    async def _run(tool: str, params: Dict[str, Any]) -> Dict[str, Any]:
+    async def _run(tool: str, params: dict[str, Any]) -> dict[str, Any]:
         return await _defer_and_wait(session_id, tool, params)
 
     # ── File operations ──────────────────────────────────────────────
 
     @mcp.tool()
     async def read_file(
-        path: str, start_line: Optional[int] = None, end_line: Optional[int] = None
+        path: str, start_line: int | None = None, end_line: int | None = None
     ) -> dict:
         """Read a file's content from the IDE workspace, optionally restricted
         to a 1-indexed, inclusive line range."""
@@ -114,7 +114,7 @@ def build_bridge_app(session_id: str):
         return await _run(marker["tool"], marker["params"])
 
     @mcp.tool()
-    async def edit_file(path: str, edits: List[Dict[str, str]]) -> dict:
+    async def edit_file(path: str, edits: list[dict[str, str]]) -> dict:
         """Apply an ordered list of find-and-replace edits to a file via the
         IDE's native editor API. Each edit is {old_string, new_string}."""
         from plugins.tools.local_file_ops import handle_edit_file
@@ -179,7 +179,7 @@ def build_bridge_app(session_id: str):
 
     @mcp.tool()
     async def run_command(
-        command: str, workdir: str = "", timeout: Optional[int] = None
+        command: str, workdir: str = "", timeout: int | None = None
     ) -> dict:
         """Run a shell command in the developer's IDE terminal. Returns
         stdout, stderr, and exit code."""
@@ -201,7 +201,7 @@ def build_bridge_app(session_id: str):
         return await _run(marker["tool"], marker["params"])
 
     @mcp.tool()
-    async def git_diff(staged: Optional[bool] = None, path: str = "") -> dict:
+    async def git_diff(staged: bool | None = None, path: str = "") -> dict:
         """Get the unified diff of uncommitted changes."""
         from plugins.tools.git_ops import handle_git_diff
 
@@ -239,7 +239,7 @@ def build_bridge_app(session_id: str):
         return await _run(marker["tool"], marker["params"])
 
     @mcp.tool()
-    async def git_log(count: Optional[int] = None, branch: str = "") -> dict:
+    async def git_log(count: int | None = None, branch: str = "") -> dict:
         """Show recent commit history."""
         from plugins.tools.git_ops import handle_git_log
 

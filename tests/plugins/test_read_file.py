@@ -7,6 +7,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import sys
@@ -14,8 +15,6 @@ import types
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import asyncio
 
 import pytest
 
@@ -44,11 +43,11 @@ def _make_feature_detail(owner: str = "go"):
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
 

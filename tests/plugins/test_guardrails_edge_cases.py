@@ -149,7 +149,7 @@ def _clear_context():
         for attr in ("workspace_id", "feature_id", "user_id", "org_id"):
             if hasattr(_local, attr):
                 setattr(_local, attr, "")
-    except Exception:
+    except Exception:  # noqa: S110 — best-effort test teardown, never fails a test
         pass
 
 
@@ -847,7 +847,7 @@ class TestUnknownToolNames:
 
         # 'delegate' contains 'delete' as a substring? No — it contains 'del' but not 'delete'.
         # 'deliver' is completely safe.
-        allowed, code = g.check("deliver_notification", {"recipient": "user@x.com"})
+        allowed, _code = g.check("deliver_notification", {"recipient": "user@x.com"})
         assert allowed
 
     def test_tool_name_with_mixed_case_deletion_keyword(self):
@@ -894,14 +894,14 @@ class TestMalformedArguments:
         """check(tool_name, None) is safe and returns (allowed, code)."""
         g = _load_guardrails(enabled="1")
         # Should not raise; known-safe tool → allowed
-        allowed, code = g.check("get_workspace_context", None)
+        allowed, _code = g.check("get_workspace_context", None)
         assert isinstance(allowed, bool)
 
     def test_empty_dict_arguments(self):
         """check(tool_name, {}) is safe for all tools."""
         g = _load_guardrails(enabled="1")
 
-        allowed, code = g.check("write_file", {})
+        allowed, _code = g.check("write_file", {})
         # No XSS, no system-prompt path, no cross-workspace → allowed
         assert allowed
 
@@ -909,7 +909,7 @@ class TestMalformedArguments:
         """Extra unknown argument keys don't confuse the guardrail."""
         g = _load_guardrails(enabled="1")
 
-        allowed, code = g.check(
+        allowed, _code = g.check(
             "approve_feature",
             {"stage": "product_spec", "unexpected_key": "some-value", "another": 42},
         )
@@ -920,7 +920,7 @@ class TestMalformedArguments:
         g = _load_guardrails(enabled="1")
 
         # stage=None: str(None) = 'None', not 'handoff' → allowed
-        allowed, code = g.check("approve_feature", {"stage": None})
+        allowed, _code = g.check("approve_feature", {"stage": None})
         assert allowed
 
     def test_wrong_type_for_content_does_not_crash(self):
@@ -928,7 +928,7 @@ class TestMalformedArguments:
         g = _load_guardrails(enabled="1")
 
         # content=42 (int): G8 only processes str, so no XSS match → allowed
-        allowed, code = g.check("write_file", {"path": "f.md", "content": 42})
+        allowed, _code = g.check("write_file", {"path": "f.md", "content": 42})
         assert isinstance(allowed, bool)
 
     def test_sanitize_result_with_none_input(self):
@@ -962,14 +962,14 @@ class TestMalformedArguments:
         """suggest_next_actions with empty suggestions list is allowed."""
         g = _load_guardrails(enabled="1")
 
-        allowed, code = g.check("suggest_next_actions", {"suggestions": []})
+        allowed, _code = g.check("suggest_next_actions", {"suggestions": []})
         assert allowed
 
     def test_null_session_context_does_not_crash(self):
         """check() with session_context=None does not raise."""
         g = _load_guardrails(enabled="1")
 
-        allowed, code = g.check(
+        allowed, _code = g.check(
             "read_file", {"workspace_id": "ws-1"}, session_context=None
         )
         # G10 is skipped because session_context is None → allowed

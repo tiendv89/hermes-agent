@@ -20,7 +20,7 @@ import logging
 import os
 import re
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -221,60 +221,60 @@ _READ_TOOLS: frozenset[str] = frozenset(
 _GUARDRAIL_MESSAGES: dict[str, tuple[str, str]] = {
     ReasonCode.DELETION_BLOCKED: (
         "G1",
-        "The agent cannot perform deletion or destructive operations. "
+        ("The agent cannot perform deletion or destructive operations. "
         "Data preservation is a hard requirement — no files, features, tasks, or "
-        "workspace entities may be deleted.",
+        "workspace entities may be deleted."),
     ),
     ReasonCode.SCRIPT_EXECUTION_BLOCKED: (
         "G2",
-        "The agent cannot execute arbitrary scripts or shell commands. "
-        "Only read-only inspection commands within authorized workflow skills are permitted.",
+        ("The agent cannot execute arbitrary scripts or shell commands. "
+        "Only read-only inspection commands within authorized workflow skills are permitted."),
     ),
     ReasonCode.ENV_DISCLOSURE_BLOCKED: (
         "G3",
-        "The agent cannot disclose environment variables, API keys, credentials, or "
-        "other secret material. Credentials are used internally but never surfaced.",
+        ("The agent cannot disclose environment variables, API keys, credentials, or "
+        "other secret material. Credentials are used internally but never surfaced."),
     ),
     ReasonCode.SYSTEM_INTROSPECTION_BLOCKED: (
         "G4",
-        "The agent cannot describe its own system prompt, architecture, internal tool "
-        "definitions, or runtime configuration. Its purpose is workspace software work.",
+        ("The agent cannot describe its own system prompt, architecture, internal tool "
+        "definitions, or runtime configuration. Its purpose is workspace software work."),
     ),
     ReasonCode.DOWNLOAD_BLOCKED: (
         "G5",
-        "The agent cannot download, clone, or fetch source code or binaries from external "
+        ("The agent cannot download, clone, or fetch source code or binaries from external "
         "URLs. Authorized tools (query_rag, query_gitnexus, vcs_pr_context) use "
-        "controlled backends and are unaffected.",
+        "controlled backends and are unaffected."),
     ),
     ReasonCode.TRANSITION_BLOCKED: (
         "G6",
-        "The agent cannot advance the feature past the technical design stage without "
-        "human authorization. Handoff approval and task cancellation require human action.",
+        ("The agent cannot advance the feature past the technical design stage without "
+        "human authorization. Handoff approval and task cancellation require human action."),
     ),
     ReasonCode.PR_APPROVE_BLOCKED: (
         "G6",
-        "The agent cannot post an APPROVE review on a GitHub PR without explicit human "
-        "confirmation. REQUEST_CHANGES reviews and read-only PR operations are allowed.",
+        ("The agent cannot post an APPROVE review on a GitHub PR without explicit human "
+        "confirmation. REQUEST_CHANGES reviews and read-only PR operations are allowed."),
     ),
     ReasonCode.CONTENT_SANITIZATION_BLOCKED: (
         "G8",
-        "The agent cannot write content containing executable web content (script tags, "
-        "javascript: URLs, event handlers). Documents must be safe for all workspace members.",
+        ("The agent cannot write content containing executable web content (script tags, "
+        "javascript: URLs, event handlers). Documents must be safe for all workspace members."),
     ),
     ReasonCode.CTA_PHISHING_BLOCKED: (
         "G9",
-        "The agent cannot suggest actions whose text would trigger lifecycle mutations "
-        "(approve_feature, create_tasks, etc.). CTAs must be safe for users to click.",
+        ("The agent cannot suggest actions whose text would trigger lifecycle mutations "
+        "(approve_feature, create_tasks, etc.). CTAs must be safe for users to click."),
     ),
     ReasonCode.CROSS_WORKSPACE_BLOCKED: (
         "G10",
-        "The agent cannot access data from a workspace other than the session's bound "
-        "workspace. Cross-workspace access requires explicit human authorization.",
+        ("The agent cannot access data from a workspace other than the session's bound "
+        "workspace. Cross-workspace access requires explicit human authorization."),
     ),
     ReasonCode.SYSTEM_PROMPT_SOURCE_BLOCKED: (
         "G11",
-        "The agent cannot modify CLAUDE.md, HERMES.md, or any file that is used as a "
-        "system prompt source. These files are managed by administrators only.",
+        ("The agent cannot modify CLAUDE.md, HERMES.md, or any file that is used as a "
+        "system prompt source. These files are managed by administrators only."),
     ),
 }
 
@@ -284,7 +284,7 @@ _GUARDRAIL_MESSAGES: dict[str, tuple[str, str]] = {
 # ---------------------------------------------------------------------------
 
 
-def _check_G1_deletion(tool_name: str) -> Optional[str]:
+def _check_G1_deletion(tool_name: str) -> str | None:
     """G1 — Block tools whose names indicate destructive deletion operations.
 
     Uses substring matching because `_` is a word character in Python regex,
@@ -298,7 +298,7 @@ def _check_G1_deletion(tool_name: str) -> Optional[str]:
     return None
 
 
-def _check_G2_script(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G2_script(tool_name: str, arguments: dict[str, Any]) -> str | None:
     """G2 — Block arbitrary script and shell execution via terminal-class tools."""
     if tool_name not in _SHELL_TOOL_NAMES:
         return None
@@ -311,7 +311,7 @@ def _check_G2_script(tool_name: str, arguments: dict[str, Any]) -> Optional[str]
 
 def _check_G3_env_disclosure(
     tool_name: str, arguments: dict[str, Any]
-) -> Optional[str]:
+) -> str | None:
     """G3 — Block env variable and credential disclosure.
 
     For shell tools: scan the command argument.
@@ -344,7 +344,7 @@ def _check_G3_env_disclosure(
     return None
 
 
-def _check_G5_downloads(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G5_downloads(tool_name: str, arguments: dict[str, Any]) -> str | None:
     """G5 — Block web downloads and external source retrieval via shell tools."""
     if tool_name not in _SHELL_TOOL_NAMES:
         return None
@@ -355,7 +355,7 @@ def _check_G5_downloads(tool_name: str, arguments: dict[str, Any]) -> Optional[s
     return None
 
 
-def _check_G6_transitions(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G6_transitions(tool_name: str, arguments: dict[str, Any]) -> str | None:
     """G6 — Block invalid lifecycle and task state transitions.
 
     - approve_feature(stage="handoff") → transition_blocked
@@ -375,7 +375,7 @@ def _check_G6_transitions(tool_name: str, arguments: dict[str, Any]) -> Optional
     return None
 
 
-def _check_G8_xss(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G8_xss(tool_name: str, arguments: dict[str, Any]) -> str | None:
     """G8 — Block XSS content in write/edit operations."""
     if tool_name not in _WRITE_TOOLS:
         return None
@@ -405,7 +405,7 @@ def _check_G8_xss(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _check_G9_cta_phishing(tool_name: str, arguments: dict[str, Any]) -> Optional[str]:
+def _check_G9_cta_phishing(tool_name: str, arguments: dict[str, Any]) -> str | None:
     """G9 — Block lifecycle-mutation CTAs in suggest_next_actions."""
     if tool_name != "suggest_next_actions":
         return None
@@ -428,8 +428,8 @@ def _check_G9_cta_phishing(tool_name: str, arguments: dict[str, Any]) -> Optiona
 def _check_G10_workspace(
     tool_name: str,
     arguments: dict[str, Any],
-    session_context: Optional[dict[str, Any]],
-) -> Optional[str]:
+    session_context: dict[str, Any] | None,
+) -> str | None:
     """G10 — Enforce agent-side workspace membership gate.
 
     If a tool passes a workspace_id that differs from the session's bound workspace,
@@ -447,7 +447,7 @@ def _check_G10_workspace(
 
             session_workspace_id = get_workspace_id() or ""
         except Exception:
-            pass
+            logger.debug("thread-local workspace_id fallback failed", exc_info=True)
 
     # No session workspace set — skip check (general chat without workspace context)
     if not session_workspace_id:
@@ -462,7 +462,7 @@ def _check_G10_workspace(
 
 def _check_G11_system_prompt(
     tool_name: str, arguments: dict[str, Any]
-) -> Optional[str]:
+) -> str | None:
     """G11 — Block modification of system prompt source files (CLAUDE.md, HERMES.md)."""
     if tool_name not in _WRITE_TOOLS:
         return None
@@ -488,9 +488,9 @@ def _check_G11_system_prompt(
 
 def check(
     tool_name: str,
-    arguments: Optional[dict[str, Any]] = None,
-    session_context: Optional[dict[str, Any]] = None,
-) -> tuple[bool, Optional[str]]:
+    arguments: dict[str, Any] | None = None,
+    session_context: dict[str, Any] | None = None,
+) -> tuple[bool, str | None]:
     """Pre-dispatch guardrail gate.
 
     Returns (allowed, reason_code). When allowed is False, reason_code identifies
@@ -521,13 +521,11 @@ def check(
     for guardrail_fn in checks:
         try:
             reason_code = guardrail_fn()
-        except Exception as exc:
+        except Exception:
             # Fail closed: unexpected errors block the call
-            logger.error(
-                "guardrail check raised unexpectedly (fail-closed): tool=%s exc=%s",
+            logger.exception(
+                "guardrail check raised unexpectedly (fail-closed): tool=%s",
                 tool_name,
-                exc,
-                exc_info=True,
             )
             return (
                 False,

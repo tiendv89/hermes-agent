@@ -77,7 +77,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -107,7 +107,7 @@ def check_opencode_available() -> bool:
     return bool(os.environ.get("OPENCODE_SERVER_URL", "").strip())
 
 
-def _resolve_config() -> tuple[str, Optional[str], Optional[str]]:
+def _resolve_config() -> tuple[str, str | None, str | None]:
     base_url = os.environ.get("OPENCODE_SERVER_URL", "").rstrip("/")
     if not base_url:
         raise OpencodeClientError(
@@ -124,7 +124,7 @@ def _resolve_config() -> tuple[str, Optional[str], Optional[str]]:
     return base_url, username, password
 
 
-def _auth(username: Optional[str], password: Optional[str]) -> Optional[aiohttp.BasicAuth]:
+def _auth(username: str | None, password: str | None) -> aiohttp.BasicAuth | None:
     if not password:
         return None
     return aiohttp.BasicAuth(login=username or "", password=password)
@@ -134,37 +134,39 @@ async def _request(
     method: str,
     path: str,
     *,
-    json_body: Optional[Dict[str, Any]] = None,
+    json_body: dict[str, Any] | None = None,
     timeout: int = 30,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Shared HTTP plumbing for opencode server calls in this module."""
     base_url, username, password = _resolve_config()
     url = f"{base_url}{path}"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.request(
+    async with (
+        aiohttp.ClientSession() as session,
+        session.request(
             method,
             url,
             json=json_body,
             auth=_auth(username, password),
             timeout=aiohttp.ClientTimeout(total=timeout),
-        ) as resp:
-            try:
-                data = await resp.json(content_type=None)
-            except Exception:
-                data = {"raw": await resp.text()}
+        ) as resp,
+    ):
+        try:
+            data = await resp.json(content_type=None)
+        except Exception:
+            data = {"raw": await resp.text()}
 
-            if 200 <= resp.status < 300:
-                return data if isinstance(data, dict) else {"result": data}
+        if 200 <= resp.status < 300:
+            return data if isinstance(data, dict) else {"result": data}
 
-            msg = f"opencode server returned HTTP {resp.status} for {method} {url}: {str(data)[:500]}"
-            logger.warning(msg)
-            raise OpencodeClientError(msg, status=resp.status)
+        msg = f"opencode server returned HTTP {resp.status} for {method} {url}: {str(data)[:500]}"
+        logger.warning(msg)
+        raise OpencodeClientError(msg, status=resp.status)
 
 
 async def create_session(*, title: str = "", agent: str = "") -> str:
     """Create a new opencode session and return its id (``ses_...``)."""
-    payload: Dict[str, Any] = {}
+    payload: dict[str, Any] = {}
     if title:
         payload["title"] = title
     if agent:
@@ -212,11 +214,11 @@ async def send_message(
     provider_id: str,
     model_id: str,
     agent: str = "",
-    tools: Optional[Dict[str, bool]] = None,
+    tools: dict[str, bool] | None = None,
     system: str = "",
     variant: str = "",
     timeout: int = _DEFAULT_TURN_TIMEOUT_SECONDS,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Send a message and block until the turn (incl. any MCP tool calls) completes.
 
     ``variant`` selects a named model variant (confirmed via a live server's
@@ -232,7 +234,7 @@ async def send_message(
     Returns the raw ``{"info": AssistantMessage, "parts": Part[]}`` response.
     See ``extract_text``/``extract_usage`` to pull out what callers need.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "model": {"providerID": provider_id, "modelID": model_id},
         "parts": [{"type": "text", "text": text}],
     }
@@ -249,19 +251,19 @@ async def send_message(
     )
 
 
-def extract_text(response: Dict[str, Any]) -> str:
+def extract_text(response: dict[str, Any]) -> str:
     """Concatenate every ``text`` part's content from a send_message response."""
-    parts: List[Dict[str, Any]] = response.get("parts") or []
+    parts: list[dict[str, Any]] = response.get("parts") or []
     return "".join(p.get("text", "") for p in parts if p.get("type") == "text")
 
 
-def extract_reasoning(response: Dict[str, Any]) -> str:
+def extract_reasoning(response: dict[str, Any]) -> str:
     """Concatenate every ``reasoning`` part's content from a send_message response."""
-    parts: List[Dict[str, Any]] = response.get("parts") or []
+    parts: list[dict[str, Any]] = response.get("parts") or []
     return "".join(p.get("text", "") for p in parts if p.get("type") == "reasoning")
 
 
-def extract_usage(response: Dict[str, Any]) -> Dict[str, int]:
+def extract_usage(response: dict[str, Any]) -> dict[str, int]:
     """Pull token/cost usage out of the response's ``info`` (AssistantMessage).
 
     Shape confirmed against opencode's OpenAPI spec: ``info.tokens.{input,
@@ -279,7 +281,7 @@ def extract_usage(response: Dict[str, Any]) -> Dict[str, int]:
     }
 
 
-def extract_error(response: Dict[str, Any]) -> Optional[str]:
+def extract_error(response: dict[str, Any]) -> str | None:
     """Return a human-readable error message if the turn's AssistantMessage failed."""
     info = response.get("info") or {}
     error = info.get("error")

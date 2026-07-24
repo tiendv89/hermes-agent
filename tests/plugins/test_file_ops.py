@@ -183,11 +183,11 @@ def _load_file_ops(
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
 
@@ -350,11 +350,11 @@ class TestWriteFileGoOwner:
     def test_storage_service_error_returns_ok_false(self):
         """go-owned feature: storage-service error → ok=False."""
         # Use the fake SSC's error class to avoid importing the real package.
-        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+        mod, _fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
         error = mod.StorageServiceError(
             "connection refused", reason_code="request_error"
         )
-        mod, fake_ssc = _load_file_ops(
+        mod, _fake_ssc = _load_file_ops(
             _make_feature_detail(owner="go"), ssc_error=error
         )
 
@@ -471,7 +471,7 @@ class TestWriteFileNoFeatureId:
 
     def test_no_feature_id_skips_owner_check(self):
         """No feature_id → get_feature_detail must not be called."""
-        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+        mod, _fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
         wbc_mod = sys.modules["src.services.workflow_backend_client"]
 
         with _enter_patches(
@@ -687,7 +687,7 @@ class TestEditFileGoOwner:
     def test_go_owned_no_git_write_attempted(self):
         """go-owned edit_file must not invoke any git-backed writes."""
         original = "# Notes\n\nContent.\n"
-        mod, fake_ssc = _load_file_ops(
+        mod, _fake_ssc = _load_file_ops(
             _make_feature_detail(owner="go"),
             read_return={"content": original, "version_id": "v0"},
             write_return={"ok": True, "version_id": _VERSION_ID},
@@ -711,11 +711,11 @@ class TestEditFileGoOwner:
     def test_storage_service_error_returns_ok_false(self):
         """go-owned edit_file: storage-service error → ok=False."""
         # Use the fake SSC's error class to avoid importing the real package.
-        mod, fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
+        mod, _fake_ssc = _load_file_ops(_make_feature_detail(owner="go"))
         error = mod.StorageServiceError(
             "connection refused", reason_code="request_error"
         )
-        mod, fake_ssc = _load_file_ops(
+        mod, _fake_ssc = _load_file_ops(
             _make_feature_detail(owner="go"), ssc_error=error
         )
 

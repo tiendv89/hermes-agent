@@ -146,9 +146,11 @@ class TestCreateSession:
         monkeypatch.setenv("OPENCODE_SERVER_URL", "http://localhost:4096")
         mod = _import_client()
         fake_session = _FakeSession(_FakeResponse(200, {}))
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.OpencodeClientError):
-                await mod.create_session()
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.OpencodeClientError),
+        ):
+            await mod.create_session()
 
     @pytest.mark.asyncio
     async def test_optional_title_and_agent_included_when_set(self, monkeypatch):
@@ -203,9 +205,11 @@ class TestRegisterMcpBridge:
                 200, {"ide-bridge": {"status": "failed", "error": "connection refused"}}
             )
         )
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.OpencodeClientError):
-                await mod.register_mcp_bridge("ide-bridge", "http://gw/mcp-bridge/ses_1/mcp")
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.OpencodeClientError),
+        ):
+            await mod.register_mcp_bridge("ide-bridge", "http://gw/mcp-bridge/ses_1/mcp")
 
 
 # ---------------------------------------------------------------------------
@@ -353,9 +357,11 @@ class TestHttpErrors:
         monkeypatch.setenv("OPENCODE_SERVER_URL", "http://localhost:4096")
         mod = _import_client()
         fake_session = _FakeSession(_FakeResponse(400, {"error": "bad request"}))
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.OpencodeClientError) as exc_info:
-                await mod.create_session()
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.OpencodeClientError) as exc_info,
+        ):
+            await mod.create_session()
         assert exc_info.value.status == 400
 
     @pytest.mark.asyncio
@@ -363,9 +369,11 @@ class TestHttpErrors:
         monkeypatch.setenv("OPENCODE_SERVER_URL", "http://localhost:4096")
         mod = _import_client()
         fake_session = _FakeSession(_FakeResponse(500, {"error": "internal"}))
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.OpencodeClientError) as exc_info:
-                await mod.create_session()
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.OpencodeClientError) as exc_info,
+        ):
+            await mod.create_session()
         assert exc_info.value.status == 500
 
 

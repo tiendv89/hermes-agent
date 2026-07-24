@@ -8,11 +8,11 @@ GitHub's PR API 422s if `head` isn't already pushed.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Create a branch from a base branch via vcs-service, if it doesn't "
         "already exist on the remote. Use this before vcs_create_pr when the "
@@ -57,8 +57,12 @@ def handle(
     branch: str = "",
     base_branch: str = "",
     **_: Any,
-) -> Dict[str, Any]:
-    from src.services.vcs_service_client import VCSServiceError, ensure_branch, run_async
+) -> dict[str, Any]:
+    from src.services.vcs_service_client import (
+        VCSServiceError,
+        ensure_branch,
+        run_async,
+    )
 
     if not owner:
         return {"ok": False, "error": "owner is required."}

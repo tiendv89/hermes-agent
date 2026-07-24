@@ -104,7 +104,7 @@ def _clean_modules():
     src_keys = [
         k
         for k in sys.modules
-        if k.startswith("src.db.store") or k.startswith("src.realtime")
+        if k.startswith(("src.db.store", "src.realtime"))
     ]
     for k in src_keys:
         del sys.modules[k]
@@ -115,7 +115,7 @@ def _clean_modules():
     src_keys = [
         k
         for k in sys.modules
-        if k.startswith("src.db.store") or k.startswith("src.realtime")
+        if k.startswith(("src.db.store", "src.realtime"))
     ]
     for k in src_keys:
         del sys.modules[k]
@@ -394,7 +394,7 @@ class TestToolRegistration:
             {"sanitize_result": lambda tool_name, result: result},
         )
         sys.modules["plugins.tools.guardrails"] = stub_guardrails
-        setattr(stub_tools_pkg, "guardrails", stub_guardrails)
+        stub_tools_pkg.guardrails = stub_guardrails
 
         tool_names = [
             "workspace",
@@ -488,7 +488,7 @@ class TestToolRegistration:
         # Load the real suggest_next_actions into sys.modules first.
         sna_mod, *_ = _load_suggest_next_actions_isolated()
         sys.modules["plugins.tools.suggest_next_actions"] = sna_mod
-        setattr(stub_tools_pkg, "suggest_next_actions", sna_mod)
+        stub_tools_pkg.suggest_next_actions = sna_mod
 
         init_path = REPO_ROOT / "plugins" / "__init__.py"
         spec = importlib.util.spec_from_file_location(

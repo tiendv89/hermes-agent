@@ -29,7 +29,7 @@ from __future__ import annotations
 import logging
 import os
 import uuid as _uuid
-from typing import Any, Dict, Optional
+from typing import Any
 
 import aiohttp
 
@@ -44,7 +44,7 @@ def _base_url() -> str:
     return os.environ.get("USER_SERVICE_URL", "").rstrip("/")
 
 
-def _headers() -> Dict[str, str]:
+def _headers() -> dict[str, str]:
     token = os.environ.get("USER_SERVICE_TOKEN", "")
     return {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -62,7 +62,7 @@ def _as_uuid(value: str, *, salt: str = "") -> str:
         return str(_uuid.uuid5(_ID_NAMESPACE, f"{salt}{value or ''}"))
 
 
-def _unwrap(body: Any) -> Dict[str, Any]:
+def _unwrap(body: Any) -> dict[str, Any]:
     """Unwrap user-service's {"success", "data"} envelope, tolerating raw bodies."""
     if isinstance(body, dict):
         data = body.get("data")
@@ -75,17 +75,17 @@ def _unwrap(body: Any) -> Dict[str, Any]:
 class QuotaCheckResult:
     """Result of a pre-turn quota check."""
 
-    __slots__ = ("allowed", "reason", "resets_at", "plan_name", "daily_cap", "weekly_cap")
+    __slots__ = ("allowed", "daily_cap", "plan_name", "reason", "resets_at", "weekly_cap")
 
     def __init__(
         self,
         *,
         allowed: bool,
-        reason: Optional[str] = None,
-        resets_at: Optional[str] = None,
-        plan_name: Optional[str] = None,
-        daily_cap: Optional[int] = None,
-        weekly_cap: Optional[int] = None,
+        reason: str | None = None,
+        resets_at: str | None = None,
+        plan_name: str | None = None,
+        daily_cap: int | None = None,
+        weekly_cap: int | None = None,
     ) -> None:
         self.allowed = allowed
         self.reason = reason
@@ -95,7 +95,7 @@ class QuotaCheckResult:
         self.weekly_cap = weekly_cap
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "QuotaCheckResult":
+    def from_dict(cls, d: dict[str, Any]) -> QuotaCheckResult:
         return cls(
             allowed=bool(d.get("allowed", True)),
             reason=d.get("reason"),
@@ -106,7 +106,7 @@ class QuotaCheckResult:
         )
 
     @classmethod
-    def fail_open(cls) -> "QuotaCheckResult":
+    def fail_open(cls) -> QuotaCheckResult:
         return cls(allowed=True)
 
 
@@ -114,7 +114,7 @@ async def check_quota(
     session_id: str,
     user_id: str,
     *,
-    org_id: Optional[str] = None,
+    org_id: str | None = None,
 ) -> QuotaCheckResult:
     """Call user-service's quota-check endpoint before a turn.
 
@@ -134,25 +134,24 @@ async def check_quota(
         return QuotaCheckResult.fail_open()
 
     url = f"{base_url}/internal/users/{user_id}/quota/check"
-    params: Dict[str, str] = {}
+    params: dict[str, str] = {}
     if org_id:
         params["org_id"] = org_id
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url,
-                params=params,
-                headers=_headers(),
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "cost_client: quota check %s -> %s (fail-open)", url, resp.status
-                    )
-                    return QuotaCheckResult.fail_open()
-                body = await resp.json()
-                return QuotaCheckResult.from_dict(_unwrap(body))
+        async with aiohttp.ClientSession() as session, session.get(
+            url,
+            params=params,
+            headers=_headers(),
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "cost_client: quota check %s -> %s (fail-open)", url, resp.status
+                )
+                return QuotaCheckResult.fail_open()
+            body = await resp.json()
+            return QuotaCheckResult.from_dict(_unwrap(body))
     except Exception:
         logger.exception(
             "cost_client: quota check failed for session %s (fail-open)", session_id
@@ -170,10 +169,10 @@ async def emit_turn_cost(
     cache_read_tokens: int = 0,
     cache_write_tokens: int = 0,
     stopped: bool = False,
-    turn_id: Optional[str] = None,
+    turn_id: str | None = None,
     source_type: str = "agent_chat",
     source_label: str = "",
-    org_id: Optional[str] = None,
+    org_id: str | None = None,
 ) -> None:
     """POST a cost event to user-service after a turn completes or is stopped.
 
@@ -193,7 +192,7 @@ async def emit_turn_cost(
         return
 
     url = f"{base_url}/internal/turn-costs"
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "user_id": user_id,
         "session_id": _as_uuid(session_id),
         "turn_id": _as_uuid(turn_id or session_id, salt="turn:"),
@@ -212,21 +211,20 @@ async def emit_turn_cost(
         payload["org_id"] = org_id
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                url,
-                json=payload,
-                headers={**_headers(), "Content-Type": "application/json"},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status not in (200, 201, 204):
-                    text = await resp.text()
-                    logger.warning(
-                        "cost_client: turn-cost emission %s -> %s: %s",
-                        url,
-                        resp.status,
-                        text[:200],
-                    )
+        async with aiohttp.ClientSession() as session, session.post(
+            url,
+            json=payload,
+            headers={**_headers(), "Content-Type": "application/json"},
+            timeout=aiohttp.ClientTimeout(total=10),
+        ) as resp:
+            if resp.status not in (200, 201, 204):
+                text = await resp.text()
+                logger.warning(
+                    "cost_client: turn-cost emission %s -> %s: %s",
+                    url,
+                    resp.status,
+                    text[:200],
+                )
     except Exception:
         logger.exception(
             "cost_client: turn-cost emission failed for session %s", session_id

@@ -6,8 +6,9 @@ import logging
 import os
 from typing import Any
 
-from .context import get_context_for_session
 from src.services.workflow_backend_client import check_workflow_available
+
+from .context import get_context_for_session
 from .skills import get_index
 
 logger = logging.getLogger(__name__)
@@ -143,8 +144,8 @@ def inject_context(session_id: str = "", **kwargs: Any) -> dict | None:
     feature_stage: str = "unknown"
 
     if check_workflow_available():
-        from .tools.workspace import handle as get_workspace
         from .tools.feature import handle as get_feature
+        from .tools.workspace import handle as get_workspace
 
         indexed_repos = None
         try:

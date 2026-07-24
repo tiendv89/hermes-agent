@@ -32,13 +32,14 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, AsyncIterator, Dict, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 # Workflow write tools → the artifact kind the FE should refresh when they
 # succeed. Drives the ``hermes.artifact.saved`` extension event.
-ARTIFACT_BY_WRITE_TOOL: Dict[str, str] = {
+ARTIFACT_BY_WRITE_TOOL: dict[str, str] = {
     "write_product_spec": "product_spec",
     "write_technical_design": "technical_design",
     "write_tasks": "tasks",
@@ -47,7 +48,7 @@ ARTIFACT_BY_WRITE_TOOL: Dict[str, str] = {
 }
 
 
-def coerce_tool_output(output: Any) -> Dict[str, Any]:
+def coerce_tool_output(output: Any) -> dict[str, Any]:
     """Return the tool result as a dict.
 
     Plugin handlers are wrapped by _json_result_handler, so the result that
@@ -66,7 +67,7 @@ def coerce_tool_output(output: Any) -> Dict[str, Any]:
     return {}
 
 
-def artifact_for_tool(name: str, args: Any = None, output: Any = None) -> Optional[str]:
+def artifact_for_tool(name: str, args: Any = None, output: Any = None) -> str | None:
     """Resolve which artifact a completed tool call wrote, for the FE refresh event.
 
     Robust to toolset-prefixed names (``workflow_write_product_spec``), the
@@ -74,7 +75,7 @@ def artifact_for_tool(name: str, args: Any = None, output: Any = None) -> Option
     back to the committed file path in the output. Returns None when the tool
     didn't write a feature document.
     """
-    base = name[len("workflow_") :] if name.startswith("workflow_") else name
+    base = name.removeprefix("workflow_")
     artifact = ARTIFACT_BY_WRITE_TOOL.get(base) or ARTIFACT_BY_WRITE_TOOL.get(name)
     if artifact:
         return artifact
@@ -115,7 +116,7 @@ class HermesSSETranslator:
 
     def __init__(self, model: str = "hermes") -> None:
         self._loop = asyncio.get_running_loop()
-        self._frames: "asyncio.Queue[Optional[str]]" = asyncio.Queue()
+        self._frames: asyncio.Queue[str | None] = asyncio.Queue()
         self._model = model
         self._id = "chatcmpl-" + uuid.uuid4().hex
         self._created = int(time.time())
@@ -127,11 +128,11 @@ class HermesSSETranslator:
 
     # -- frame construction -------------------------------------------------
 
-    def _chunk(self, delta: Dict[str, Any], **top_level: Any) -> str:
+    def _chunk(self, delta: dict[str, Any], **top_level: Any) -> str:
         """Render a ``chat.completion.chunk`` frame. ``top_level`` adds sibling keys
         (``finish_reason`` goes inside the choice; ``usage``/``hermes`` are siblings)."""
         finish_reason = top_level.pop("finish_reason", None)
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "id": self._id,
             "object": "chat.completion.chunk",
             "created": self._created,
@@ -142,10 +143,10 @@ class HermesSSETranslator:
         return f"data: {json.dumps(payload)}\n\n"
 
     @staticmethod
-    def _event(name: str, data: Dict[str, Any]) -> str:
+    def _event(name: str, data: dict[str, Any]) -> str:
         return f"event: {name}\ndata: {json.dumps(data)}\n\n"
 
-    def _emit(self, frame: Optional[str]) -> None:
+    def _emit(self, frame: str | None) -> None:
         """Push a rendered frame (or the end sentinel) from any thread onto the queue."""
         self._loop.call_soon_threadsafe(self._frames.put_nowait, frame)
 
@@ -264,7 +265,7 @@ class HermesSSETranslator:
         self,
         clarify_id: str = "",
         question: str = "",
-        choices: Optional[list] = None,
+        choices: list | None = None,
         **_: Any,
     ) -> None:
         self._emit(
@@ -291,7 +292,7 @@ class HermesSSETranslator:
 
     # -- termination --------------------------------------------------------
 
-    def _terminate(self, finish_reason: str, error: Optional[str] = None) -> None:
+    def _terminate(self, finish_reason: str, error: str | None = None) -> None:
         """Emit the final chunk + ``[DONE]`` + end sentinel, at most once.
 
         Suppressed after mark_stopped() so a still-running thread does not
@@ -308,7 +309,7 @@ class HermesSSETranslator:
                 self._event("agent.reasoning", {"object": "reasoning.done"})
             )
 
-        siblings: Dict[str, Any] = {
+        siblings: dict[str, Any] = {
             "finish_reason": finish_reason,
             "usage": self._usage,
         }
@@ -326,7 +327,7 @@ class HermesSSETranslator:
         while True:
             try:
                 frame = await asyncio.wait_for(self._frames.get(), _KEEPALIVE_SECONDS)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 yield ": keepalive\n\n"
                 continue
             if frame is _END:

@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import requests
 
@@ -37,12 +37,12 @@ def _token() -> str:
     return ""
 
 
-def _headers(accept: str = "application/vnd.github.v3+json") -> Dict[str, str]:
+def _headers(accept: str = "application/vnd.github.v3+json") -> dict[str, str]:
     """Auth is handled by vcs-service — returns minimal headers for direct use."""
     return {"Accept": accept}
 
 
-def parse_pr_url(pr_url: str) -> Tuple[str, str, int]:
+def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
     """Extract (owner, repo, pull_number) from a GitHub PR URL.
 
     Raises ValueError when the URL does not match the expected pattern.
@@ -61,7 +61,7 @@ def parse_pr_url(pr_url: str) -> Tuple[str, str, int]:
 # ---------------------------------------------------------------------------
 
 
-def get_pr_metadata(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
+def get_pr_metadata(owner: str, repo: str, pull_number: int) -> dict[str, Any]:
     """Return PR metadata: title, body, author, branches, state, labels, etc."""
     from plugins.clients.vcs_client import get_pr_metadata as _impl
 
@@ -75,28 +75,28 @@ def get_pr_diff(owner: str, repo: str, pull_number: int) -> str:
     return _impl(owner, repo, pull_number)
 
 
-def get_pr_files(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]]:
+def get_pr_files(owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
     """Return the list of files changed in the PR."""
     from plugins.clients.vcs_client import get_pr_files as _impl
 
     return _impl(owner, repo, pull_number)
 
 
-def get_pr_comments(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
+def get_pr_comments(owner: str, repo: str, pull_number: int) -> dict[str, Any]:
     """Return both issue-level and review-level (inline) comments on the PR."""
     from plugins.clients.vcs_client import get_pr_comments as _impl
 
     return _impl(owner, repo, pull_number)
 
 
-def get_pr_reviews(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]]:
+def get_pr_reviews(owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
     """Return review history for the PR (who reviewed, verdict, when)."""
     from plugins.clients.vcs_client import get_pr_reviews as _impl
 
     return _impl(owner, repo, pull_number)
 
 
-def get_pr_commits(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]]:
+def get_pr_commits(owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
     """Return the commits in the PR."""
     from plugins.clients.vcs_client import get_pr_commits as _impl
 
@@ -107,8 +107,8 @@ def get_check_runs(
     owner: str,
     repo: str,
     head_sha: str,
-    poll_timeout_seconds: Optional[int] = None,
-) -> Dict[str, Any]:
+    poll_timeout_seconds: int | None = None,
+) -> dict[str, Any]:
     """Return CI check-run results for *head_sha*, with an optional bounded poll."""
     from plugins.clients.vcs_client import get_check_runs as _impl
 
@@ -125,7 +125,7 @@ def compare_refs(
     repo: str,
     base: str,
     head: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compare two refs/branches/commits and return ahead/behind counts + diff."""
     from plugins.clients.vcs_client import compare_refs as _impl
 
@@ -142,7 +142,7 @@ def get_file_at_ref(
     repo: str,
     path: str,
     ref: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return the content of a file at a given ref/commit/branch."""
     from plugins.clients.vcs_client import get_file_at_ref as _impl
 
@@ -153,10 +153,10 @@ def list_open_prs(
     owner: str,
     repo: str,
     state: str = "open",
-    head: Optional[str] = None,
-    base: Optional[str] = None,
+    head: str | None = None,
+    base: str | None = None,
     per_page: int = 30,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """List PRs for a repo, optionally filtered by state, head branch, or base branch."""
     from plugins.clients.vcs_client import list_open_prs as _impl
 
@@ -170,7 +170,7 @@ def list_open_prs(
 
 def post_issue_comment(
     owner: str, repo: str, issue_number: int, body: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Post *body* as an issue comment on PR *issue_number*.
 
     Returns the parsed JSON response.  Raises ``requests.HTTPError`` on failure.
@@ -186,7 +186,7 @@ def post_pr_review(
     pull_number: int,
     event: str,
     body: str,
-    comments: Optional[List[Dict[str, Any]]] = None,
+    comments: list[dict[str, Any]] | None = None,
 ) -> requests.Response:
     """Attempt to post a formal review event on PR *pull_number*.
 

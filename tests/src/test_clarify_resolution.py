@@ -168,7 +168,7 @@ async def test_send_message_resolves_clarify_instead_of_dispatching():
 
     from src.api import agent_dispatch
     from src.api.agent_dispatch import ActiveRun
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     session = _make_session(session_id="sess_clarify_1", user_id="other_owner")
     agent_dispatch._active_runs["sess_clarify_1"] = ActiveRun(
@@ -231,7 +231,7 @@ async def test_send_message_resolves_clarify_instead_of_dispatching():
 async def test_send_message_without_pending_clarify_dispatches_normally():
     """Control case: no pending clarify -> normal dispatch gate/coalescing
     behavior is unaffected by this change."""
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     session = _make_session(session_id="sess_no_clarify", user_id="other_owner")
 
@@ -289,7 +289,10 @@ async def test_post_thread_reply_resolves_clarify_instead_of_dispatching():
 
     from src.api import agent_dispatch
     from src.api.agent_dispatch import ActiveRun
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
     from src.db.models import Message
 
     session = _make_session(session_id="sess_clarify_2", user_id="other_owner")
@@ -366,12 +369,11 @@ async def test_post_thread_reply_resolves_clarify_instead_of_dispatching():
 @pytest.mark.asyncio
 async def test_reply_to_clarify_rejects_non_triggering_user():
     from fastapi import HTTPException
-
     from tools import clarify_gateway
 
     from src.api import agent_dispatch
     from src.api.agent_dispatch import ActiveRun
-    from src.api.routers.threads import reply_to_clarify, ClarifyReplyRequest
+    from src.api.routers.threads import ClarifyReplyRequest, reply_to_clarify
 
     agent_dispatch._active_runs["sess_clarify_3"] = ActiveRun(
         run_id="r1", task=MagicMock(), triggered_by="triggering_user"
@@ -403,7 +405,7 @@ async def test_reply_to_clarify_accepts_triggering_user():
 
     from src.api import agent_dispatch
     from src.api.agent_dispatch import ActiveRun
-    from src.api.routers.threads import reply_to_clarify, ClarifyReplyRequest
+    from src.api.routers.threads import ClarifyReplyRequest, reply_to_clarify
 
     agent_dispatch._active_runs["sess_clarify_4"] = ActiveRun(
         run_id="r1", task=MagicMock(), triggered_by="triggering_user"
@@ -494,12 +496,11 @@ async def test_get_pending_clarify_404_when_nothing_pending():
         patch(
             "src.api.routers.threads.authorize_thread_access",
             new=AsyncMock(return_value=(True, "org-1")),
-        ),
+        ),pytest.raises(HTTPException) as exc_info
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await get_pending_clarify(
-                session_id="sess_clarify_6", identity=identity, db=_mock_db()
-            )
+        await get_pending_clarify(
+            session_id="sess_clarify_6", identity=identity, db=_mock_db()
+        )
 
     assert exc_info.value.status_code == 404
     assert exc_info.value.detail == "no_pending_clarify"
@@ -528,10 +529,10 @@ async def test_get_pending_clarify_requires_thread_access():
             "src.api.routers.threads.authorize_thread_access",
             new=AsyncMock(side_effect=HTTPException(status_code=403, detail="Not a member of this thread.")),
         ),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await get_pending_clarify(
-                session_id="sess_clarify_7", identity=identity, db=_mock_db()
-            )
+        await get_pending_clarify(
+            session_id="sess_clarify_7", identity=identity, db=_mock_db()
+        )
 
     assert exc_info.value.status_code == 403

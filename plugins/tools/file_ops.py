@@ -15,7 +15,7 @@ See technical-design.md §Chosen Design for the full rationale (Option B).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from plugins.clients.storage_service_client import (
     StorageServiceError,
@@ -44,7 +44,7 @@ def _validate_path(path: str) -> str | None:
     return None
 
 
-WRITE_FILE_SCHEMA: Dict[str, Any] = {
+WRITE_FILE_SCHEMA: dict[str, Any] = {
     "description": (
         "Create or overwrite an arbitrary named file in storage-service — within a "
         "go-owned feature's document folder if a feature_id is given (explicitly or "
@@ -89,7 +89,7 @@ WRITE_FILE_SCHEMA: Dict[str, Any] = {
     },
 }
 
-EDIT_FILE_SCHEMA: Dict[str, Any] = {
+EDIT_FILE_SCHEMA: dict[str, Any] = {
     "description": (
         "Make targeted find-and-replace edits to an arbitrary named file in "
         "storage-service — within a go-owned feature's document folder if a "
@@ -156,15 +156,16 @@ def handle_write_file(
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create or overwrite an arbitrary file in storage-service.
 
     Writes to the given (or context) feature's document folder — go-owned
     features only — or, when no feature_id is available, directly under the
     workspace root. Returns {ok, path, version_id} on success.
     """
-    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
     from src.services.workflow_backend_client import get_feature_detail, run_async
+
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
@@ -249,11 +250,11 @@ def handle_write_file(
 
 def handle_edit_file(
     path: str,
-    edits: List[Dict[str, str]],
+    edits: list[dict[str, str]],
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Apply targeted find-and-replace edits to an arbitrary file.
 
     Reads current content first (read-before-write), applies edits via
@@ -262,8 +263,9 @@ def handle_edit_file(
     available, directly under the workspace root.
     Returns {ok, path, version_id} on success.
     """
-    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
     from src.services.workflow_backend_client import get_feature_detail, run_async
+
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()
@@ -342,7 +344,7 @@ def handle_edit_file(
         logger.warning("edit_file: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
 
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "ok": True,
         "path": path,
         "version_id": write_result.get("version_id"),

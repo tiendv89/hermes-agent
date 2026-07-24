@@ -124,7 +124,7 @@ class TestG1Deletion:
 
     def test_write_file_not_blocked_by_g1(self, g):
         # write_file has no deletion pattern in its name
-        ok, rc = g.check("write_file", {"path": "notes.md", "content": "hello"})
+        _ok, rc = g.check("write_file", {"path": "notes.md", "content": "hello"})
         assert rc != g.ReasonCode.DELETION_BLOCKED
 
     def test_read_file_allowed(self, g):
@@ -802,11 +802,11 @@ class TestGuardrailsDisabled:
 
 class TestEdgeCases:
     def test_none_arguments_handled(self, g):
-        ok, rc = g.check("write_file", None)
+        ok, _rc = g.check("write_file", None)
         assert isinstance(ok, bool)
 
     def test_empty_arguments_handled(self, g):
-        ok, rc = g.check("read_file", {})
+        ok, _rc = g.check("read_file", {})
         assert isinstance(ok, bool)
 
     def test_unknown_tool_allowed(self, g):
@@ -827,7 +827,7 @@ class TestEdgeCases:
         result = g.check("some_tool", {})
         assert isinstance(result, tuple)
         assert len(result) == 2
-        ok, rc = result
+        ok, _rc = result
         assert isinstance(ok, bool)
 
     def test_allowed_returns_none_reason(self, g):

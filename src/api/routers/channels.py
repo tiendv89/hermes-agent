@@ -15,7 +15,6 @@ so live SSE subscribers (T3) can update their UI without a full page reload.
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
@@ -27,11 +26,11 @@ from src.api.deps import get_db
 from src.api.identity import Identity, require_identity
 from src.db import (
     add_member,
+    create_channel,
     get_channel,
     hard_delete_channel,
     is_member,
     list_channels,
-    create_channel,
 )
 from src.realtime.bus import get_bus
 from src.services.user_service_client import UserServiceError, is_org_admin
@@ -51,7 +50,7 @@ class CreateChannelRequest(BaseModel):
     workspace_id: str
     name: str
     feature_id: str = ""
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class ChannelResponse(BaseModel):
@@ -60,7 +59,7 @@ class ChannelResponse(BaseModel):
     creator_user_id: str
     started_at: float
     last_active_at: float
-    description: Optional[str] = None
+    description: str | None = None
 
 
 # ---------------------------------------------------------------------------

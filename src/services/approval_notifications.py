@@ -14,7 +14,6 @@ first stage is approved, before a tech lead or reviewer has joined).
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from src.services.author_resolver import author_for
 from src.services.notification_client import (
@@ -32,8 +31,8 @@ async def notify_stage_approved(
     workspace_id: str,
     feature_id: str,
     stage: str,
-    actor_user_id: Optional[str],
-    actor_org_id: Optional[str] = None,
+    actor_user_id: str | None,
+    actor_org_id: str | None = None,
 ) -> None:
     """Notify every other member of the workspace's org that `stage` was
     approved. No-op for stages that don't map to a notification category

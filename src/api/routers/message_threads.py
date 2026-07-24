@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import asyncio
 import time as _time
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -32,8 +31,8 @@ from src.api.thread_authz import authorize_thread_access
 from src.db import (
     Message,
     add_member,
-    get_thread_messages_as_conversation,
     get_session,
+    get_thread_messages_as_conversation,
     persist_mentions,
     touch_session,
     update_session_model,
@@ -50,10 +49,10 @@ class PostThreadReplyRequest(BaseModel):
     model: str = ""
     # When the user replies to a specific message *inside* the thread panel,
     # this is the id of that specific reply (not the root). Optional.
-    reply_to_message_id: Optional[str] = None
+    reply_to_message_id: str | None = None
     # IDs of images uploaded to storage-service's images bucket the user
     # attached to this reply (see messages.py's SendMessageRequest.image_ids).
-    image_ids: List[str] = []
+    image_ids: list[str] = []
 
 
 @router.post("/threads/{session_id}/messages/{message_id}/replies", status_code=202)
@@ -110,7 +109,7 @@ async def post_thread_reply(
         )
 
     # Resolve optional reply_to_message_id (a specific message within the thread).
-    inner_reply_to_id: Optional[int] = None
+    inner_reply_to_id: int | None = None
     if body.reply_to_message_id:
         try:
             inner_reply_to_id = int(body.reply_to_message_id)
@@ -257,7 +256,7 @@ async def get_message_thread_replies(
     except ValueError:
         raise HTTPException(status_code=400, detail="message_id must be a numeric id.")
 
-    since_id: Optional[int] = None
+    since_id: int | None = None
     if since:
         try:
             since_id = int(since)

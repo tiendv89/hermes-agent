@@ -8,11 +8,11 @@ from product-spec.md. Never exposes write paths.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Look up a feature's title, lifecycle stage, status, and a short synopsis "
         "from its product spec. Accepts a feature ID or slug (e.g. 'VOY-59' or "
@@ -44,8 +44,9 @@ def check_available() -> bool:
     This tool is absent from feature-scoped sessions (which already have the
     richer feature tool set) and absent when the workflow DB is unreachable.
     """
-    from ..context import get_feature_id
     from src.services.workflow_backend_client import check_workflow_available
+
+    from ..context import get_feature_id
 
     return check_workflow_available() and not get_feature_id()
 
@@ -70,14 +71,15 @@ def _extract_synopsis(content: str) -> str:
     return synopsis[:500] if len(synopsis) > 500 else synopsis
 
 
-def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
-    from ..context import get_org_id, get_user_id, get_workspace_id
-    from ..validation import _validate_id
+def handle(feature_ref: str = "", **_: Any) -> dict[str, Any]:
     from src.services.workflow_backend_client import (
         check_workflow_available,
         get_feature_detail,
         run_async,
     )
+
+    from ..context import get_org_id, get_user_id, get_workspace_id
+    from ..validation import _validate_id
 
     if not feature_ref or not feature_ref.strip():
         return {"ok": False, "error": "feature_ref is required."}
@@ -108,7 +110,7 @@ def handle(feature_ref: str = "", **_: Any) -> Dict[str, Any]:
         logger.warning("workflow_lookup_feature: DB error for %r: %s", feature_ref, exc)
         return {"ok": False, "error": f"Database error: {exc}"}
 
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "ok": True,
         "feature_ref": feature_ref,
         "title": detail.get("title", ""),

@@ -19,33 +19,75 @@ from typing import Any
 from plugins.hooks import inject_context
 from plugins.tools import (
     approval,
-    approve as approve_tool,
     artifacts,
-    commit_files as commit_files_tool,
-    create_pr as create_pr_tool,
-    create_tasks as create_tasks_tool,
-    edit as edit_tool,
-    ensure_branch as ensure_branch_tool,
     feature,
-    file_ops as file_ops_tool,
+    git_ops,
     gitnexus,
-    init_feature as init_feature_tool,
-    list_documents as list_documents_tool,
-    lookup_feature as lookup_feature_tool,
-    move_feature as move_feature_tool,
-    parse_tasks as parse_tasks_tool,
+    local_file_ops,
     rag,
-    read as read_tool,
-    read_workspace_file as read_workspace_file_tool,
-    skills as skills_tool,
-    suggest_next_actions as suggest_next_actions_tool,
-    tasks as tasks_tool,
-    tasks_write as tasks_write_tool,
-    vcs_pr_context as vcs_pr_context_tool,
-    vcs_pr_review as vcs_pr_review_tool,
+    terminal,
     workspace,
 )
-from plugins.tools import git_ops, local_file_ops, terminal
+from plugins.tools import (
+    approve as approve_tool,
+)
+from plugins.tools import (
+    commit_files as commit_files_tool,
+)
+from plugins.tools import (
+    create_pr as create_pr_tool,
+)
+from plugins.tools import (
+    create_tasks as create_tasks_tool,
+)
+from plugins.tools import (
+    edit as edit_tool,
+)
+from plugins.tools import (
+    ensure_branch as ensure_branch_tool,
+)
+from plugins.tools import (
+    file_ops as file_ops_tool,
+)
+from plugins.tools import (
+    init_feature as init_feature_tool,
+)
+from plugins.tools import (
+    list_documents as list_documents_tool,
+)
+from plugins.tools import (
+    lookup_feature as lookup_feature_tool,
+)
+from plugins.tools import (
+    move_feature as move_feature_tool,
+)
+from plugins.tools import (
+    parse_tasks as parse_tasks_tool,
+)
+from plugins.tools import (
+    read as read_tool,
+)
+from plugins.tools import (
+    read_workspace_file as read_workspace_file_tool,
+)
+from plugins.tools import (
+    skills as skills_tool,
+)
+from plugins.tools import (
+    suggest_next_actions as suggest_next_actions_tool,
+)
+from plugins.tools import (
+    tasks as tasks_tool,
+)
+from plugins.tools import (
+    tasks_write as tasks_write_tool,
+)
+from plugins.tools import (
+    vcs_pr_context as vcs_pr_context_tool,
+)
+from plugins.tools import (
+    vcs_pr_review as vcs_pr_review_tool,
+)
 from src.services.workflow_backend_client import check_workflow_available
 
 logger = logging.getLogger(__name__)
@@ -435,8 +477,9 @@ def register_tools(ctx: Any) -> None:
     overrides still apply on top of that default. See
     ``plugins/__init__.py::register()``.
     """
-    import plugins
     import tools.vision_tools  # noqa: F401  (self-registers on import)
+
+    import plugins
 
     plugins.register(ctx, tools=_WORKFLOW_TOOLS)
     ctx.register_hook("pre_llm_call", inject_context)

@@ -73,6 +73,6 @@ router.include_router(dms.router)
 # Re-exported for callers/tests that reach for the in-flight run registry.
 # Both the legacy /chat handler and the new send service share this state via
 # src.api.agent_dispatch, so we re-export from there.
-from src.api.agent_dispatch import _active_runs, _active_runs_lock  # noqa: E402,F401
+from src.api.agent_dispatch import _active_runs, _active_runs_lock
 
-__all__ = ["router", "_active_runs", "_active_runs_lock"]
+__all__ = ["_active_runs", "_active_runs_lock", "router"]

@@ -55,7 +55,10 @@ class TestGenerateFeatureNameEndpoint:
 
         with patch("src.api.generate_feature_name.anthropic") as mock_anthropic:
             mock_anthropic.AsyncAnthropic.return_value = mock_client
-            from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+            from src.api.generate_feature_name import (
+                GenerateFeatureNameRequest,
+                generate_feature_name_endpoint,
+            )
             from src.api.identity import Identity
 
             identity = Identity(user_id="user-1")
@@ -77,7 +80,10 @@ class TestGenerateFeatureNameEndpoint:
 
         with patch("src.api.generate_feature_name.anthropic") as mock_anthropic:
             mock_anthropic.AsyncAnthropic.return_value = mock_client
-            from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+            from src.api.generate_feature_name import (
+                GenerateFeatureNameRequest,
+                generate_feature_name_endpoint,
+            )
             from src.api.identity import Identity
 
             identity = Identity(user_id="user-1")
@@ -94,7 +100,10 @@ class TestGenerateFeatureNameEndpoint:
 
         from fastapi import HTTPException
 
-        from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+        from src.api.generate_feature_name import (
+            GenerateFeatureNameRequest,
+            generate_feature_name_endpoint,
+        )
         from src.api.identity import Identity
 
         identity = Identity(user_id="user-1")
@@ -111,7 +120,10 @@ class TestGenerateFeatureNameEndpoint:
 
         from fastapi import HTTPException
 
-        from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+        from src.api.generate_feature_name import (
+            GenerateFeatureNameRequest,
+            generate_feature_name_endpoint,
+        )
         from src.api.identity import Identity
 
         identity = Identity(user_id="user-1")
@@ -128,7 +140,10 @@ class TestGenerateFeatureNameEndpoint:
 
         from fastapi import HTTPException
 
-        from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+        from src.api.generate_feature_name import (
+            GenerateFeatureNameRequest,
+            generate_feature_name_endpoint,
+        )
         from src.api.identity import Identity
 
         identity = Identity(user_id="user-1")
@@ -155,7 +170,10 @@ class TestGenerateFeatureNameEndpoint:
 
         with patch("src.api.generate_feature_name.anthropic") as mock_anthropic:
             mock_anthropic.AsyncAnthropic.return_value = mock_client
-            from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+            from src.api.generate_feature_name import (
+                GenerateFeatureNameRequest,
+                generate_feature_name_endpoint,
+            )
             from src.api.identity import Identity
 
             identity = Identity(user_id="user-1")
@@ -181,7 +199,10 @@ class TestGenerateFeatureNameEndpoint:
 
         with patch("src.api.generate_feature_name.anthropic") as mock_anthropic:
             mock_anthropic.AsyncAnthropic.return_value = mock_client
-            from src.api.generate_feature_name import GenerateFeatureNameRequest, generate_feature_name_endpoint
+            from src.api.generate_feature_name import (
+                GenerateFeatureNameRequest,
+                generate_feature_name_endpoint,
+            )
             from src.api.identity import Identity
 
             identity = Identity(user_id="user-1")

@@ -9,11 +9,11 @@ environment the gateway does not have).
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Load a skill's full guidance on demand — returns the named skill's "
         "SKILL.md body plus any reference files. Use when you need detailed "
@@ -58,7 +58,7 @@ def _coerce_name(name: Any) -> str:
     return name.strip()
 
 
-def handle(name: Any = "", **_: Any) -> Dict[str, Any]:
+def handle(name: Any = "", **_: Any) -> dict[str, Any]:
     """Return the full SKILL.md body + reference files for the named skill.
 
     Returns:

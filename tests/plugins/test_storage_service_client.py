@@ -8,13 +8,14 @@ workspace-root (feature_id="") paths.
 """
 
 from __future__ import annotations
-from plugins.clients import storage_service_client as ssc
 
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+
+from plugins.clients import storage_service_client as ssc
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT))
@@ -132,11 +133,11 @@ class TestWriteDocumentContentCreateOnMissing:
         with (
             patch("requests.put", return_value=not_found) as mock_put,
             patch("requests.post", return_value=create_error),
+            pytest.raises(ssc.StorageServiceError),
         ):
-            with pytest.raises(ssc.StorageServiceError):
-                ssc.write_document_content(
-                    _WORKSPACE_ID, _FEATURE_ID, "api.txt", "hello", user_id="u1", org_id="org-1"
-                )
+            ssc.write_document_content(
+                _WORKSPACE_ID, _FEATURE_ID, "api.txt", "hello", user_id="u1", org_id="org-1"
+            )
 
         assert mock_put.call_count == 1
 
@@ -148,11 +149,11 @@ class TestWriteDocumentContentCreateOnMissing:
         with (
             patch("requests.put", side_effect=[not_found, still_bad]),
             patch("requests.post", return_value=_resp(201)),
+            pytest.raises(ssc.StorageServiceError),
         ):
-            with pytest.raises(ssc.StorageServiceError):
-                ssc.write_document_content(
-                    _WORKSPACE_ID, _FEATURE_ID, "api.txt", "hello", user_id="u1", org_id="org-1"
-                )
+            ssc.write_document_content(
+                _WORKSPACE_ID, _FEATURE_ID, "api.txt", "hello", user_id="u1", org_id="org-1"
+            )
 
     def test_non_404_error_never_calls_create(self):
         """A non-404 PUT failure (e.g. 403) must not trigger document creation."""
@@ -161,11 +162,11 @@ class TestWriteDocumentContentCreateOnMissing:
         with (
             patch("requests.put", return_value=forbidden),
             patch("requests.post") as mock_post,
+            pytest.raises(ssc.StorageServiceError),
         ):
-            with pytest.raises(ssc.StorageServiceError):
-                ssc.write_document_content(
-                    _WORKSPACE_ID, _FEATURE_ID, "api.txt", "hello", user_id="u1", org_id="org-1"
-                )
+            ssc.write_document_content(
+                _WORKSPACE_ID, _FEATURE_ID, "api.txt", "hello", user_id="u1", org_id="org-1"
+            )
 
         mock_post.assert_not_called()
 

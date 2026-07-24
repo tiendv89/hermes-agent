@@ -22,7 +22,7 @@ import types
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -176,7 +176,7 @@ async def test_emit_turn_cost_posts_payload(monkeypatch):
     monkeypatch.setenv("USER_SERVICE_URL", "http://bff:8080")
     from src.services.cost_client import emit_turn_cost
 
-    posted: Dict[str, Any] = {}
+    posted: dict[str, Any] = {}
 
     fake_resp = MagicMock()
     fake_resp.status = 201
@@ -225,7 +225,7 @@ async def test_emit_turn_cost_sets_stopped_true_for_partial(monkeypatch):
     monkeypatch.setenv("USER_SERVICE_URL", "http://bff:8080")
     from src.services.cost_client import emit_turn_cost
 
-    posted: Dict[str, Any] = {}
+    posted: dict[str, Any] = {}
 
     fake_resp = MagicMock()
     fake_resp.status = 201
@@ -573,7 +573,12 @@ async def test_stopped_turn_emits_partial_cost_with_stopped_true():
             "output_tokens": output_tokens,
         })
 
-    from src.api.agent_dispatch import _run_agent_turn_async, ActiveRun, _active_runs, _active_runs_lock
+    from src.api.agent_dispatch import (
+        ActiveRun,
+        _active_runs,
+        _active_runs_lock,
+        _run_agent_turn_async,
+    )
     from src.streaming.sse import HermesSSETranslator
 
     session_id = "sess-stopped"
@@ -650,7 +655,12 @@ async def test_stopped_turn_without_agent_emits_zero_tokens():
             "output_tokens": output_tokens,
         })
 
-    from src.api.agent_dispatch import _run_agent_turn_async, ActiveRun, _active_runs, _active_runs_lock
+    from src.api.agent_dispatch import (
+        ActiveRun,
+        _active_runs,
+        _active_runs_lock,
+        _run_agent_turn_async,
+    )
     from src.streaming.sse import HermesSSETranslator
 
     session_id = "sess-stopped-noagent"
@@ -722,7 +732,12 @@ async def test_stopped_turn_token_count_at_most_comparable_full_turn():
         else:
             full_emitted.append({"input_tokens": input_tokens, "output_tokens": output_tokens})
 
-    from src.api.agent_dispatch import _run_agent_turn_async, ActiveRun, _active_runs, _active_runs_lock
+    from src.api.agent_dispatch import (
+        ActiveRun,
+        _active_runs,
+        _active_runs_lock,
+        _run_agent_turn_async,
+    )
     from src.streaming.sse import HermesSSETranslator
 
     session_id = "sess-compare"

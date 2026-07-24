@@ -113,7 +113,7 @@ def _resolve_soon(tool_name: str, result: dict, delay: float = 0.05) -> None:
     def _worker():
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            with module_ref._lock:  # noqa: SLF001 - test-only introspection
+            with module_ref._lock:
                 for call_id, entry in list(module_ref._entries.items()):
                     if entry.tool == tool_name and not entry.event.is_set():
                         module_ref.resolve(call_id, result, session_key=entry.session_key)

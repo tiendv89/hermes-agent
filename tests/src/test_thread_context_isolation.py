@@ -18,7 +18,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Stub heavyweight deps not present in the test environment
 # ---------------------------------------------------------------------------
@@ -355,7 +354,7 @@ async def test_schedule_follow_up_uses_thread_history_when_thread_root_id_set():
     from src.api.agent_dispatch import _schedule_follow_up
 
     loop = asyncio.get_running_loop()
-    db_factory, db = _mock_db_factory()
+    db_factory, _db = _mock_db_factory()
 
     thread_history_calls: list = []
     session_history_calls: list = []
@@ -410,7 +409,7 @@ async def test_schedule_follow_up_uses_session_history_for_top_level_turn():
     from src.api.agent_dispatch import _schedule_follow_up
 
     loop = asyncio.get_running_loop()
-    db_factory, db = _mock_db_factory()
+    db_factory, _db = _mock_db_factory()
 
     thread_history_calls: list = []
     session_history_calls: list = []

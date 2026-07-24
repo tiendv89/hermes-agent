@@ -8,11 +8,11 @@ vcs_ensure_branch (if the branch is new) and before vcs_create_pr.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Commit one or more files directly to a branch via vcs-service, "
         "using GitHub's Contents API (no local git clone involved). Use "
@@ -72,10 +72,10 @@ def handle(
     repo: str = "",
     branch: str = "",
     message: str = "",
-    files: Dict[str, str] | None = None,
+    files: dict[str, str] | None = None,
     base_branch: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from src.services.vcs_service_client import VCSServiceError, commit_files, run_async
 
     if not owner:

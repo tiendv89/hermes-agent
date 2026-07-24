@@ -8,13 +8,13 @@ The actual state mutation happens via the approve_feature tool.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 _VALID_STAGES = frozenset({"product_spec", "technical_design", "tasks", "handoff"})
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Request human approval for a feature lifecycle stage. "
         "Surfaces an Approve / Reject / Re-open card to the user — "
@@ -49,8 +49,9 @@ def _read_review_status(workspace_id: str, feature_id: str, stage: str) -> str:
         return "unknown"
 
     try:
-        from ..context import get_org_id, get_user_id
         from src.services.workflow_backend_client import get_feature_detail, run_async
+
+        from ..context import get_org_id, get_user_id
 
         caller_user_id = get_user_id()
         caller_org_id = get_org_id()
@@ -66,7 +67,7 @@ def _read_review_status(workspace_id: str, feature_id: str, stage: str) -> str:
         return "unknown"
 
 
-def handle(stage: str, feature_id: str = "", **_: Any) -> Dict[str, Any]:
+def handle(stage: str, feature_id: str = "", **_: Any) -> dict[str, Any]:
     from ..context import get_feature_id, get_workspace_id
 
     fid = feature_id or get_feature_id()

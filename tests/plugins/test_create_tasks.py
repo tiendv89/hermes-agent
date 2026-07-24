@@ -38,11 +38,11 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def _clean_modules():
     """Remove plugins/src modules between tests to avoid cross-test pollution."""
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
 

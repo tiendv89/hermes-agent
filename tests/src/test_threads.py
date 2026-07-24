@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -73,7 +73,7 @@ async def test_create_workspace_thread_creates_session_and_joins_creator():
     from src.db.store import create_workspace_thread
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     # Simulate flush populating session.id
@@ -116,7 +116,7 @@ async def test_create_workspace_thread_adds_initial_members():
     from src.db.store import create_workspace_thread
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     async def _flush():
@@ -144,11 +144,11 @@ async def test_create_workspace_thread_adds_initial_members():
 @pytest.mark.asyncio
 async def test_create_workspace_thread_optional_title():
     """create_workspace_thread stores title when provided, None when omitted."""
-    from src.db.store import create_workspace_thread
     from src.db.models import Session
+    from src.db.store import create_workspace_thread
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     async def _flush():
@@ -249,9 +249,10 @@ async def test_list_member_sessions_includes_workspace_threads():
 def _make_app():
     """Build a minimal FastAPI test app with the threads router."""
     from fastapi import FastAPI
-    from src.api.routers.threads import router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.threads import router
 
     async def _override_db():
         yield _mock_db()
@@ -288,7 +289,7 @@ async def test_create_thread_success_201():
 @pytest.mark.asyncio
 async def test_create_thread_with_members():
     """POST /threads with members list passes them to store."""
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     async def _mock_create(db, workspace_id, creator_user_id, title, members):
         captured["members"] = members

@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any
+
+from plugins.clients.storage_service_client import (
+    StorageServiceError,
+    write_document_content,
+)
 
 from ..skills import get_index
-from plugins.clients.storage_service_client import StorageServiceError, write_document_content
 from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
@@ -38,7 +42,7 @@ def _extract_required_skills(tasks_md: str) -> set[str]:
     return skills
 
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Generate the task breakdown for a feature and write it to storage-service. "
         "Writes tasks.md only. Tasks are created in the DB at "
@@ -135,13 +139,13 @@ SCHEMA: Dict[str, Any] = {
 
 
 def handle(
-    tasks: List[Dict[str, Any]],
+    tasks: list[dict[str, Any]],
     tasks_md: str,
     commit_message: str = "",
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
@@ -248,8 +252,8 @@ def handle(
     #     with valid alternatives.
     #   - If candidates endpoint is unavailable: skip validation gracefully.
     model_note = ""
-    model_candidates_needed: List[Dict[str, Any]] = []
-    model_validation_errors: List[Dict[str, Any]] = []
+    model_candidates_needed: list[dict[str, Any]] = []
+    model_validation_errors: list[dict[str, Any]] = []
 
     agent_tasks = [t for t in tasks if (t.get("actor_type") or "agent") == "agent"]
     if agent_tasks:
@@ -263,7 +267,7 @@ def handle(
 
             # Collect unique repos for agent tasks.
             repos = {t.get("repo", "") for t in agent_tasks if t.get("repo")}
-            candidates_by_repo: Dict[str, Any] = {}
+            candidates_by_repo: dict[str, Any] = {}
             for repo_slug in repos:
                 try:
                     repo_uuid = run_async(

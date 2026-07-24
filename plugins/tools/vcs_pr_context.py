@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from plugins.clients.vcs_client import (
     compare_refs,
@@ -54,7 +54,7 @@ _ACTIONS = (
     "list_prs",
 )
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Read-only GitHub PR context — fetch diff, files, metadata, comments, reviews, "
         "CI check-runs, commits, ref comparison, file content at a ref, or list open PRs. "
@@ -159,7 +159,7 @@ def handle(
     ref: str = "",
     state: str = "open",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if action not in _ACTIONS:
         return {
             "ok": False,
@@ -182,7 +182,7 @@ def handle(
 
     parsed_owner: str = owner
     parsed_repo: str = repo
-    pull_number: Optional[int] = None
+    pull_number: int | None = None
 
     if action in _PR_ACTIONS:
         if not pr_url:

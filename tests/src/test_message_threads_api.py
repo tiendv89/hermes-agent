@@ -28,11 +28,10 @@ from __future__ import annotations
 
 import sys
 import types
-from typing import Any, Dict
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Stubs for heavyweight deps not present in test env
@@ -148,13 +147,16 @@ def _mock_message(
 @pytest.mark.asyncio
 async def test_post_thread_reply_success():
     """Successful reply stores correct thread_root_id and reply_to_message_id."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     root_msg = _mock_message(id=10, thread_root_id=None)
     db.get = AsyncMock(return_value=root_msg)
 
-    captured_kwargs: Dict[str, Any] = {}
+    captured_kwargs: dict[str, Any] = {}
 
     async def _fake_append(db_, session_id, role, content, author_id=None,
                            thread_root_id=None, reply_to_message_id=None, **kw):
@@ -204,13 +206,16 @@ async def test_post_thread_reply_success():
 @pytest.mark.asyncio
 async def test_post_thread_reply_explicit_inner_reply_to():
     """reply_to_message_id in body sets a specific inner reply target."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     root_msg = _mock_message(id=10, thread_root_id=None)
     db.get = AsyncMock(return_value=root_msg)
 
-    captured_kwargs: Dict[str, Any] = {}
+    captured_kwargs: dict[str, Any] = {}
 
     async def _fake_append(db_, session_id, role, content, author_id=None,
                            thread_root_id=None, reply_to_message_id=None, **kw):
@@ -257,7 +262,10 @@ async def test_post_thread_reply_explicit_inner_reply_to():
 @pytest.mark.asyncio
 async def test_post_thread_reply_sse_payload_includes_thread_fields():
     """SSE message.created payload includes thread_root_id and reply_to_message_id."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     root_msg = _mock_message(id=7, thread_root_id=None)
@@ -313,8 +321,12 @@ async def test_post_thread_reply_sse_payload_includes_thread_fields():
 @pytest.mark.asyncio
 async def test_post_thread_reply_nested_thread_rejected():
     """Returns 400 nested_thread_not_supported when root msg has thread_root_id != NULL."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     # The target message is itself a reply (thread_root_id is set) — cannot nest further.
@@ -349,8 +361,12 @@ async def test_post_thread_reply_nested_thread_rejected():
 @pytest.mark.asyncio
 async def test_post_thread_reply_root_message_not_found():
     """Returns 404 when the root message does not exist."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     db.get = AsyncMock(return_value=None)  # message not found
@@ -382,8 +398,12 @@ async def test_post_thread_reply_root_message_not_found():
 @pytest.mark.asyncio
 async def test_post_thread_reply_session_not_found():
     """Returns 404 when the session does not exist."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
 
@@ -410,8 +430,12 @@ async def test_post_thread_reply_session_not_found():
 @pytest.mark.asyncio
 async def test_post_thread_reply_non_member_forbidden():
     """Returns 403 when the caller is not a session member."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     session = _mock_session(user_id="owner-99")  # different owner
@@ -444,8 +468,12 @@ async def test_post_thread_reply_non_member_forbidden():
 @pytest.mark.asyncio
 async def test_post_thread_reply_empty_content_rejected():
     """Returns 400 for empty content."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     session = _mock_session()
@@ -473,8 +501,12 @@ async def test_post_thread_reply_empty_content_rejected():
 @pytest.mark.asyncio
 async def test_post_thread_reply_non_numeric_message_id():
     """Returns 400 for a non-numeric message_id path parameter."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     session = _mock_session()
@@ -504,8 +536,12 @@ async def test_post_thread_reply_non_numeric_message_id():
 @pytest.mark.asyncio
 async def test_post_thread_reply_root_message_wrong_session():
     """Returns 404 when the message belongs to a different session."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     wrong_session_msg = _mock_message(id=10, session_id="sess-other", thread_root_id=None)
@@ -542,7 +578,10 @@ async def test_post_thread_reply_root_message_wrong_session():
 @pytest.mark.asyncio
 async def test_post_thread_reply_agent_mention_triggers_dispatch():
     """@agent mention inside a thread reply triggers schedule_agent_turn."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     root_msg = _mock_message(id=10, thread_root_id=None)
@@ -595,7 +634,10 @@ async def test_post_thread_reply_agent_mention_triggers_dispatch():
 @pytest.mark.asyncio
 async def test_post_thread_reply_channel_bare_message_no_dispatch():
     """Bare message in a channel session does NOT trigger agent dispatch."""
-    from src.api.routers.message_threads import post_thread_reply, PostThreadReplyRequest
+    from src.api.routers.message_threads import (
+        PostThreadReplyRequest,
+        post_thread_reply,
+    )
 
     db = _mock_db()
     root_msg = _mock_message(id=10, thread_root_id=None)
@@ -737,20 +779,23 @@ async def test_get_thread_replies_passes_since_cursor():
 @pytest.mark.asyncio
 async def test_get_thread_replies_session_not_found():
     """Returns 404 when the session does not exist."""
-    from src.api.routers.message_threads import get_message_thread_replies
     from fastapi import HTTPException
+
+    from src.api.routers.message_threads import get_message_thread_replies
 
     db = _mock_db()
 
-    with patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc_info:
-            await get_message_thread_replies(
-                session_id="nonexistent",
-                message_id="10",
-                since="",
-                _identity=MagicMock(),
-                db=db,
-            )
+    with (
+        patch("src.api.routers.message_threads.get_session", AsyncMock(return_value=None)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await get_message_thread_replies(
+            session_id="nonexistent",
+            message_id="10",
+            since="",
+            _identity=MagicMock(),
+            db=db,
+        )
 
     assert exc_info.value.status_code == 404
 
@@ -836,10 +881,10 @@ async def test_get_thread_messages_no_thread_summary_when_no_replies():
 @pytest.mark.asyncio
 async def test_send_message_passes_reply_to_message_id():
     """send_message passes reply_to_message_id to append_message."""
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     db = _mock_db()
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     async def _fake_append(db_, session_id, role, content, author_id=None,
                            reply_to_message_id=None, thread_root_id=None, **kw):
@@ -882,8 +927,9 @@ async def test_send_message_passes_reply_to_message_id():
 @pytest.mark.asyncio
 async def test_send_message_invalid_reply_to_message_id():
     """send_message returns 400 for a non-numeric reply_to_message_id."""
-    from src.api.routers.messages import send_message, SendMessageRequest
     from fastapi import HTTPException
+
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     db = _mock_db()
     session = _mock_session()
@@ -914,10 +960,10 @@ async def test_send_message_invalid_reply_to_message_id():
 @pytest.mark.asyncio
 async def test_send_message_without_reply_to_message_id_unaffected():
     """Existing callers without reply_to_message_id are unaffected."""
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     db = _mock_db()
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     async def _fake_append(db_, session_id, role, content, author_id=None,
                            reply_to_message_id=None, thread_root_id=None, **kw):
@@ -965,7 +1011,7 @@ async def test_send_message_without_reply_to_message_id_unaffected():
 @pytest.mark.asyncio
 async def test_send_message_sse_payload_includes_reply_fields():
     """SSE payload from send_message includes reply_to_message_id and thread_root_id."""
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     db = _mock_db()
     published: list = []

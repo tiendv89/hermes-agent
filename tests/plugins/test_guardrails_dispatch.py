@@ -81,7 +81,7 @@ def _clear_thread_local():
         for attr in ("workspace_id", "feature_id", "user_id", "org_id", "agent_session_id"):
             if hasattr(_local, attr):
                 setattr(_local, attr, "")
-    except Exception:
+    except Exception:  # noqa: S110 — best-effort test teardown, never fails a test
         pass
 
 

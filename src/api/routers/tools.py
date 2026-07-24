@@ -54,6 +54,7 @@ async def list_tools_endpoint(
                 if not check_fn():
                     continue
             except Exception:
+                logger.debug("check_fn raised for tool %r; treating as unavailable", t["name"], exc_info=True)
                 continue
         tools.append(
             {

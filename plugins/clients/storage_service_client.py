@@ -65,7 +65,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, List
+from typing import Any
 from urllib.parse import quote
 
 import requests
@@ -80,10 +80,10 @@ _DEFAULT_TIMEOUT = 30
 # (rather than calling that async function) because this module is
 # synchronous (requests), while user_service_client is aiohttp-based.
 _ACCESSIBLE_ORGS_TTL_SECONDS = 30.0
-_accessible_orgs_cache: Dict[str, tuple[float, List[str]]] = {}
+_accessible_orgs_cache: dict[str, tuple[float, list[str]]] = {}
 
 
-def _get_accessible_org_ids(user_id: str) -> List[str]:
+def _get_accessible_org_ids(user_id: str) -> list[str]:
     """Return every org_id user_id is a member of.
 
     Sync counterpart of user_service_client.get_accessible_org_ids (same
@@ -150,7 +150,7 @@ def _resolve_config() -> tuple[str, str]:
     return url.rstrip("/"), token
 
 
-def _build_headers(token: str, user_id: str, org_id: str) -> Dict[str, str]:
+def _build_headers(token: str, user_id: str, org_id: str) -> dict[str, str]:
     accessible = _get_accessible_org_ids(user_id) or ([org_id] if org_id else [])
     headers = {
         "Authorization": f"Bearer {token}",
@@ -199,7 +199,7 @@ def _list_url(base_url: str, workspace_id: str, feature_id: str) -> str:
 
 def _create_document(
     base_url: str,
-    headers: Dict[str, str],
+    headers: dict[str, str],
     workspace_id: str,
     feature_id: str,
     path: str,
@@ -239,7 +239,7 @@ def _create_document(
         try:
             body = resp.json()
         except Exception:
-            pass
+            logger.debug("storage-service error response was not valid JSON", exc_info=True)
         reason = body.get("error") or body.get("reason_code") or ""
         raise StorageServiceError(
             f"storage-service POST {url} returned {resp.status_code}: {body}",
@@ -254,7 +254,7 @@ def download_image(
     *,
     user_id: str = "",
     org_id: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Download a previously-uploaded image's raw bytes from storage-service.
 
     Used to fetch a chat-attached image server-side (trusted first-party
@@ -300,7 +300,7 @@ def read_document_content(
     *,
     user_id: str = "",
     org_id: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read a document's content from storage-service.
 
     Pass feature_id="" to read a workspace-root document (no owning
@@ -329,7 +329,7 @@ def read_document_content(
         try:
             body = resp.json()
         except Exception:
-            pass
+            logger.debug("storage-service error response was not valid JSON", exc_info=True)
         reason = body.get("error") or body.get("reason_code") or ""
         raise StorageServiceError(
             f"storage-service GET {url} returned {resp.status_code}: {body}",
@@ -350,7 +350,7 @@ def list_documents(
     *,
     user_id: str = "",
     org_id: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List documents under a workspace root or one feature's document folder.
 
     Pass feature_id="" to list every non-deleted document across the whole
@@ -387,7 +387,7 @@ def list_documents(
         try:
             body = resp.json()
         except Exception:
-            pass
+            logger.debug("storage-service error response was not valid JSON", exc_info=True)
         reason = body.get("error") or body.get("reason_code") or ""
         raise StorageServiceError(
             f"storage-service GET {url} returned {resp.status_code}: {body}",
@@ -408,7 +408,7 @@ def write_document_content(
     user_id: str = "",
     org_id: str = "",
     feature_slug: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Write a document's content to storage-service.
 
     The content PUT is edit-only (see module docstring / _create_document) —
@@ -449,7 +449,7 @@ def write_document_content(
         try:
             body = resp.json()
         except Exception:
-            pass
+            logger.debug("storage-service error response was not valid JSON", exc_info=True)
         reason = body.get("error") or body.get("reason_code") or ""
         raise StorageServiceError(
             f"storage-service PUT {url} returned {resp.status_code}: {body}",

@@ -77,9 +77,10 @@ def _make_stream_app(identity_user_id="user_a"):
     """Minimal FastAPI app with the stream router, using dependency overrides."""
     _inject_stubs()
     from fastapi import FastAPI
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
 
     mock_db = MagicMock()
     mock_db.get = AsyncMock(return_value=None)
@@ -101,11 +102,13 @@ def _make_stream_app(identity_user_id="user_a"):
 def _make_messages_app(identity_user_id="user_a"):
     """Minimal FastAPI app with the messages router, using dependency overrides."""
     _inject_stubs()
-    from fastapi import FastAPI
-    from src.api.routers.messages import router as messages_router
-    from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
     from contextlib import asynccontextmanager
+
+    from fastapi import FastAPI
+
+    from src.api.deps import get_db
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.messages import router as messages_router
 
     mock_db = MagicMock()
     mock_db.get = AsyncMock(return_value=None)
@@ -205,7 +208,7 @@ async def test_bus_cleanup_on_exit():
 @pytest.mark.asyncio
 async def test_bus_slow_subscriber_drops_gracefully():
     """A full subscriber queue causes QueueFull to be swallowed — other subs unaffected."""
-    from src.realtime.bus import SessionBus, _MAX_QUEUE
+    from src.realtime.bus import _MAX_QUEUE, SessionBus
 
     bus = SessionBus()
 
@@ -370,9 +373,10 @@ async def test_stream_non_member_returns_403():
     """Non-member calling GET .../stream is rejected with 403."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
 
     _inject_stubs()
     mock_db = MagicMock()
@@ -413,9 +417,10 @@ async def test_stream_thread_not_found_returns_404():
     """Thread not found → 404."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
 
     _inject_stubs()
     mock_db = MagicMock()
@@ -450,9 +455,10 @@ async def test_stream_owner_can_connect_and_receives_events():
     """
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
     from src.realtime.bus import get_bus
 
     _inject_stubs()
@@ -514,9 +520,10 @@ async def test_stream_replays_since_messages():
     """?since=<id> causes replay of missed messages before live stream."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
 
     _inject_stubs()
     mock_db = MagicMock()
@@ -599,9 +606,10 @@ async def test_typing_published_not_persisted():
     """POST .../typing publishes a typing event to the bus without DB write."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
     from src.realtime.bus import SessionBus
 
     _inject_stubs()
@@ -659,9 +667,10 @@ async def test_typing_non_member_returns_403():
     """Non-member typing → 403."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
 
     _inject_stubs()
     mock_db = MagicMock()
@@ -701,9 +710,10 @@ async def test_typing_thread_not_found_returns_404():
     """Thread not found → 404 on typing endpoint."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.stream import router as stream_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.stream import router as stream_router
 
     _inject_stubs()
     mock_db = MagicMock()
@@ -737,13 +747,15 @@ async def test_typing_thread_not_found_returns_404():
 @pytest.mark.asyncio
 async def test_send_message_publishes_to_bus():
     """POST /threads/{id}/messages publishes a message.created bus event."""
+    from contextlib import asynccontextmanager
+
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from src.api.routers.messages import router as messages_router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.messages import router as messages_router
     from src.realtime.bus import SessionBus
-    from contextlib import asynccontextmanager
 
     _inject_stubs()
     mock_db = MagicMock()

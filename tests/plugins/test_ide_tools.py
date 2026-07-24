@@ -15,6 +15,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -35,7 +36,7 @@ def _clean_modules():
     keys = [
         k
         for k in sys.modules
-        if k.startswith("plugins") or k.startswith("profiles") or k.startswith("src")
+        if k.startswith(("plugins", "profiles", "src"))
     ]
     for k in keys:
         del sys.modules[k]
@@ -43,7 +44,7 @@ def _clean_modules():
     keys = [
         k
         for k in sys.modules
-        if k.startswith("plugins") or k.startswith("profiles") or k.startswith("src")
+        if k.startswith(("plugins", "profiles", "src"))
     ]
     for k in keys:
         del sys.modules[k]
@@ -474,7 +475,7 @@ class TestGitOpsHandlers:
 class TestCodingProfileSetup:
     """Verify the coding profile setup registers all expected tools."""
 
-    EXPECTED_TOOLS = {
+    EXPECTED_TOOLS: ClassVar[set[str]] = {
         # Shared (server-executed)
         "query_rag",
         "query_gitnexus",
@@ -611,7 +612,7 @@ class TestDeferredPassthrough:
     def test_sync_handler_deferred_skips_sanitize(self):
         """When a handler returns ``__deferred__``, the wrapper must NOT
         call ``guardrails.sanitize_result``."""
-        from plugins import _json_result_handler, _guardrails
+        from plugins import _guardrails, _json_result_handler
 
         handler_called = False
 
@@ -638,7 +639,7 @@ class TestDeferredPassthrough:
     def test_sync_handler_no_deferred_still_sanitizes(self):
         """A normal (non-deferred) handler result must still go through
         guardrail sanitization (existing behavior preserved)."""
-        from plugins import _json_result_handler, _guardrails
+        from plugins import _guardrails, _json_result_handler
 
         def fake_handler(**kwargs):
             return {"ok": True, "data": "hello"}

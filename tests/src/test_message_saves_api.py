@@ -86,6 +86,7 @@ async def test_get_message_returns_message():
 @pytest.mark.asyncio
 async def test_get_message_raises_404_when_not_found():
     from fastapi import HTTPException
+
     from src.api.routers.message_saves import _get_message
 
     db = _mock_db()
@@ -105,8 +106,8 @@ async def test_get_message_raises_404_when_not_found():
 
 @pytest.mark.asyncio
 async def test_save_message_creates_save_row():
-    from src.api.routers.message_saves import save_message
     from src.api.identity import Identity
+    from src.api.routers.message_saves import save_message
 
     db = _mock_db()
     mock_msg = _make_message(message_id=10)
@@ -131,8 +132,8 @@ async def test_save_message_creates_save_row():
 
 @pytest.mark.asyncio
 async def test_save_message_idempotent_returns_200():
-    from src.api.routers.message_saves import save_message
     from src.api.identity import Identity
+    from src.api.routers.message_saves import save_message
 
     db = _mock_db()
     mock_msg = _make_message(message_id=10)
@@ -156,8 +157,9 @@ async def test_save_message_idempotent_returns_200():
 @pytest.mark.asyncio
 async def test_save_message_missing_identity():
     from fastapi import HTTPException
-    from src.api.routers.message_saves import save_message
+
     from src.api.identity import Identity
+    from src.api.routers.message_saves import save_message
 
     db = _mock_db()
     identity = Identity(user_id="")
@@ -170,8 +172,9 @@ async def test_save_message_missing_identity():
 @pytest.mark.asyncio
 async def test_save_message_not_found():
     from fastapi import HTTPException
-    from src.api.routers.message_saves import save_message
+
     from src.api.identity import Identity
+    from src.api.routers.message_saves import save_message
 
     db = _mock_db()
     mock_result = MagicMock()
@@ -191,8 +194,8 @@ async def test_save_message_not_found():
 
 @pytest.mark.asyncio
 async def test_unsave_message_deletes_row():
-    from src.api.routers.message_saves import unsave_message
     from src.api.identity import Identity
+    from src.api.routers.message_saves import unsave_message
 
     db = _mock_db()
     mock_msg = _make_message(message_id=10)
@@ -210,8 +213,8 @@ async def test_unsave_message_deletes_row():
 @pytest.mark.asyncio
 async def test_unsave_message_idempotent_no_error():
     """Unsaving a message that wasn't saved is a no-op — no 404, just 204."""
-    from src.api.routers.message_saves import unsave_message
     from src.api.identity import Identity
+    from src.api.routers.message_saves import unsave_message
 
     db = _mock_db()
     mock_msg = _make_message(message_id=10)
@@ -228,8 +231,9 @@ async def test_unsave_message_idempotent_no_error():
 @pytest.mark.asyncio
 async def test_unsave_missing_identity():
     from fastapi import HTTPException
-    from src.api.routers.message_saves import unsave_message
+
     from src.api.identity import Identity
+    from src.api.routers.message_saves import unsave_message
 
     db = _mock_db()
     identity = Identity(user_id="")
@@ -242,8 +246,9 @@ async def test_unsave_missing_identity():
 @pytest.mark.asyncio
 async def test_unsave_message_not_found():
     from fastapi import HTTPException
-    from src.api.routers.message_saves import unsave_message
+
     from src.api.identity import Identity
+    from src.api.routers.message_saves import unsave_message
 
     db = _mock_db()
     mock_result = MagicMock()
@@ -263,8 +268,8 @@ async def test_unsave_message_not_found():
 
 @pytest.mark.asyncio
 async def test_list_saved_messages_returns_saved():
-    from src.api.routers.message_saves import list_saved_messages
     from src.api.identity import Identity
+    from src.api.routers.message_saves import list_saved_messages
 
     db = _mock_db()
     now = time.time()
@@ -304,8 +309,8 @@ async def test_list_saved_messages_returns_saved():
 
 @pytest.mark.asyncio
 async def test_list_saved_messages_includes_edited_at_when_set():
-    from src.api.routers.message_saves import list_saved_messages
     from src.api.identity import Identity
+    from src.api.routers.message_saves import list_saved_messages
 
     db = _mock_db()
     now = time.time()
@@ -339,8 +344,8 @@ async def test_list_saved_messages_includes_edited_at_when_set():
 
 @pytest.mark.asyncio
 async def test_list_saved_messages_empty_for_user_with_no_saves():
-    from src.api.routers.message_saves import list_saved_messages
     from src.api.identity import Identity
+    from src.api.routers.message_saves import list_saved_messages
 
     db = _mock_db()
     mock_result = MagicMock()
@@ -360,8 +365,9 @@ async def test_list_saved_messages_empty_for_user_with_no_saves():
 @pytest.mark.asyncio
 async def test_list_saved_messages_missing_identity():
     from fastapi import HTTPException
-    from src.api.routers.message_saves import list_saved_messages
+
     from src.api.identity import Identity
+    from src.api.routers.message_saves import list_saved_messages
 
     db = _mock_db()
     identity = Identity(user_id="")
@@ -373,8 +379,8 @@ async def test_list_saved_messages_missing_identity():
 
 @pytest.mark.asyncio
 async def test_list_saved_messages_uses_untitled_fallback():
-    from src.api.routers.message_saves import list_saved_messages
     from src.api.identity import Identity
+    from src.api.routers.message_saves import list_saved_messages
 
     db = _mock_db()
     now = time.time()

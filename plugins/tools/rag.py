@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any
 
 from plugins.clients.mcp_client import call_mcp_tool, coerce_text
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Semantic search over indexed workspace documents — product specs, technical designs, "
         "and other docs stored via storage-service. Call this to recall prior decisions or find "
@@ -81,7 +81,7 @@ async def handle(
     feature_name: Any = None,
     feature_id: Any = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from ..context import get_org_id, get_workspace_id
 
     # The model may pass query as a structured object over the MCP path; the RAG
@@ -115,7 +115,7 @@ async def handle(
     url = os.environ.get("RAG_MCP_URL", "").strip()
     if not url:
         return {"ok": False, "error": "RAG_MCP_URL is not configured."}
-    arguments: Dict[str, Any] = {
+    arguments: dict[str, Any] = {
         "query": query,
         "organization_id": org_id,
         "workspace_id": wid,

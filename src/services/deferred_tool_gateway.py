@@ -21,7 +21,7 @@ import logging
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -38,16 +38,16 @@ class _DeferredToolEntry:
     call_id: str
     session_key: str
     tool: str
-    params: Dict[str, Any]
+    params: dict[str, Any]
     event: threading.Event = field(default_factory=threading.Event)
-    result: Optional[Dict[str, Any]] = None
+    result: dict[str, Any] | None = None
 
 
 _lock = threading.RLock()
 # call_id -> _DeferredToolEntry (primary lookup for the tool-result endpoint)
-_entries: Dict[str, _DeferredToolEntry] = {}
+_entries: dict[str, _DeferredToolEntry] = {}
 # session_key -> list[call_id] (for session-boundary cleanup)
-_session_index: Dict[str, List[str]] = {}
+_session_index: dict[str, list[str]] = {}
 
 # Distinguishes "not resolved yet" from a legitimate falsy/None result inside
 # await_response()'s poll loop.
@@ -63,7 +63,7 @@ def register(
     call_id: str,
     session_key: str,
     tool: str,
-    params: Dict[str, Any],
+    params: dict[str, Any],
 ) -> _DeferredToolEntry:
     """Register a pending deferred tool call and return the entry.
 
@@ -91,7 +91,7 @@ def _pop_entry(call_id: str, session_key: str) -> None:
                 _session_index.pop(session_key, None)
 
 
-def wait_for_response(call_id: str, timeout: float) -> Optional[Dict[str, Any]]:
+def wait_for_response(call_id: str, timeout: float) -> dict[str, Any] | None:
     """Block the CALLING THREAD on the entry's event until resolved or timeout.
 
     Polls in 1-second slices (mirrors clarify_gateway) rather than a single
@@ -119,7 +119,7 @@ def wait_for_response(call_id: str, timeout: float) -> Optional[Dict[str, Any]]:
     return entry.result
 
 
-async def await_response(call_id: str, timeout: float) -> Optional[Dict[str, Any]]:
+async def await_response(call_id: str, timeout: float) -> dict[str, Any] | None:
     """Async wait for the entry's result — polls, never blocks the event loop.
 
     Deliberately NOT ``loop.run_in_executor(some_pool, wait_for_response,
@@ -165,9 +165,9 @@ async def await_response(call_id: str, timeout: float) -> Optional[Dict[str, Any
 
 def resolve(
     call_id: str,
-    result: Dict[str, Any],
+    result: dict[str, Any],
     *,
-    session_key: Optional[str] = None,
+    session_key: str | None = None,
 ) -> bool:
     """Unblock the MCP tool-call thread waiting on ``call_id``.
 
@@ -228,7 +228,7 @@ def clear_session(session_key: str) -> int:
 # into the SAME SSE stream the IDE's HTTP response is already reading,
 # mirroring what _run_coding_agent_turn does directly for Hermes turns.
 
-_translators: Dict[str, Any] = {}
+_translators: dict[str, Any] = {}
 _translators_lock = threading.RLock()
 
 
@@ -244,7 +244,7 @@ def unregister_translator(session_id: str) -> None:
         _translators.pop(session_id, None)
 
 
-def get_translator(session_id: str) -> Optional[Any]:
+def get_translator(session_id: str) -> Any | None:
     """Return the live translator for *session_id*, or None if not registered."""
     with _translators_lock:
         return _translators.get(session_id)

@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import List, Optional
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -176,6 +175,7 @@ async def test_has_role_fails_closed_on_network_error(monkeypatch):
 async def test_require_platform_admin_allows_admin(monkeypatch):
     """require_platform_admin returns identity when user has platform_admin role."""
     from fastapi import Request
+
     from src.api.identity import require_platform_admin
 
     mock_request = MagicMock(spec=Request)
@@ -196,6 +196,7 @@ async def test_require_platform_admin_allows_admin(monkeypatch):
 async def test_require_platform_admin_denies_non_admin(monkeypatch):
     """require_platform_admin raises 403 when user does not have platform_admin role."""
     from fastapi import Request
+
     from src.api.identity import require_platform_admin
 
     mock_request = MagicMock(spec=Request)
@@ -206,9 +207,11 @@ async def test_require_platform_admin_denies_non_admin(monkeypatch):
     }
     monkeypatch.delenv("GATEWAY_SERVICE_TOKEN", raising=False)
 
-    with patch("src.services.platform_role_client.has_role", new=AsyncMock(return_value=False)):
-        with pytest.raises(HTTPException) as exc_info:
-            await require_platform_admin(mock_request)
+    with (
+        patch("src.services.platform_role_client.has_role", new=AsyncMock(return_value=False)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await require_platform_admin(mock_request)
 
     assert exc_info.value.status_code == 403
 
@@ -221,6 +224,7 @@ async def test_require_platform_admin_fails_closed_on_unreachable_user_service(m
     authorization check must deny when user-service cannot be reached.
     """
     from fastapi import Request
+
     from src.api.identity import require_platform_admin
 
     mock_request = MagicMock(spec=Request)
@@ -232,9 +236,11 @@ async def test_require_platform_admin_fails_closed_on_unreachable_user_service(m
     monkeypatch.delenv("GATEWAY_SERVICE_TOKEN", raising=False)
 
     # has_role returns False on network errors (fail-closed in platform_role_client)
-    with patch("src.services.platform_role_client.has_role", new=AsyncMock(return_value=False)):
-        with pytest.raises(HTTPException) as exc_info:
-            await require_platform_admin(mock_request)
+    with (
+        patch("src.services.platform_role_client.has_role", new=AsyncMock(return_value=False)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await require_platform_admin(mock_request)
 
     # Must be 403 — not 200, not 500
     assert exc_info.value.status_code == 403
@@ -318,9 +324,11 @@ async def test_resolve_model_raises_for_unknown_id():
     from src.api.model_catalog import resolve_model
 
     db = _fake_db()
-    with patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=None)):
-        with pytest.raises(ValueError, match="Unknown or inactive model"):
-            await resolve_model(db, "nonexistent-model-xyz")
+    with (
+        patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=None)),
+        pytest.raises(ValueError, match="Unknown or inactive model"),
+    ):
+        await resolve_model(db, "nonexistent-model-xyz")
 
 
 @pytest.mark.asyncio
@@ -329,9 +337,11 @@ async def test_resolve_model_raises_for_inactive_id():
     from src.api.model_catalog import resolve_model
 
     db = _fake_db()
-    with patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=_INACTIVE)):
-        with pytest.raises(ValueError, match="Unknown or inactive model"):
-            await resolve_model(db, "old-model")
+    with (
+        patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=_INACTIVE)),
+        pytest.raises(ValueError, match="Unknown or inactive model"),
+    ):
+        await resolve_model(db, "old-model")
 
 
 @pytest.mark.asyncio
@@ -378,9 +388,11 @@ async def test_update_catalog_model_rejects_deactivating_current_default():
     db = MagicMock()
     current_default = _FakeCatalogRow("claude-sonnet-4-6", "Claude Sonnet 4.6", "anthropic", True, True)
 
-    with patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=current_default)):
-        with pytest.raises(ValueError, match="default"):
-            await db_store.update_catalog_model(db, "claude-sonnet-4-6", is_active=False)
+    with (
+        patch("src.db.store.get_catalog_model", new=AsyncMock(return_value=current_default)),
+        pytest.raises(ValueError, match="default"),
+    ):
+        await db_store.update_catalog_model(db, "claude-sonnet-4-6", is_active=False)
 
 
 @pytest.mark.asyncio
@@ -400,9 +412,10 @@ async def test_update_catalog_model_returns_none_for_missing_model():
 # ---------------------------------------------------------------------------
 
 
-def _make_app_with_mock_db(catalog_rows: Optional[List[_FakeCatalogRow]] = None):
+def _make_app_with_mock_db(catalog_rows: list[_FakeCatalogRow] | None = None):
     """Build a minimal FastAPI app with admin_models router and mocked DB."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -422,6 +435,7 @@ def _make_app_with_mock_db(catalog_rows: Optional[List[_FakeCatalogRow]] = None)
 async def test_admin_list_models_requires_platform_admin():
     """GET /admin/models returns 403 when the caller is not a platform admin."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -445,6 +459,7 @@ async def test_admin_list_models_requires_platform_admin():
 async def test_admin_list_models_returns_catalog():
     """GET /admin/models returns all catalog rows when caller is platform admin."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -485,6 +500,7 @@ async def test_admin_list_models_returns_catalog():
 async def test_admin_create_model_rejects_unknown_provider():
     """POST /admin/models rejects a model with an unsupported provider."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -512,6 +528,7 @@ async def test_admin_create_model_rejects_unknown_provider():
 async def test_admin_create_model_success():
     """POST /admin/models creates a model with valid data."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -545,6 +562,7 @@ async def test_admin_create_model_success():
 async def test_admin_patch_model_not_found():
     """PATCH /admin/models/{id} returns 404 when model does not exist."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -573,6 +591,7 @@ async def test_admin_patch_model_not_found():
 async def test_admin_patch_model_rejects_deactivating_default():
     """PATCH /admin/models/{id} returns 400 when trying to deactivate the current default."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()
@@ -623,6 +642,7 @@ async def test_admin_patch_model_set_new_default_clears_old():
 async def test_admin_patch_model_success():
     """PATCH /admin/models/{id} successfully updates a model's display_name."""
     from fastapi import FastAPI
+
     from src.api.routers.admin_models import router
 
     app = FastAPI()

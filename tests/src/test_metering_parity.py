@@ -175,22 +175,22 @@ async def _run_turn(
     translator.on_delta = MagicMock()
     translator.done = MagicMock()
 
-    ctx = dict(
-        run_id=f"run-{session_id}",
-        session_id=session_id,
-        message="@agent help",
-        history=[],
-        workspace_id=workspace_id,
-        feature_id=feature_id,
-        user_id=user_id,
-        model="test-model",
-        provider=None,
-        api_key=None,
-        base_url=None,
-        db_factory=_db_factory,
-        loop=loop,
-        translator=translator,
-    )
+    ctx = {
+        "run_id": f"run-{session_id}",
+        "session_id": session_id,
+        "message": "@agent help",
+        "history": [],
+        "workspace_id": workspace_id,
+        "feature_id": feature_id,
+        "user_id": user_id,
+        "model": "test-model",
+        "provider": None,
+        "api_key": None,
+        "base_url": None,
+        "db_factory": _db_factory,
+        "loop": loop,
+        "translator": translator,
+    }
 
     patches: list = []
     if check_quota_fn is not None:
@@ -199,9 +199,6 @@ async def _run_turn(
         patches.append(patch.object(agent_dispatch, "emit_turn_cost", emit_cost_fn))
 
     if patches:
-        combined = patches[0]
-        for p in patches[1:]:
-            combined = combined
         # Apply all patches
         import contextlib
 
@@ -328,6 +325,7 @@ async def test_dm_and_feature_thread_check_quota_same_call_shape():
     ft_quota_calls: list = []
 
     import run_agent as _stub
+
     from src.api import agent_dispatch
 
     loop = asyncio.get_event_loop()
@@ -339,17 +337,17 @@ async def test_dm_and_feature_thread_check_quota_same_call_shape():
         t.done = MagicMock()
         return t
 
-    base_kwargs = dict(
-        message="@agent help",
-        history=[],
-        workspace_id="ws-parity",
-        model="test-model",
-        provider=None,
-        api_key=None,
-        base_url=None,
-        db_factory=_db_factory,
-        loop=loop,
-    )
+    base_kwargs = {
+        "message": "@agent help",
+        "history": [],
+        "workspace_id": "ws-parity",
+        "model": "test-model",
+        "provider": None,
+        "api_key": None,
+        "base_url": None,
+        "db_factory": _db_factory,
+        "loop": loop,
+    }
 
     _stub.AIAgent = MagicMock(return_value=_make_fake_agent())
     with (
@@ -463,6 +461,7 @@ async def test_dm_and_feature_thread_emit_cost_with_same_shape():
     ft_costs: list = []
 
     import run_agent as _stub
+
     from src.api import agent_dispatch
 
     loop = asyncio.get_event_loop()
@@ -474,17 +473,17 @@ async def test_dm_and_feature_thread_emit_cost_with_same_shape():
         t.done = MagicMock()
         return t
 
-    base_kwargs = dict(
-        message="@agent help",
-        history=[],
-        workspace_id="ws-cost-parity",
-        model="claude-sonnet-4-6",
-        provider=None,
-        api_key=None,
-        base_url=None,
-        db_factory=_db_factory,
-        loop=loop,
-    )
+    base_kwargs = {
+        "message": "@agent help",
+        "history": [],
+        "workspace_id": "ws-cost-parity",
+        "model": "claude-sonnet-4-6",
+        "provider": None,
+        "api_key": None,
+        "base_url": None,
+        "db_factory": _db_factory,
+        "loop": loop,
+    }
 
     _stub.AIAgent = MagicMock(return_value=_make_fake_agent(200, 50))
     with (

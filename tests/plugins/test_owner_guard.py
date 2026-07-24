@@ -71,11 +71,11 @@ def _make_feature_detail(owner: str = "ts", stages: dict | None = None, id: str 
 @pytest.fixture(autouse=True)
 def _clean_modules():
     """Remove plugins/src modules between tests to avoid cross-test pollution."""
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
 
@@ -287,7 +287,7 @@ class TestReadDocumentGoOwner:
     def test_go_owned_not_found_returns_empty_content(self):
         """go-owned feature: 404 from storage-service → exists=False, content empty."""
         read_return = {"content": "", "version_id": None}
-        mod, fake_ssc = self._load(
+        mod, _fake_ssc = self._load(
             _make_feature_detail(owner="go"), ssc_read_return=read_return
         )
 
@@ -341,7 +341,7 @@ class TestReadDocumentGoOwner:
         from plugins.clients.storage_service_client import StorageServiceError
 
         error = StorageServiceError("missing_config", reason_code="missing_config")
-        mod, fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_error=error)
+        mod, _fake_ssc = self._load(_make_feature_detail(owner="go"), ssc_error=error)
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -598,7 +598,7 @@ class TestEditDocumentGoOwner:
 
     def test_go_owned_edit_warns_on_missing_old_string(self):
         """go-owned edit_document: missing old_string → warning, write proceeds."""
-        mod, fake_ssc = self._load_go()
+        mod, _fake_ssc = self._load_go()
 
         with _enter_patches(
             patch("plugins.context.get_workspace_id", return_value=_WORKSPACE_ID),
@@ -807,7 +807,10 @@ class TestStorageServiceClient:
             f"{_STORAGE_URL}/api/workspaces/ws1/images/missing", status_code=404
         )
 
-        from plugins.clients.storage_service_client import StorageServiceError, download_image
+        from plugins.clients.storage_service_client import (
+            StorageServiceError,
+            download_image,
+        )
 
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "missing")
@@ -818,7 +821,10 @@ class TestStorageServiceClient:
         monkeypatch.delenv("STORAGE_SERVICE_URL", raising=False)
         monkeypatch.delenv("STORAGE_SERVICE_TOKEN", raising=False)
 
-        from plugins.clients.storage_service_client import StorageServiceError, download_image
+        from plugins.clients.storage_service_client import (
+            StorageServiceError,
+            download_image,
+        )
 
         with pytest.raises(StorageServiceError) as exc_info:
             download_image("ws1", "img-1")

@@ -10,24 +10,28 @@ get_feature_detail for status.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import yaml
 
-from plugins.clients.storage_service_client import StorageServiceError, read_document_content
-from ..validation import _validate_id
+from plugins.clients.storage_service_client import (
+    StorageServiceError,
+    read_document_content,
+)
 from src.services.workflow_backend_client import get_feature_detail, run_async
+
+from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
 
 # storage-service document paths for the canonical documents — anything else
 # is treated as a literal path within the feature's document folder.
-_STORAGE_DOC_PATHS: Dict[str, str] = {
+_STORAGE_DOC_PATHS: dict[str, str] = {
     "product_spec": "product_spec.md",
     "technical_design": "tech_design.md",
 }
 
-READ_FILE_SCHEMA: Dict[str, Any] = {
+READ_FILE_SCHEMA: dict[str, Any] = {
     "description": (
         "Read a feature document straight from storage-service. Use this FIRST when writing or "
         "revising a technical design: call read_file(document='product_spec') to load the "
@@ -70,12 +74,18 @@ def handle_read_file(
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read a feature document from the resolved feature branch in git.
 
     For go-owned features, proxies to storage-service instead of git.
     """
-    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id, mark_context_gathered
+    from ..context import (
+        get_feature_id,
+        get_org_id,
+        get_user_id,
+        get_workspace_id,
+        mark_context_gathered,
+    )
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()

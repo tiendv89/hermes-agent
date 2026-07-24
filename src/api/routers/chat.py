@@ -11,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -55,14 +54,14 @@ class StreamChatRequest(BaseModel):
     # file path — see agent_dispatch.py's image handling — rather than a URL,
     # since storage-service is internal-only and the vision tool's SSRF guard
     # would reject fetching it directly.
-    image_ids: List[str] = []
+    image_ids: list[str] = []
     # Set only by the IDE extension (active file, selection, git status,
     # diagnostics). Its mere presence is what tells agent_dispatch.py this
     # turn came from a client with local file/git/terminal access — a DOC
     # verdict ignores it beyond building the system-prompt context block, a
     # CODING verdict uses it to dispatch to opencode instead of redirecting
     # to "use your IDE" the way a browser-originated coding turn still does.
-    ide_context: Optional[IDEContext] = None
+    ide_context: IDEContext | None = None
 
 
 def _derive_title(message: str) -> str:

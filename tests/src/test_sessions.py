@@ -180,6 +180,7 @@ def gateway_app():
     _inject_mock_run_agent()
 
     from fastapi import FastAPI
+
     from src.api.router import router
 
     app = FastAPI()

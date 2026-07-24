@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Dict
 
 import aiohttp
 
@@ -40,7 +39,7 @@ def _base_url() -> str:
     return os.environ.get("USER_SERVICE_URL", "").rstrip("/")
 
 
-def _headers() -> Dict[str, str]:
+def _headers() -> dict[str, str]:
     token = os.environ.get("USER_SERVICE_TOKEN", "")
     return {"Authorization": f"Bearer {token}"} if token else {}
 
@@ -69,25 +68,27 @@ async def has_role(user_id: str, role: str) -> bool:
     url = f"{base_url}/internal/users/{user_id}/platform-roles/check"
     params = {"role": role}
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
+        async with (
+            aiohttp.ClientSession() as session,
+            session.get(
                 url,
                 params=params,
                 headers=_headers(),
                 timeout=aiohttp.ClientTimeout(total=_TIMEOUT_SECONDS),
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "platform_role_client: role check %s -> HTTP %s (fail-closed)",
-                        url,
-                        resp.status,
-                    )
-                    return False  # fail-closed
-                raw = await resp.json()
-                # user-service wraps responses as {"success", "data"}; unwrap
-                # before reading has_role, tolerating a raw (unenveloped) body.
-                body = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
-                return bool(body.get("has_role", False)) if isinstance(body, dict) else False
+            ) as resp,
+        ):
+            if resp.status != 200:
+                logger.warning(
+                    "platform_role_client: role check %s -> HTTP %s (fail-closed)",
+                    url,
+                    resp.status,
+                )
+                return False  # fail-closed
+            raw = await resp.json()
+            # user-service wraps responses as {"success", "data"}; unwrap
+            # before reading has_role, tolerating a raw (unenveloped) body.
+            body = raw.get("data") if isinstance(raw, dict) and isinstance(raw.get("data"), dict) else raw
+            return bool(body.get("has_role", False)) if isinstance(body, dict) else False
     except Exception:
         logger.exception(
             "platform_role_client: role check failed for user %s (fail-closed)", user_id

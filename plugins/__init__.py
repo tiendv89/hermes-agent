@@ -21,38 +21,80 @@ import json
 import logging
 from typing import Any
 
-from .tools import guardrails as _guardrails
+from src.services.workflow_backend_client import check_workflow_available
+
 from .tools import (
-    workspace,
-    feature,
+    approval,
     artifacts,
-    edit as edit_tool,
-    file_ops as file_ops_tool,
-    read as read_tool,
-    read_workspace_file as read_workspace_file_tool,
-    list_documents as list_documents_tool,
-    tasks as tasks_tool,
+    feature,
     gitnexus,
     rag,
-    skills as skills_tool,
-    approval,
+    workspace,
+)
+from .tools import (
     approve as approve_tool,
-    move_feature as move_feature_tool,
-    tasks_write as tasks_write_tool,
-    suggest_next_actions as suggest_next_actions_tool,
-    create_tasks as create_tasks_tool,
-    parse_tasks as parse_tasks_tool,
-    vcs_pr_context as vcs_pr_context_tool,
-    vcs_pr_review as vcs_pr_review_tool,
-    lookup_feature as lookup_feature_tool,
-    init_feature as init_feature_tool,
-    create_pr as create_pr_tool,
-    ensure_branch as ensure_branch_tool,
+)
+from .tools import (
     commit_files as commit_files_tool,
+)
+from .tools import (
+    create_pr as create_pr_tool,
+)
+from .tools import (
+    create_tasks as create_tasks_tool,
+)
+from .tools import (
+    edit as edit_tool,
+)
+from .tools import (
+    ensure_branch as ensure_branch_tool,
+)
+from .tools import (
     feature_context as feature_context_tool,
 )
-
-from src.services.workflow_backend_client import check_workflow_available
+from .tools import (
+    file_ops as file_ops_tool,
+)
+from .tools import guardrails as _guardrails
+from .tools import (
+    init_feature as init_feature_tool,
+)
+from .tools import (
+    list_documents as list_documents_tool,
+)
+from .tools import (
+    lookup_feature as lookup_feature_tool,
+)
+from .tools import (
+    move_feature as move_feature_tool,
+)
+from .tools import (
+    parse_tasks as parse_tasks_tool,
+)
+from .tools import (
+    read as read_tool,
+)
+from .tools import (
+    read_workspace_file as read_workspace_file_tool,
+)
+from .tools import (
+    skills as skills_tool,
+)
+from .tools import (
+    suggest_next_actions as suggest_next_actions_tool,
+)
+from .tools import (
+    tasks as tasks_tool,
+)
+from .tools import (
+    tasks_write as tasks_write_tool,
+)
+from .tools import (
+    vcs_pr_context as vcs_pr_context_tool,
+)
+from .tools import (
+    vcs_pr_review as vcs_pr_review_tool,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +155,7 @@ def _get_session_context() -> dict[str, Any] | None:
             if workspace_id:
                 return {"workspace_id": workspace_id, "feature_id": feature_id}
     except Exception:
-        pass
+        logger.debug("session context lookup failed", exc_info=True)
     return None
 
 

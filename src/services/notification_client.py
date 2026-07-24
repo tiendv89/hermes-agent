@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -40,26 +40,25 @@ def _token() -> str:
 async def _post(url: str, payload: Any) -> None:
     """POST JSON to notification-service; swallow all errors."""
     token = _token()
-    headers: Dict[str, str] = {"Content-Type": "application/json"}
+    headers: dict[str, str] = {"Content-Type": "application/json"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
-        async with aiohttp.ClientSession() as http:
-            async with http.post(
-                url,
-                json=payload,
-                headers=headers,
-                timeout=aiohttp.ClientTimeout(total=5),
-            ) as resp:
-                if resp.status not in (200, 201, 204):
-                    logger.warning(
-                        "notification-service %s returned HTTP %s", url, resp.status
-                    )
+        async with aiohttp.ClientSession() as http, http.post(
+            url,
+            json=payload,
+            headers=headers,
+            timeout=aiohttp.ClientTimeout(total=5),
+        ) as resp:
+            if resp.status not in (200, 201, 204):
+                logger.warning(
+                    "notification-service %s returned HTTP %s", url, resp.status
+                )
     except Exception:
         logger.exception("notification-service call failed: %s", url)
 
 
-def _publish_realtime(payload: Dict[str, Any]) -> None:
+def _publish_realtime(payload: dict[str, Any]) -> None:
     """Push a notification event to the recipient's live SSE subscribers
     (GET /api/v1/notifications/stream), independent of and not blocked by the
     notification-service HTTP call below — so a toast can render even if
@@ -78,7 +77,7 @@ def _publish_realtime(payload: Dict[str, Any]) -> None:
         logger.exception("failed to publish realtime notification event")
 
 
-def schedule_notification(payload: Dict[str, Any]) -> None:
+def schedule_notification(payload: dict[str, Any]) -> None:
     """Fire-and-forget: emit a single notification without blocking the caller."""
     _publish_realtime(payload)
     base = _base_url()
@@ -87,7 +86,7 @@ def schedule_notification(payload: Dict[str, Any]) -> None:
     _schedule(_post(f"{base}/internal/notifications", payload))
 
 
-def schedule_notifications_bulk(payloads: List[Dict[str, Any]]) -> None:
+def schedule_notifications_bulk(payloads: list[dict[str, Any]]) -> None:
     """Fire-and-forget: emit N notifications in one bulk call without blocking."""
     if not payloads:
         return
@@ -137,13 +136,13 @@ def _truncate(text: str, max_len: int = _PREVIEW_MAX_LEN) -> str:
     return collapsed[: max_len - 1].rstrip() + "…"
 
 
-_REPLY_VERB: Dict[str, str] = {
+_REPLY_VERB: dict[str, str] = {
     "thread": "replied to a thread",
     "message": "replied to a message",
 }
 
 
-def _compose_summary(actor_name: Optional[str], content: str, reply_kind: Optional[str] = None) -> str:
+def _compose_summary(actor_name: str | None, content: str, reply_kind: str | None = None) -> str:
     """Build a preview: "<actor>: <content>" for a plain post, or "<actor> replied to
     a thread: <content>" / "<actor> replied to a message: <content>" for a reply —
     otherwise a reply is indistinguishable from an ordinary channel post in the
@@ -168,7 +167,7 @@ def _compose_summary(actor_name: Optional[str], content: str, reply_kind: Option
     return f"{prefix}: {_truncate(content)}"
 
 
-def _channel_link(session_id: str, feature_id: Optional[str]) -> str:
+def _channel_link(session_id: str, feature_id: str | None) -> str:
     """Feature-scoped channels don't appear in the regular Chat sidebar — they
     only live inside that feature's Feature IDE view — so route there instead
     of the generic /chat/{id} used for workspace-level channels and DMs."""
@@ -183,12 +182,12 @@ def build_mention_payload(
     message_id: int,
     session_id: str,
     content: str,
-    actor_user_id: Optional[str] = None,
-    actor_name: Optional[str] = None,
-    feature_id: Optional[str] = None,
-) -> Dict[str, Any]:
+    actor_user_id: str | None = None,
+    actor_name: str | None = None,
+    feature_id: str | None = None,
+) -> dict[str, Any]:
     """Construct a ``mention`` notification payload."""
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "workspace_id": workspace_id,
         "user_id": user_id,
         "category": "mention",
@@ -211,16 +210,16 @@ def build_channel_message_payload(
     message_id: int,
     session_id: str,
     content: str,
-    actor_user_id: Optional[str] = None,
-    actor_name: Optional[str] = None,
-    feature_id: Optional[str] = None,
-    reply_kind: Optional[str] = None,
-) -> Dict[str, Any]:
+    actor_user_id: str | None = None,
+    actor_name: str | None = None,
+    feature_id: str | None = None,
+    reply_kind: str | None = None,
+) -> dict[str, Any]:
     """Construct a ``channel_message`` notification payload. `reply_kind`
     ("thread" | "message" | None, see _compose_summary) only changes the summary
     wording — the category stays ``channel_message`` since notification-service's
     category allow-list has no dedicated reply value."""
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "workspace_id": workspace_id,
         "user_id": user_id,
         "category": "channel_message",
@@ -243,11 +242,11 @@ def build_dm_payload(
     message_id: int,
     session_id: str,
     content: str,
-    actor_user_id: Optional[str] = None,
-    actor_name: Optional[str] = None,
-) -> Dict[str, Any]:
+    actor_user_id: str | None = None,
+    actor_name: str | None = None,
+) -> dict[str, Any]:
     """Construct a ``dm`` notification payload."""
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "workspace_id": workspace_id,
         "user_id": user_id,
         "category": "dm",
@@ -265,13 +264,13 @@ def build_dm_payload(
 # Maps a stage-transition's `stage` to the notification category it produces
 # on approval. "handoff" has no corresponding category — approving it isn't
 # one of the notified events.
-STAGE_CATEGORY: Dict[str, str] = {
+STAGE_CATEGORY: dict[str, str] = {
     "product_spec": "spec_approved",
     "technical_design": "design_approved",
     "tasks": "tasks_approved",
 }
 
-STAGE_DESCRIPTION: Dict[str, str] = {
+STAGE_DESCRIPTION: dict[str, str] = {
     "product_spec": "the product spec",
     "technical_design": "the technical design",
     "tasks": "the task breakdown",
@@ -283,9 +282,9 @@ def build_approval_payload(
     user_id: str,
     feature_id: str,
     stage: str,
-    actor_user_id: Optional[str] = None,
-    actor_name: Optional[str] = None,
-) -> Dict[str, Any]:
+    actor_user_id: str | None = None,
+    actor_name: str | None = None,
+) -> dict[str, Any]:
     """Construct a stage-approval notification payload (spec/design/tasks
     approved). Raises KeyError if stage isn't one of the notified stages —
     callers should check `stage in STAGE_CATEGORY` first."""

@@ -32,7 +32,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +68,7 @@ def _enabled() -> bool:
     )
 
 
-def _classifier_model(provider: Optional[str], model: Optional[str]) -> Optional[str]:
+def _classifier_model(provider: str | None, model: str | None) -> str | None:
     """Pick the model used for the DOC/CODING classification.
 
     Runs serialized in front of every turn, so it must be fast — a 1-word
@@ -88,7 +88,7 @@ def _classifier_model(provider: Optional[str], model: Optional[str]) -> Optional
     return model
 
 
-def _format_history(history: Optional[List[Dict[str, Any]]]) -> str:
+def _format_history(history: list[dict[str, Any]] | None) -> str:
     """Render a short trailing window of conversation as classifier context."""
     if not history:
         return "(no prior turns)"
@@ -110,11 +110,11 @@ def _format_history(history: Optional[List[Dict[str, Any]]]) -> str:
 def is_coding_request(
     message: str,
     *,
-    history: Optional[List[Dict[str, Any]]] = None,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
+    history: list[dict[str, Any]] | None = None,
+    provider: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> bool:
     """Return True only when *message* is confidently a coding request.
 
@@ -154,6 +154,6 @@ def is_coding_request(
         if coding:
             logger.info("triage: classified CODING: %r", text[:120])
         return coding
-    except Exception as exc:  # noqa: BLE001 — fail open on any classifier error
+    except Exception as exc:
         logger.warning("triage: classification failed, staying on doc path: %s", exc)
         return False

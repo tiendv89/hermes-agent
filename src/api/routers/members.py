@@ -22,7 +22,6 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import JSONResponse, StreamingResponse
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_db
@@ -145,7 +144,7 @@ async def stream_notifications(
             while True:
                 try:
                     bus_event = await asyncio.wait_for(queue.get(), _KEEPALIVE_SECONDS)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
                     continue
 

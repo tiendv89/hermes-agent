@@ -8,8 +8,9 @@ import os
 from typing import Any
 from urllib.parse import urlparse, urlunparse
 
-from mcp import ClientSession
 from mcp.client.sse import sse_client
+
+from mcp import ClientSession
 
 _MCP_TIMEOUT_SECONDS = float(os.environ.get("MCP_CALL_TIMEOUT_SECONDS", "60"))
 
@@ -120,15 +121,17 @@ async def call_mcp_tool(
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
 
     async def _run() -> list[dict]:
-        async with sse_client(endpoint, headers=headers) as (read, write):
-            async with ClientSession(read, write) as session:
-                await session.initialize()
-                result = await session.call_tool(tool, arguments)
-                return [_content_to_dict(c) for c in result.content]
+        async with (
+            sse_client(endpoint, headers=headers) as (read, write),
+            ClientSession(read, write) as session,
+        ):
+            await session.initialize()
+            result = await session.call_tool(tool, arguments)
+            return [_content_to_dict(c) for c in result.content]
 
     try:
         return await asyncio.wait_for(_run(), timeout=_MCP_TIMEOUT_SECONDS)
-    except asyncio.TimeoutError as exc:
+    except TimeoutError as exc:
         raise MCPCallError(
             f"MCP {tool!r} call to {endpoint} timed out after {_MCP_TIMEOUT_SECONDS:.0f}s "
             f"— the server is unreachable from this host (check network egress, the "

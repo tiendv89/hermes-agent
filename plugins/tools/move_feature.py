@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict
+from typing import Any
 
 from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Move a feature out of Backlog into In Design. Use this only when a human "
         "asks to move/advance a feature to In Design (e.g. after clicking the "
@@ -48,13 +48,14 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> Dict[str, Any]:
-    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
+def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> dict[str, Any]:
     from src.services.workflow_backend_client import (
         get_feature_detail,
         run_async,
         update_feature_status,
     )
+
+    from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
     fid = feature_id or get_feature_id()

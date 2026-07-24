@@ -273,7 +273,7 @@ class TestResolveIdsIsolation:
 
     def test_empty_when_no_session_registered(self):
         """When no session is registered and none is active, returns ('', '')."""
-        ctx, art = self._load_artifacts()
+        _ctx, art = self._load_artifacts()
         # No set_context or set_agent_context
         wid, fid = art._resolve_ids("", "")
         assert wid == ""

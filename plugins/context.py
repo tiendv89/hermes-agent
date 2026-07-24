@@ -23,7 +23,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +62,7 @@ def set_context(
 def set_agent_context(
     session_id: str,
     loop: Any,
-    db_factory: Optional[Callable] = None,
+    db_factory: Callable | None = None,
 ) -> None:
     """Store per-turn agent context (session_id, event loop, db_factory) on the thread-local.
 
@@ -82,7 +83,7 @@ def get_agent_loop() -> Any:
     return getattr(_local, "agent_loop", None)
 
 
-def get_agent_db_factory() -> Optional[Callable]:
+def get_agent_db_factory() -> Callable | None:
     return getattr(_local, "agent_db_factory", None)
 
 

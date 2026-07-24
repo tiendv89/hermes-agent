@@ -12,14 +12,18 @@ the underlying no-feature content endpoint.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
-from plugins.clients.storage_service_client import StorageServiceError, read_document_content
+from plugins.clients.storage_service_client import (
+    StorageServiceError,
+    read_document_content,
+)
+
 from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Read a workspace-root file's content — a file uploaded directly at the workspace level "
         "in the Files browser, not owned by any feature (e.g. a shared asset or doc dropped outside "
@@ -46,7 +50,7 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def handle(path: str = "", workspace_id: str = "", **_: Any) -> Dict[str, Any]:
+def handle(path: str = "", workspace_id: str = "", **_: Any) -> dict[str, Any]:
     from ..context import get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()

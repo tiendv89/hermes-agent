@@ -46,6 +46,14 @@ addopts = "-m 'not integration'"
 # Don't lint the vendored upstream submodule — it has its own tooling/config.
 extend-exclude = ["vendor"]
 
+[tool.ruff.lint]
+ignore = [
+    "BLE001",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
 [dependency-groups]
 dev = [
     "aiohttp>=3.13.3",
