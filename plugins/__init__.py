@@ -51,6 +51,7 @@ from .tools import (
 )
 from .tools import (
     feature_context as feature_context_tool,
+    read_uploaded_file as read_uploaded_file_tool,
 )
 from .tools import (
     file_ops as file_ops_tool,
@@ -458,6 +459,12 @@ _TOOLS = (
         "schema": feature_context_tool.SCHEMA,
         "handler": feature_context_tool.handle,
         "check_fn": check_workflow_available,
+    },
+    {
+        "name": "read_uploaded_file",
+        "short_description": "Download and read a chat-uploaded file (PDF, DOCX, XLSX, or text).",
+        "schema": read_uploaded_file_tool.SCHEMA,
+        "handler": read_uploaded_file_tool.handle,
     },
 )
 

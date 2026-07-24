@@ -14,6 +14,9 @@ dependencies = [
   "hermes-agent[anthropic]",
   "fastapi",
   "uvicorn[standard]",
+  "PyPDF2>=3.0.0",
+  "python-docx>=1.0.0",
+  "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]

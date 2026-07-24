@@ -106,7 +106,9 @@ def _make_clarify_callback(session_id: str, translator: Any) -> Callable[..., st
             clarify_id, session_key=session_id, question=question, choices=choices
         )
         try:
-            translator.on_clarify(clarify_id=clarify_id, question=question, choices=choices)
+            translator.on_clarify(
+                clarify_id=clarify_id, question=question, choices=choices
+            )
         except Exception:
             logger.exception(
                 "agent_dispatch: failed to publish clarify prompt for session %s",
@@ -120,7 +122,9 @@ def _make_clarify_callback(session_id: str, translator: Any) -> Callable[..., st
     return _clarify_callback
 
 
-def try_resolve_pending_clarify(session_id: str, user_id: str, response_text: str) -> bool:
+def try_resolve_pending_clarify(
+    session_id: str, user_id: str, response_text: str
+) -> bool:
     """Resolve a pending ``clarify`` wait with a normal chat message, if one applies.
 
     Without this, a plain reply to a clarify prompt goes through
@@ -589,7 +593,9 @@ async def _publish_thread_summary_update(
 
     try:
         async with db_factory() as db:
-            summaries = await get_thread_reply_summaries(db, session_id, [thread_root_id])
+            summaries = await get_thread_reply_summaries(
+                db, session_id, [thread_root_id]
+            )
     except Exception:
         logger.exception(
             "agent_dispatch: thread_summary refresh failed for session %s root %s",
@@ -728,7 +734,9 @@ async def _run_agent_turn_async(
                 "data": {
                     "session_id": session_id,
                     "message_id": message_id,
-                    "thread_root_id": str(thread_root_id) if thread_root_id is not None else None,
+                    "thread_root_id": str(thread_root_id)
+                    if thread_root_id is not None
+                    else None,
                 },
             },
         )
@@ -772,6 +780,7 @@ def _run_agent_turn(
     reply_to_message_id: int | None = None,
     thread_root_id: int | None = None,
     image_ids: list[str] | None = None,
+    file_ids: list[str] | None = None,
     ide_context: IDEContext | None = None,
 ) -> None:
     """Run one blocking agent turn on a worker thread, streaming via *translator*.
@@ -816,8 +825,17 @@ def _run_agent_turn(
         # image-only send) — skip the classifier rather than let a vague-looking
         # caption get a real request declined.
         is_first_turn = len(history or []) <= 1
-        if is_first_turn and not image_ids and is_out_of_scope(
-            message, provider=provider, model=model, api_key=api_key, base_url=base_url
+        if (
+            is_first_turn
+            and not image_ids
+            and not file_ids
+            and is_out_of_scope(
+                message,
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+            )
         ):
             logger.info(
                 "agent_dispatch: declining out-of-scope message for session %s",
@@ -1087,7 +1105,9 @@ def _run_agent_turn(
 
             from plugins.clients import storage_service_client
 
-            image_cache_dir = hermes_constants.get_hermes_home() / "cache" / "chat_images"
+            image_cache_dir = (
+                hermes_constants.get_hermes_home() / "cache" / "chat_images"
+            )
             try:
                 image_cache_dir.mkdir(parents=True, exist_ok=True)
             except OSError:
@@ -1101,7 +1121,10 @@ def _run_agent_turn(
                 for image_id in image_ids:
                     try:
                         image = storage_service_client.download_image(
-                            workspace_id, image_id, user_id=user_id or "", org_id=org_id or ""
+                            workspace_id,
+                            image_id,
+                            user_id=user_id or "",
+                            org_id=org_id or "",
                         )
                         ext = mimetypes.guess_extension(image["content_type"]) or ""
                         image_path = image_cache_dir / f"{run_id}-{image_id}{ext}"
@@ -1115,10 +1138,53 @@ def _run_agent_turn(
                         )
 
         llm_message = message
+        # Chat-attached files: extract text content synchronously BEFORE the
+        # LLM call so the agent can reason about them immediately.  Unlike
+        # images (which require a vision model), file text is injected as a
+        # regular text content block — every model can read it.
+        if file_ids:
+            from plugins.tools.read_uploaded_file import (
+                handle as read_uploaded_file_handle,
+            )
+
+            file_texts: list[str] = []
+            for file_id in file_ids:
+                try:
+                    result = read_uploaded_file_handle(
+                        file_id=file_id,
+                        workspace_id=workspace_id,
+                        user_id=user_id or "",
+                        org_id=org_id or "",
+                    )
+                    if result.get("ok"):
+                        filename = result.get("filename", file_id)
+                        text = result.get("text", "")
+                        file_texts.append(f"--- {filename} ---\n{text}")
+                    else:
+                        file_texts.append(
+                            f"--- {file_id} ---\n[Error reading file: {result.get('error', 'unknown error')}]"
+                        )
+                except Exception:
+                    logger.exception(
+                        "agent_dispatch: failed to read uploaded file %s for session %s",
+                        file_id,
+                        session_id,
+                    )
+                    file_texts.append(
+                        f"--- {file_id} ---\n[Error reading file: unexpected error]"
+                    )
+
+            if file_texts:
+                llm_message = (
+                    "The user attached the following files:\n\n"
+                    + "\n\n".join(file_texts)
+                    + f"\n\n--- User message ---\n{message}"
+                )
+
         if downloaded_image_paths:
             paths_list = "\n".join(f"- {p}" for p in downloaded_image_paths)
             llm_message = (
-                f"{message}\n\n"
+                f"{llm_message}\n\n"
                 "[Attached image(s) saved locally — call vision_analyze on these "
                 f"file paths if relevant to the request:]\n{paths_list}"
             )
@@ -1162,7 +1228,7 @@ def _run_agent_turn(
         if _is_cancelled():
             agent.interrupt()
 
-        if downloaded_image_paths:
+        if downloaded_image_paths or file_ids:
             agent.run_conversation(
                 llm_message,
                 conversation_history=history,
@@ -1229,7 +1295,9 @@ def _run_agent_turn(
         if thread_root_id is not None:
             try:
                 fut = asyncio.run_coroutine_threadsafe(
-                    _publish_thread_summary_update(db_factory, session_id, thread_root_id),
+                    _publish_thread_summary_update(
+                        db_factory, session_id, thread_root_id
+                    ),
                     loop,
                 )
                 fut.result(timeout=15)
@@ -1283,7 +1351,9 @@ async def _schedule_follow_up(
         thread_root_id = pending.get("thread_root_id")
         async with pending["db_factory"]() as db:
             if thread_root_id is not None:
-                history = await get_thread_messages_as_conversation(db, session_id, thread_root_id)
+                history = await get_thread_messages_as_conversation(
+                    db, session_id, thread_root_id
+                )
             else:
                 history = await get_messages_as_conversation(db, session_id)
             await touch_session(db, session_id)
@@ -1338,6 +1408,7 @@ async def _schedule_follow_up(
                 reply_to_message_id=pending.get("reply_to_message_id"),
                 thread_root_id=pending.get("thread_root_id"),
                 image_ids=pending.get("image_ids"),
+                file_ids=pending.get("file_ids"),
             )
         )
         with _active_runs_lock:
@@ -1375,6 +1446,7 @@ async def schedule_agent_turn(
     reply_to_message_id: int | None = None,
     thread_root_id: int | None = None,
     image_ids: list[str] | None = None,
+    file_ids: list[str] | None = None,
 ) -> bool:
     """Schedule an agent turn with coalescing.
 
@@ -1400,6 +1472,7 @@ async def schedule_agent_turn(
                     "reply_to_message_id": reply_to_message_id,
                     "thread_root_id": thread_root_id,
                     "image_ids": image_ids,
+                    "file_ids": file_ids,
                 }
             logger.debug(
                 "agent_dispatch: coalesced pending turn for %s (turn already in flight)",
@@ -1420,7 +1493,9 @@ async def schedule_agent_turn(
             "event": "agent.working",
             "data": {
                 "session_id": session_id,
-                "thread_root_id": str(thread_root_id) if thread_root_id is not None else None,
+                "thread_root_id": str(thread_root_id)
+                if thread_root_id is not None
+                else None,
             },
         },
     )
@@ -1452,6 +1527,7 @@ async def schedule_agent_turn(
             reply_to_message_id=reply_to_message_id,
             thread_root_id=thread_root_id,
             image_ids=image_ids,
+            file_ids=file_ids,
         )
     )
     with _active_runs_lock:

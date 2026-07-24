@@ -75,6 +75,13 @@ class SendMessageRequest(BaseModel):
     # vision tool's SSRF guard would reject fetching it directly.
     image_ids: list[str] = []
 
+    # IDs of files uploaded to storage-service's files bucket (see
+    # storage_service_client.download_file) that the user attached to this
+    # message. Handled alongside image_ids through the entire message
+    # pipeline — persisted, forwarded to the agent turn, and rendered
+    # as file chips in the frontend.
+    file_ids: List[str] = []
+
 
 class ForwardMessageRequest(BaseModel):
     destination_session_ids: list[str]
@@ -117,6 +124,32 @@ def _attach_image_urls(messages: list, workspace_id: str) -> None:
         image_ids = m.pop("image_ids", None)
         if image_ids:
             m["image_urls"] = _image_urls_for(workspace_id, image_ids)
+
+
+def _file_urls_for(workspace_id: str, file_ids) -> List[str]:
+    """Bare storage-service file ids -> BFF-relative fetch URLs.
+
+    Mirrors _image_urls_for but constructs /files/ URLs instead of /images/.
+    Same defensive re-parse logic for legacy double-encoded rows.
+    """
+    if isinstance(file_ids, str):
+        try:
+            file_ids = json.loads(file_ids)
+        except (ValueError, TypeError):
+            file_ids = []
+    if not isinstance(file_ids, list):
+        return []
+    return [
+        f"/api/workspaces/{workspace_id}/files/{file_id}" for file_id in file_ids
+    ]
+
+
+def _attach_file_urls(messages: list, workspace_id: str) -> None:
+    """Replace each message's raw `file_ids` with resolved `file_urls`, in place."""
+    for m in messages:
+        file_ids = m.pop("file_ids", None)
+        if file_ids:
+            m["file_urls"] = _file_urls_for(workspace_id, file_ids)
 
 
 def _should_trigger_agent(session, has_explicit_agent_mention: bool) -> bool:
@@ -184,6 +217,7 @@ async def get_thread_messages(
     workspace_id = getattr(session, "workspace_id", "") or "" if session else ""
     await attach_authors(workspace_id, messages)
     _attach_image_urls(messages, workspace_id)
+    _attach_file_urls(messages, workspace_id)
     await _attach_forwarded_authors(messages, db)
     await _attach_reaction_users(
         [m["reactions"] for m in messages if m.get("reactions")]
@@ -213,10 +247,10 @@ async def send_message(
 
     Returns 202 immediately; the agent turn (if triggered) runs in the background.
     """
-    # Empty text is fine for an image-only send — must have at least one or the other.
-    if (not body.content or not body.content.strip()) and not body.image_ids:
+    # Empty text is fine for an image/file-only send — must have at least one or the other.
+    if (not body.content or not body.content.strip()) and not body.image_ids and not body.file_ids:
         raise HTTPException(
-            status_code=400, detail="content or image_ids must be non-empty."
+            status_code=400, detail="content, image_ids, or file_ids must be non-empty."
         )
 
     user_id = identity.user_id
@@ -270,6 +304,7 @@ async def send_message(
         author_id=user_id,
         reply_to_message_id=reply_to_id,
         image_ids=body.image_ids,
+        file_ids=body.file_ids,
     )
 
     # --- Persist resolved mentions ---
@@ -314,6 +349,9 @@ async def send_message(
                 "thread_root_id": None,
                 "image_urls": _image_urls_for(ws_id, body.image_ids)
                 if body.image_ids
+                else [],
+                "file_urls": _file_urls_for(ws_id, body.file_ids)
+                if body.file_ids
                 else [],
             },
         },
@@ -386,6 +424,7 @@ async def send_message(
         author_id=user_id,
         skip_user_persist=True,
         image_ids=body.image_ids,
+        file_ids=body.file_ids,
         reply_to_message_id=agent_reply_to_id,
         thread_root_id=thread_root_id,
     )

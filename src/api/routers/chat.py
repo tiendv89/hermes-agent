@@ -63,6 +63,11 @@ class StreamChatRequest(BaseModel):
     # to "use your IDE" the way a browser-originated coding turn still does.
     ide_context: IDEContext | None = None
 
+    # IDs of files uploaded to storage-service's files bucket (see
+    # storage_service_client.download_file). Handled alongside image_ids
+    # through the agent turn — see agent_dispatch.py.
+    file_ids: List[str] = []
+
 
 def _derive_title(message: str) -> str:
     """First 60 chars of the opening message — used to auto-title a session."""
@@ -159,6 +164,7 @@ async def chat(
             user_id=caller_id,
             org_id=identity.org_id,
             image_ids=body.image_ids,
+            file_ids=body.file_ids,
             model=resolved["model"],
             provider=resolved["provider"],
             api_key=resolved["api_key"],
