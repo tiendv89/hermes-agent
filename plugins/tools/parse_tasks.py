@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -52,20 +52,18 @@ _DEFAULT_ACTOR = "agent"
 _REQUIRED_HEADERS = frozenset({"id", "title", "repo", "depends on", "actor"})
 
 
-def _split_row(stripped: str) -> List[str]:
+def _split_row(stripped: str) -> list[str]:
     """Split a pipe table row into trimmed cell strings.
 
     ``"| a | b | c |"`` → ``["a", "b", "c"]``.
     """
     inner = stripped.strip()
-    if inner.startswith("|"):
-        inner = inner[1:]
-    if inner.endswith("|"):
-        inner = inner[:-1]
+    inner = inner.removeprefix("|")
+    inner = inner.removesuffix("|")
     return [c.strip() for c in inner.split("|")]
 
 
-def _header_index(cells: List[str]) -> Optional[Dict[str, int]]:
+def _header_index(cells: list[str]) -> dict[str, int] | None:
     """Return a ``{column_name: position}`` map when the cells are an Index header.
 
     A row qualifies as the header when its lowercased column names cover every
@@ -79,7 +77,7 @@ def _header_index(cells: List[str]) -> Optional[Dict[str, int]]:
     return None
 
 
-def _cell(cells: List[str], col_index: Dict[str, int], name: str) -> str:
+def _cell(cells: list[str], col_index: dict[str, int], name: str) -> str:
     """Read a column's cell value by name, or ``""`` if absent / out of range.
 
     Absent when the header has no such column (e.g. ``model`` in a legacy table);
@@ -96,7 +94,7 @@ def _is_separator_row(stripped: str) -> bool:
     return set(stripped) <= set("|-: ")
 
 
-def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
+def parse_tasks_index(tasks_md: str) -> list[dict[str, Any]]:
     """Parse the Index table from a tasks.md string into task rows.
 
     Returns a list of dicts keyed by the workflow-backend ``CreateTaskItem``
@@ -104,11 +102,11 @@ def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
     Returns an empty list when there is no recognisable Index table — callers
     decide whether "no tasks" is an error.
     """
-    tasks: List[Dict[str, Any]] = []
+    tasks: list[dict[str, Any]] = []
     lines = tasks_md.splitlines()
 
     header_idx = -1
-    col_index: Dict[str, int] = {}
+    col_index: dict[str, int] = {}
     for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped.startswith("|"):
@@ -149,7 +147,7 @@ def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
         # "—" / "-" / empty → []; else comma/space-separated ids (kept verbatim,
         # since the id shape is not enforced).
         if depends_raw in ("—", "-", ""):
-            depends_on: List[str] = []
+            depends_on: list[str] = []
         else:
             depends_on = [d for d in re.split(r"[,\s]+", depends_raw) if d]
 
@@ -175,7 +173,7 @@ def parse_tasks_index(tasks_md: str) -> List[Dict[str, Any]]:
     return tasks
 
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Parse a go feature's tasks.md Index table into a structured task list. "
         "Read-only — this does NOT create tasks; it returns exactly the rows that "
@@ -217,7 +215,7 @@ def handle(
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     content = tasks_md or ""
 
     # No content supplied — resolve and read the current feature's tasks.md.

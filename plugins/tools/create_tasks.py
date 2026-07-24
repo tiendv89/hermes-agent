@@ -15,7 +15,7 @@ Guard error relay (server-side guard from T3 / workflow-backend):
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +45,7 @@ def _relay_create_tasks_reason_code(reason_code: str) -> str:
     return "An unexpected error occurred when creating tasks in workflow-backend."
 
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Backup command: create tasks for the current feature via the workflow-backend "
         "API (step d only). Use this when the tasks-stage approve command completed "
@@ -80,7 +80,7 @@ SCHEMA: Dict[str, Any] = {
 def load_feature_tasks_md(
     workspace_id: str,
     feature_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Read the current feature's tasks.md from storage-service.
 
     Shared by the backup /create-tasks tool and the parse_tasks tool so both
@@ -89,8 +89,9 @@ def load_feature_tasks_md(
     Returns ``{"ok": True, "tasks_md": <content>}`` or
     ``{"ok": False, "error": <message>}``.
     """
-    from ..context import get_org_id, get_user_id
     from plugins.clients.storage_service_client import read_document_content
+
+    from ..context import get_org_id, get_user_id
 
     caller_user_id = get_user_id()
     caller_org_id = get_org_id()
@@ -118,7 +119,7 @@ def handle(
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from ..context import get_feature_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()
@@ -133,9 +134,10 @@ def handle(
             ),
         }
 
+    from src.services.workflow_backend_client import WorkflowBackendError
+
     from .approve import _run_async_create_tasks
     from .parse_tasks import parse_tasks_index
-    from src.services.workflow_backend_client import WorkflowBackendError
 
     loaded = load_feature_tasks_md(wid, fid)
     if not loaded.get("ok"):
@@ -155,8 +157,8 @@ def handle(
     # Resolve display-name model fields to model_id UUIDs before creating tasks.
     # This is the same step run in approve.py step d — the backup /create-tasks
     # tool must also re-confirm before every retry (product spec Goal 4).
-    from .model_resolution import format_unresolved_error, resolve_task_models
     from ..context import get_org_id, get_user_id
+    from .model_resolution import format_unresolved_error, resolve_task_models
 
     resolution = resolve_task_models(
         wid, tasks, user_id=get_user_id() or "", org_id=get_org_id() or ""

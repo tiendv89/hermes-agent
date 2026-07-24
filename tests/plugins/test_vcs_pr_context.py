@@ -543,30 +543,32 @@ class TestApiErrorPropagation:
 
 
 class TestToolRegistration:
+    @staticmethod
+    def _get_tools():
+        """Return the workflow tool list from the profile setup module."""
+        from src.tool_setup import _WORKFLOW_TOOLS
+        return _WORKFLOW_TOOLS
+
     def test_vcs_pr_context_registered(self, monkeypatch):
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
         monkeypatch.delenv("GITNEXUS_MCP_URL", raising=False)
         monkeypatch.delenv("RAG_MCP_URL", raising=False)
 
-        import plugins as plugin_module
-
-        names = {t["name"] for t in plugin_module._TOOLS}
+        names = {t["name"] for t in self._get_tools()}
         assert "vcs_pr_context" in names
 
     def test_check_fn_gates_on_vcs_service_config(self, monkeypatch):
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
-        import plugins as plugin_module
 
-        tool = next(t for t in plugin_module._TOOLS if t["name"] == "vcs_pr_context")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_pr_context")
         assert tool["check_fn"]() is False
 
     def test_check_fn_passes_when_configured(self, monkeypatch):
         _set_vcs_env(monkeypatch)
         monkeypatch.delenv("WORKFLOW_BACKEND_URL", raising=False)
         monkeypatch.delenv("WORKFLOW_BACKEND_SERVICE_TOKEN", raising=False)
-        import plugins as plugin_module
 
-        tool = next(t for t in plugin_module._TOOLS if t["name"] == "vcs_pr_context")
+        tool = next(t for t in self._get_tools() if t["name"] == "vcs_pr_context")
         assert tool["check_fn"]() is True

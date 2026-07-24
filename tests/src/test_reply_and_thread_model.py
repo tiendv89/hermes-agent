@@ -10,7 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-
 # ---------------------------------------------------------------------------
 # Column existence and default-NULL behaviour
 # ---------------------------------------------------------------------------
@@ -54,6 +53,7 @@ def test_thread_root_id_defaults_to_none():
 def test_legacy_message_construction_still_works():
     """Constructing a Message without the new kwargs mirrors legacy behaviour."""
     import time
+
     from src.db.models import Message
 
     now = time.time()
@@ -76,6 +76,7 @@ def test_legacy_message_construction_still_works():
 def test_message_construction_with_reply_fields():
     """Setting both new fields is accepted and round-trips correctly."""
     import time
+
     from src.db.models import Message
 
     now = time.time()
@@ -96,6 +97,7 @@ def test_message_construction_with_reply_fields():
 def test_message_with_only_reply_to_no_thread():
     """reply_to_message_id set, thread_root_id NULL — inline reply in main transcript."""
     import time
+
     from src.db.models import Message
 
     msg = Message(
@@ -113,6 +115,7 @@ def test_message_with_only_reply_to_no_thread():
 def test_message_with_only_thread_root():
     """thread_root_id set, reply_to_message_id NULL — first reply in a thread."""
     import time
+
     from src.db.models import Message
 
     msg = Message(

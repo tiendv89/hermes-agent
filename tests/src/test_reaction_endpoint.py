@@ -412,6 +412,7 @@ def _make_app():
     from contextlib import asynccontextmanager
 
     from fastapi import FastAPI
+
     from src.api.routers.messages import router as msg_router
 
     app = FastAPI()
@@ -430,7 +431,7 @@ def _make_app():
 @pytest.mark.asyncio
 async def test_toggle_reaction_success():
     """POST /messages/{id}/reactions returns 200 with updated reactions list."""
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
 
     app, mock_db = _make_app()
 
@@ -474,7 +475,7 @@ async def test_toggle_reaction_success():
 @pytest.mark.asyncio
 async def test_toggle_reaction_message_not_found():
     """POST /messages/{id}/reactions returns 404 when message doesn't exist."""
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
 
     app, mock_db = _make_app()
 
@@ -498,9 +499,9 @@ async def test_toggle_reaction_message_not_found():
 @pytest.mark.asyncio
 async def test_toggle_reaction_empty_emoji_400():
     """POST /messages/{id}/reactions with empty emoji returns 400."""
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
 
-    app, mock_db = _make_app()
+    app, _mock_db = _make_app()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -517,9 +518,9 @@ async def test_toggle_reaction_empty_emoji_400():
 @pytest.mark.asyncio
 async def test_toggle_reaction_non_numeric_message_id_400():
     """POST /messages/{id}/reactions with non-numeric id returns 400."""
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
 
-    app, mock_db = _make_app()
+    app, _mock_db = _make_app()
 
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -536,7 +537,7 @@ async def test_toggle_reaction_non_numeric_message_id_400():
 @pytest.mark.asyncio
 async def test_toggle_reaction_missing_identity_400():
     """POST /messages/{id}/reactions without X-User-Id returns 400."""
-    from httpx import AsyncClient, ASGITransport
+    from httpx import ASGITransport, AsyncClient
 
     app, mock_db = _make_app()
 

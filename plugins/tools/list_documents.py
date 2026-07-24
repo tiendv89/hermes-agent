@@ -17,15 +17,16 @@ there is no folder listing for that path yet.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from plugins.clients.storage_service_client import StorageServiceError
 from plugins.clients.storage_service_client import list_documents as _list_documents
+
 from ..validation import _validate_id
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Walk a workspace's document folder like a local filesystem — go-owned/workspace-root "
         "documents only (storage-service backed; ts-owned feature docs live in git and aren't "
@@ -65,7 +66,7 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def _immediate_children(documents: List[Dict[str, Any]], prefix: str) -> Dict[str, Any]:
+def _immediate_children(documents: list[dict[str, Any]], prefix: str) -> dict[str, Any]:
     """Split *documents* into the folders/files directly under *prefix*.
 
     *prefix* is normalized to have no leading slash and, when non-empty, a
@@ -76,8 +77,8 @@ def _immediate_children(documents: List[Dict[str, Any]], prefix: str) -> Dict[st
     prefix = prefix.strip("/")
     norm_prefix = f"{prefix}/" if prefix else ""
 
-    folders: Dict[str, None] = {}
-    files: List[Dict[str, Any]] = []
+    folders: dict[str, None] = {}
+    files: list[dict[str, Any]] = []
     for doc in documents:
         path = doc.get("path") or ""
         if norm_prefix and not path.startswith(norm_prefix):
@@ -105,7 +106,7 @@ def handle(
     feature_id: str = "",
     path: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from ..context import get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()

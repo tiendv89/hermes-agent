@@ -30,6 +30,7 @@ from __future__ import annotations
 import importlib.util
 import sys
 from pathlib import Path
+from typing import ClassVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -87,6 +88,39 @@ def _load_plugins_register():
     return mod
 
 
+def _get_workflow_tools():
+    """Return the workflow profile's tool tuple.
+
+    Must NOT cache across tests because the ``_clean_modules`` autouse fixture
+    clears ``plugins.*`` from ``sys.modules`` between tests, which invalidates
+    any previously-cached function references (``check_fn``, ``handler``).
+    Always imports fresh and reloads the profile setup module.
+    """
+    import importlib
+
+    # Ensure a fresh plugins module is loaded first.
+    _load_plugins_register()
+
+    # Reload the profile setup so its imports from plugins.tools pick up the
+    # freshly-loaded plugins module.
+    import src.tool_setup as wf_setup
+
+    importlib.reload(wf_setup)
+    return wf_setup._WORKFLOW_TOOLS
+
+
+def _register_workflow_tools(ctx):
+    """Register all workflow tools on a mock context via the shared register().
+
+    Uses the profile's ``_WORKFLOW_TOOLS`` tuple so tests pass the real tool
+    list even though the module-level ``_TOOLS`` in plugins/__init__.py is
+    now empty.
+    """
+    import plugins
+
+    plugins.register(ctx, tools=_get_workflow_tools())
+
+
 def _write_skill(skill_dir: Path, description: str | None) -> None:
     """Write a minimal SKILL.md into *skill_dir* (description optional)."""
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -104,7 +138,7 @@ def _write_skill(skill_dir: Path, description: str | None) -> None:
 
 class TestRegisterT3:
     # The full registered toolset (see plugins/__init__.py _TOOLS).
-    EXPECTED_TOOLS = {
+    EXPECTED_TOOLS: ClassVar[set[str]] = {
         "get_workspace_context",
         "get_feature_state",
         "write_product_spec",
@@ -137,15 +171,13 @@ class TestRegisterT3:
     }
 
     def test_registers_all_tools(self):
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
         assert ctx.register_tool.call_count == len(self.EXPECTED_TOOLS)
 
     def test_all_tool_names_registered(self):
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
         names = {
             call.kwargs.get("name") or call.args[0]
             for call in ctx.register_tool.call_args_list
@@ -153,9 +185,8 @@ class TestRegisterT3:
         assert names == self.EXPECTED_TOOLS
 
     def test_gitnexus_registered_with_is_async_true(self):
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
         gitnexus_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -164,9 +195,8 @@ class TestRegisterT3:
         assert gitnexus_call.kwargs.get("is_async") is True
 
     def test_rag_registered_with_is_async_true(self):
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
         rag_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -175,9 +205,8 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("is_async") is True
 
     def test_non_mcp_tools_not_async(self):
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
         sync_names = {
             "get_workspace_context",
             "get_feature_state",
@@ -197,9 +226,8 @@ class TestRegisterT3:
         strict OpenAI-compatible providers (DeepSeek) don't reject dict content."""
         import json as _json
 
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
 
         spec_call = next(
             c
@@ -216,9 +244,8 @@ class TestRegisterT3:
 
     @pytest.mark.asyncio
     async def test_registered_async_handler_returns_json_string(self):
-        plugins_mod = _load_plugins_register()
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        _register_workflow_tools(ctx)
 
         rag_call = next(
             c
@@ -237,11 +264,10 @@ class TestRegisterT3:
         assert _json.loads(out)["ok"] is False
 
     def test_gitnexus_uses_own_check_fn(self):
-        plugins_mod = _load_plugins_register()
+        ctx = MagicMock()
+        _register_workflow_tools(ctx)
         from plugins.tools import gitnexus
 
-        ctx = MagicMock()
-        plugins_mod.register(ctx)
         gitnexus_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -250,11 +276,10 @@ class TestRegisterT3:
         assert gitnexus_call.kwargs.get("check_fn") is gitnexus.check_available
 
     def test_rag_uses_own_check_fn(self):
-        plugins_mod = _load_plugins_register()
+        ctx = MagicMock()
+        _register_workflow_tools(ctx)
         from plugins.tools import rag
 
-        ctx = MagicMock()
-        plugins_mod.register(ctx)
         rag_call = next(
             c
             for c in ctx.register_tool.call_args_list
@@ -263,9 +288,22 @@ class TestRegisterT3:
         assert rag_call.kwargs.get("check_fn") is rag.check_available
 
     def test_registers_pre_llm_call_hook(self):
-        plugins_mod = _load_plugins_register()
+        """Hook registration moved to src/tool_setup.py::register_tools().
+
+        ``plugins.register()`` no longer registers the hook itself — the
+        profile's ``register_tools()`` does.  This test verifies the profile
+        setup, not the bare ``plugins.register()``.
+        """
+        # Reload the workflow profile setup with a fresh plugins module loaded.
+        _load_plugins_register()
+        import importlib
+
+        import src.tool_setup as wf_setup
+
+        importlib.reload(wf_setup)
+
         ctx = MagicMock()
-        plugins_mod.register(ctx)
+        wf_setup.register_tools(ctx)
         ctx.register_hook.assert_called_once()
         hook_name = ctx.register_hook.call_args[0][0]
         assert hook_name == "pre_llm_call"
@@ -1705,8 +1743,8 @@ class TestInjectContextGitnexusScoping:
             patch("plugins.tools.tasks.handle", return_value={"ok": True, "tasks": []}),
             patch("plugins.hooks._build_skills_block", return_value=None),
         ):
-            from plugins.hooks import inject_context
             import plugins.context as ctx
+            from plugins.hooks import inject_context
 
             ctx.set_context("sess-b", "workspace-b", "")
             result_b = inject_context(session_id="sess-b")
@@ -2179,14 +2217,13 @@ class TestLoadSkillHandler:
         assert "ref.md" in skill["references"]
 
     def test_unknown_skill_returns_error(self):
-        with patch("plugins.skills.get_skill", return_value=None):
-            with patch(
-                "plugins.skills.get_index",
-                return_value={"python-best-practices": MagicMock()},
-            ):
-                from plugins.tools.skills import handle
+        with patch("plugins.skills.get_skill", return_value=None), patch(
+            "plugins.skills.get_index",
+            return_value={"python-best-practices": MagicMock()},
+        ):
+            from plugins.tools.skills import handle
 
-                result = handle(name="no-such-skill")
+            result = handle(name="no-such-skill")
 
         assert result["ok"] is False
         assert "no-such-skill" in result["error"]
@@ -2269,25 +2306,25 @@ class TestLoadSkillCheckAvailable:
 
 
 class TestToolsRegistration:
-    def test_load_skill_in_tools_list(self):
-        from plugins import _TOOLS
+    """Tests that the workflow profile's tool list includes expected tools.
 
-        names = [t["name"] for t in _TOOLS]
+    The module-level ``_TOOLS`` in plugins/__init__.py is now empty — the
+    real tool list lives in ``src/tool_setup._WORKFLOW_TOOLS``.
+    """
+
+    def test_load_skill_in_tools_list(self):
+        names = [t["name"] for t in _get_workflow_tools()]
         assert "load_skill" in names
 
     def test_load_skill_has_required_fields(self):
-        from plugins import _TOOLS
-
-        tool = next(t for t in _TOOLS if t["name"] == "load_skill")
+        tool = next(t for t in _get_workflow_tools() if t["name"] == "load_skill")
         assert "schema" in tool
         assert "handler" in tool
         assert "check_fn" in tool
 
     def test_register_includes_load_skill(self):
         ctx = MagicMock()
-        from plugins import register
-
-        register(ctx)
+        _register_workflow_tools(ctx)
         registered_names = [
             call.kwargs.get("name") or call.args[0]
             for call in ctx.register_tool.call_args_list

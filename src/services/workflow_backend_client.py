@@ -37,7 +37,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List
+from typing import Any
 
 import aiohttp
 
@@ -62,7 +62,7 @@ class WorkflowBackendError(Exception):
         self.status = status
 
 
-async def _build_headers(user_id: str, org_id: str, token: str) -> Dict[str, str]:
+async def _build_headers(user_id: str, org_id: str, token: str) -> dict[str, str]:
     """Build HTTP headers for a workflow-backend service-to-service call.
 
     X-Accessible-Org-Ids is every org user_id actually belongs to (see module
@@ -100,11 +100,11 @@ def _extract_reason_code(body: Any) -> str:
 async def create_feature_tasks(
     workspace_id: str,
     feature_id: str,
-    tasks: List[Dict[str, Any]],
+    tasks: list[dict[str, Any]],
     *,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """POST an already-parsed bulk task list to workflow-backend for a go feature.
 
     Parsing tasks.md is the caller's responsibility (see the ``parse_tasks``
@@ -168,7 +168,7 @@ async def create_feature_tasks(
 
     headers = await _build_headers(user_id, org_id, token)
     url = f"{base_url}/api/workspaces/{workspace_id}/features/{feature_id}/tasks"
-    payload: Dict[str, Any] = {"tasks": tasks}
+    payload: dict[str, Any] = {"tasks": tasks}
 
     logger.info(
         "workflow-backend: creating %d task(s) for feature %s/%s",
@@ -177,35 +177,34 @@ async def create_feature_tasks(
         feature_id,
     )
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            try:
-                body = await resp.json(content_type=None)
-            except Exception:
-                body = {"raw": await resp.text()}
+    async with aiohttp.ClientSession() as session, session.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as resp:
+        try:
+            body = await resp.json(content_type=None)
+        except Exception:
+            body = {"raw": await resp.text()}
 
-            if 200 <= resp.status < 300:
-                logger.info(
-                    "workflow-backend: tasks created for %s/%s (status=%d)",
-                    workspace_id,
-                    feature_id,
-                    resp.status,
-                )
-                return body
-
-            reason_code = _extract_reason_code(body)
-            msg = (
-                f"workflow-backend returned HTTP {resp.status} for {url}"
-                + (f" [reason={reason_code}]" if reason_code else "")
-                + f": {str(body)[:300]}"
+        if 200 <= resp.status < 300:
+            logger.info(
+                "workflow-backend: tasks created for %s/%s (status=%d)",
+                workspace_id,
+                feature_id,
+                resp.status,
             )
-            logger.warning(msg)
-            raise WorkflowBackendError(msg, reason_code=reason_code, status=resp.status)
+            return body
+
+        reason_code = _extract_reason_code(body)
+        msg = (
+            f"workflow-backend returned HTTP {resp.status} for {url}"
+            + (f" [reason={reason_code}]" if reason_code else "")
+            + f": {str(body)[:300]}"
+        )
+        logger.warning(msg)
+        raise WorkflowBackendError(msg, reason_code=reason_code, status=resp.status)
 
 
 def run_async(coro):
@@ -238,7 +237,7 @@ async def _call(
     *,
     user_id: str | None = None,
     org_id: str | None = None,
-    json_body: Dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
     not_found_message: str | None = None,
 ) -> Any:
     """Shared HTTP plumbing for the workflow-backend endpoints that replace
@@ -281,35 +280,34 @@ async def _call(
     headers = await _build_headers(user_id, org_id, token)
     url = f"{base_url}{path}"
 
-    async with aiohttp.ClientSession() as session:
-        async with session.request(
-            method,
-            url,
-            headers=headers,
-            json=json_body,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            try:
-                body = await resp.json(content_type=None)
-            except Exception:
-                body = {"raw": await resp.text()}
+    async with aiohttp.ClientSession() as session, session.request(
+        method,
+        url,
+        headers=headers,
+        json=json_body,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as resp:
+        try:
+            body = await resp.json(content_type=None)
+        except Exception:
+            body = {"raw": await resp.text()}
 
-            if 200 <= resp.status < 300:
-                if isinstance(body, dict) and "data" in body:
-                    return body["data"]
-                return body
+        if 200 <= resp.status < 300:
+            if isinstance(body, dict) and "data" in body:
+                return body["data"]
+            return body
 
-            if resp.status == 404 and not_found_message is not None:
-                raise ValueError(not_found_message)
+        if resp.status == 404 and not_found_message is not None:
+            raise ValueError(not_found_message)
 
-            reason_code = _extract_reason_code(body)
-            msg = (
-                f"workflow-backend returned HTTP {resp.status} for {url}"
-                + (f" [reason={reason_code}]" if reason_code else "")
-                + f": {str(body)[:300]}"
-            )
-            logger.warning(msg)
-            raise WorkflowBackendError(msg, reason_code=reason_code, status=resp.status)
+        reason_code = _extract_reason_code(body)
+        msg = (
+            f"workflow-backend returned HTTP {resp.status} for {url}"
+            + (f" [reason={reason_code}]" if reason_code else "")
+            + f": {str(body)[:300]}"
+        )
+        logger.warning(msg)
+        raise WorkflowBackendError(msg, reason_code=reason_code, status=resp.status)
 
 
 def check_workflow_available() -> bool:
@@ -321,7 +319,7 @@ def check_workflow_available() -> bool:
 
 async def get_workspace_context(
     workspace_id: str, *, user_id: str | None = None, org_id: str | None = None
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return workspace metadata shaped for plugins tool consumers.
 
     Replaces plugins.db.get_workspace_context. workspace_id must be the
@@ -487,7 +485,7 @@ async def get_feature_detail(
     *,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return feature metadata and lifecycle state for the given workspace + feature.
 
     Replaces plugins.db.get_feature_detail. feature_id may be the business-key
@@ -540,7 +538,7 @@ async def get_feature_tasks(
     *,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return all tasks for the given workspace + feature.
 
     Replaces plugins.db.get_feature_tasks. Reuses the feature-detail endpoint
@@ -647,14 +645,14 @@ async def create_feature(
     start_stage: str | None = None,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a new go-owned feature via POST /api/workspaces/:workspaceId/features.
 
     Always sends owner="go" — the agent entry point is go-only by design.
     Returns the parsed response body on success.
     Raises WorkflowBackendError on any non-2xx response.
     """
-    body: Dict[str, Any] = {"name": name, "description": description, "owner": "go"}
+    body: dict[str, Any] = {"name": name, "description": description, "owner": "go"}
     if start_stage:
         body["start_stage"] = start_stage
     return await _call(
@@ -702,7 +700,7 @@ async def get_implementation_candidates(
     *,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Fetch implementation-phase model candidates for a workspace repo.
 
     Calls:
@@ -736,7 +734,7 @@ async def activate_ready_tasks(
     *,
     user_id: str | None = None,
     org_id: str | None = None,
-) -> List[str]:
+) -> list[str]:
     """Transition every "todo" task whose dependencies are all "done" to
     "ready". Returns the task_names it activated (may be empty).
 

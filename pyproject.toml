@@ -26,7 +26,7 @@ workflow-gateway = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["src*", "plugins*"]
+include = ["src*", "plugins*", "profiles*"]
 
 [tool.uv]
 constraint-dependencies = ["pygments>=2.20.0"]
@@ -46,9 +46,18 @@ addopts = "-m 'not integration'"
 # Don't lint the vendored upstream submodule — it has its own tooling/config.
 extend-exclude = ["vendor"]
 
+[tool.ruff.lint]
+ignore = [
+    "BLE001",
+]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
 [dependency-groups]
 dev = [
     "aiohttp>=3.13.3",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
+    "pytest-timeout>=2.4.0",
 ]

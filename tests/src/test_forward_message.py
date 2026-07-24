@@ -116,9 +116,10 @@ def _make_session(session_id="sess_1", workspace_id="ws_1", user_id="user_a"):
 
 def _make_app(identity_user_id="user_test"):
     from fastapi import FastAPI
-    from src.api.routers.messages import router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.messages import router
 
     async def _override_db():
         yield _mock_db()
@@ -161,6 +162,7 @@ def test_forward_request_with_comment():
 def test_append_message_signature_includes_forwarded_from():
     """append_message accepts forwarded_from_message_id kwarg (no TypeError)."""
     import inspect
+
     from src.db.store import append_message
 
     sig = inspect.signature(append_message)
@@ -169,6 +171,7 @@ def test_append_message_signature_includes_forwarded_from():
 
 def test_append_message_forwarded_from_default_is_none():
     import inspect
+
     from src.db.store import append_message
 
     sig = inspect.signature(append_message)
@@ -354,10 +357,11 @@ async def test_attach_forwarded_authors_batches_multiple_messages():
 async def test_forward_missing_identity_returns_400():
     """Missing user_id in identity → 400."""
     from fastapi import FastAPI
-    from src.api.routers.messages import router
-    from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
     from fastapi.testclient import TestClient
+
+    from src.api.deps import get_db
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.messages import router
 
     async def _override_db():
         yield _mock_db()

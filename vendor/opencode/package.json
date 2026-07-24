@@ -1,0 +1,18 @@
+{
+  "name": "hermes-agent-opencode-server",
+  "private": true,
+  "version": "1.0.0",
+  "packageManager": "pnpm@10.5.2+sha512.da9dc28cd3ff40d0592188235ab25d3202add8a207afbedc682220e4a0029ffbff4562102b9e6e46b4e3f9e8bd53e6d05de48544b0c57d4b0179e22c76d1199b",
+  "description": "Pinned opencode-ai install used to run `opencode serve` for hermes-agent's coding-verdict IDE turns.",
+  "scripts": {
+    "serve": "opencode serve --hostname 0.0.0.0 --port 4096 --print-logs"
+  },
+  "dependencies": {
+    "opencode-ai": "1.18.4"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "opencode-ai"
+    ]
+  }
+}

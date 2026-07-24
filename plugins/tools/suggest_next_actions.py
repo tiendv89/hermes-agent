@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +23,7 @@ _VALID_CATEGORIES = frozenset(
     ["Lifecycle", "Clarify", "Review", "Edit", "Action", "GitNexus", "RAG"]
 )
 
-TOOL_SCHEMA: Dict[str, Any] = {
+TOOL_SCHEMA: dict[str, Any] = {
     "name": "suggest_next_actions",
     "description": (
         "Suggest 1–3 context-aware next actions the user could take. "
@@ -69,16 +69,21 @@ TOOL_SCHEMA: Dict[str, Any] = {
 }
 
 # Canonical schema for plugin registry registration (parameters-only form).
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": TOOL_SCHEMA["description"],
     "parameters": TOOL_SCHEMA["input_schema"],
 }
 
 
-def _validate_suggestions(suggestions: Any) -> List[Dict[str, Any]]:
+def _validate_suggestions(suggestions: Any) -> list[dict[str, Any]]:
     """Validate the suggestions list; raise ValueError with a descriptive message on failure."""
     if not isinstance(suggestions, list):
-        raise ValueError("suggestions must be an array")
+        # ValueError, not TypeError, deliberately: the caller's single
+        # `except ValueError` (see call site) turns any failure in this
+        # function into the tool's structured error response, and every
+        # other check below already raises ValueError uniformly — a
+        # TypeError here would escape that handler instead of being reported.
+        raise ValueError("suggestions must be an array")  # noqa: TRY004
     if not suggestions:
         raise ValueError("suggestions must contain at least 1 item")
     if len(suggestions) > 3:
@@ -88,7 +93,7 @@ def _validate_suggestions(suggestions: Any) -> List[Dict[str, Any]]:
     required_fields = {"id", "title", "category", "description", "action_text", "button_label"}
     for i, s in enumerate(suggestions):
         if not isinstance(s, dict):
-            raise ValueError(f"suggestions[{i}] must be an object")
+            raise ValueError(f"suggestions[{i}] must be an object")  # noqa: TRY004
         missing = required_fields - s.keys()
         if missing:
             raise ValueError(
@@ -118,7 +123,7 @@ def _validate_suggestions(suggestions: Any) -> List[Dict[str, Any]]:
     return suggestions
 
 
-def handle(suggestions: Any = None, **_: Any) -> Dict[str, Any]:
+def handle(suggestions: Any = None, **_: Any) -> dict[str, Any]:
     """Local executor handler for suggest_next_actions.
 
     Validates, persists to messages.cta_suggestions, and publishes the
@@ -177,11 +182,14 @@ def handle(suggestions: Any = None, **_: Any) -> Dict[str, Any]:
 
 async def _persist_and_publish(
     session_id: str,
-    suggestions: List[Dict[str, Any]],
+    suggestions: list[dict[str, Any]],
     db_factory: Any,
 ) -> None:
     """Persist suggestions to the DB and publish the SSE event."""
-    from src.db.store import get_latest_assistant_message_id, update_message_cta_suggestions
+    from src.db.store import (
+        get_latest_assistant_message_id,
+        update_message_cta_suggestions,
+    )
     from src.realtime.bus import get_bus
 
     message_id: int | None = None
@@ -192,7 +200,7 @@ async def _persist_and_publish(
 
     # When no assistant message exists yet, the event is published with message_id: null.
     # The frontend must handle this gracefully.
-    event: Dict[str, Any] = {
+    event: dict[str, Any] = {
         "event": "turn.cta_suggestions",
         "data": {
             "message_id": message_id,

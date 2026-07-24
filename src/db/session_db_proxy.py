@@ -11,12 +11,13 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
-def _to_json(value: Any) -> Optional[str]:
+def _to_json(value: Any) -> str | None:
     if value is None:
         return None
     if isinstance(value, str):
@@ -31,11 +32,11 @@ def make_gateway_session_db(
     loop: asyncio.AbstractEventLoop,
     db_factory: Callable,
     gateway_session_id: str,
-    author_id: Optional[str] = None,
+    author_id: str | None = None,
     skip_user_persist: bool = False,
-    is_cancelled: Optional[Callable[[], bool]] = None,
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
+    is_cancelled: Callable[[], bool] | None = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
 ):
     """Return a SessionDB subclass that mirrors writes for gateway_session_id to Postgres.
 
@@ -52,16 +53,33 @@ def make_gateway_session_db(
         response lands inside the thread instead of the main channel.
     """
     from hermes_state import SessionDB
+
     from src.db.store import (
         append_message as pg_append,
-        update_token_counts as pg_update_tokens,
+    )
+    from src.db.store import (
         end_session as pg_end_session,
-        update_session_cwd as pg_update_cwd,
-        update_session_meta as pg_update_meta,
-        update_system_prompt as pg_update_system_prompt,
-        update_session_model as pg_update_model,
-        set_session_title as pg_set_title,
+    )
+    from src.db.store import (
         set_session_archived as pg_set_archived,
+    )
+    from src.db.store import (
+        set_session_title as pg_set_title,
+    )
+    from src.db.store import (
+        update_session_cwd as pg_update_cwd,
+    )
+    from src.db.store import (
+        update_session_meta as pg_update_meta,
+    )
+    from src.db.store import (
+        update_session_model as pg_update_model,
+    )
+    from src.db.store import (
+        update_system_prompt as pg_update_system_prompt,
+    )
+    from src.db.store import (
+        update_token_counts as pg_update_tokens,
     )
 
     class GatewaySessionDB(SessionDB):
@@ -69,18 +87,18 @@ def make_gateway_session_db(
             self,
             session_id: str,
             role: str,
-            content: str = None,
-            tool_name: str = None,
+            content: str | None = None,
+            tool_name: str | None = None,
             tool_calls: Any = None,
-            tool_call_id: str = None,
-            token_count: int = None,
-            finish_reason: str = None,
-            reasoning: str = None,
-            reasoning_content: str = None,
+            tool_call_id: str | None = None,
+            token_count: int | None = None,
+            finish_reason: str | None = None,
+            reasoning: str | None = None,
+            reasoning_content: str | None = None,
             reasoning_details: Any = None,
             codex_reasoning_items: Any = None,
             codex_message_items: Any = None,
-            platform_message_id: str = None,
+            platform_message_id: str | None = None,
             observed: bool = False,
             **kwargs: Any,
         ) -> int:
@@ -161,18 +179,18 @@ def make_gateway_session_db(
             session_id: str,
             input_tokens: int = 0,
             output_tokens: int = 0,
-            model: str = None,
+            model: str | None = None,
             cache_read_tokens: int = 0,
             cache_write_tokens: int = 0,
             reasoning_tokens: int = 0,
-            estimated_cost_usd: Optional[float] = None,
-            actual_cost_usd: Optional[float] = None,
-            cost_status: Optional[str] = None,
-            cost_source: Optional[str] = None,
-            pricing_version: Optional[str] = None,
-            billing_provider: Optional[str] = None,
-            billing_base_url: Optional[str] = None,
-            billing_mode: Optional[str] = None,
+            estimated_cost_usd: float | None = None,
+            actual_cost_usd: float | None = None,
+            cost_status: str | None = None,
+            cost_source: str | None = None,
+            pricing_version: str | None = None,
+            billing_provider: str | None = None,
+            billing_base_url: str | None = None,
+            billing_mode: str | None = None,
             api_call_count: int = 0,
             absolute: bool = False,
             **kwargs: Any,
@@ -266,7 +284,7 @@ def make_gateway_session_db(
             self,
             session_id: str,
             model_config_json: str,
-            model: Optional[str] = None,
+            model: str | None = None,
         ) -> None:
             super().update_session_meta(session_id, model_config_json, model=model)
             if session_id != gateway_session_id:

@@ -29,7 +29,6 @@ from src.db.models import Session as DBSession
 from src.db.store import get_latest_assistant_message_id, update_message_cta_suggestions
 from src.realtime.bus import SessionBus
 
-
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 _DATABASE_URL = os.environ.get("DATABASE_URL", "")

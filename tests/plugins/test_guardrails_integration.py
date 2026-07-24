@@ -25,7 +25,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import MagicMock
 
 import pytest
@@ -122,7 +122,7 @@ def _clear_context():
         for attr in ("workspace_id", "feature_id", "user_id", "org_id"):
             if hasattr(_local, attr):
                 setattr(_local, attr, "")
-    except Exception:
+    except Exception:  # noqa: S110 — best-effort test teardown, never fails a test
         pass
 
 
@@ -1269,7 +1269,7 @@ class TestAllRegisteredToolsReturnJSON:
     """
 
     # Sync tools that are safe to call with minimal args
-    _SYNC_SMOKE_TESTS = [
+    _SYNC_SMOKE_TESTS: ClassVar[list[tuple[str, dict]]] = [
         ("approve_feature", {"stage": "product_spec", "feature_id": "f"}),
         ("write_file", {"path": "notes.md", "content": "# Test\nOK"}),
         ("edit_file", {"path": "notes.md", "edits": []}),

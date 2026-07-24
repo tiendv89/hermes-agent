@@ -22,7 +22,6 @@ semantic alias for the thread-scoped one — both share the same
 from __future__ import annotations
 
 import logging
-from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -54,8 +53,8 @@ router = APIRouter()
 
 class CreateThreadRequest(BaseModel):
     workspace_id: str
-    title: Optional[str] = None
-    members: Optional[List[str]] = None
+    title: str | None = None
+    members: list[str] | None = None
 
 
 class ThreadResponse(BaseModel):

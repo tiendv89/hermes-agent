@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
+
+from plugins.clients.storage_service_client import (
+    StorageServiceError,
+    write_document_content,
+)
 
 from ..validation import _validate_id
-from plugins.clients.storage_service_client import StorageServiceError, write_document_content
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +55,7 @@ def _content_description(filename: str, template: str) -> str:
 _PRODUCT_SPEC_TEMPLATE = _load_template("product-spec.md")
 _TECHNICAL_DESIGN_TEMPLATE = _load_template("technical-design.md")
 
-WRITE_SPEC_SCHEMA: Dict[str, Any] = {
+WRITE_SPEC_SCHEMA: dict[str, Any] = {
     "description": (
         "Write the feature's product-spec.md — stores the full Markdown to "
         "storage-service. Use when authoring or revising "
@@ -99,7 +103,7 @@ WRITE_SPEC_SCHEMA: Dict[str, Any] = {
     },
 }
 
-WRITE_TD_SCHEMA: Dict[str, Any] = {
+WRITE_TD_SCHEMA: dict[str, Any] = {
     "description": (
         "Write the feature's technical-design.md — stores the full Markdown to "
         "storage-service. Use when authoring or "
@@ -200,7 +204,7 @@ def _write_artifact(
     content: str,
     commit_message: str,
     stage: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Write document content to storage-service."""
     if not feature_id:
         return {
@@ -327,7 +331,7 @@ def handle_write_product_spec(
     feature_id: str = "",
     commit_message: str = "docs: update product spec",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     wid, fid = _resolve_ids(workspace_id, feature_id)
     if not wid or not fid:
         return {
@@ -349,7 +353,7 @@ def handle_write_technical_design(
     feature_id: str = "",
     commit_message: str = "docs: update technical design",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     wid, fid = _resolve_ids(workspace_id, feature_id)
     if not wid or not fid:
         return {

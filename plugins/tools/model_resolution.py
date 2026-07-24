@@ -12,18 +12,18 @@ Design ref: technical-design §6a (Option E — hermes-agent resolves, not backe
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 
 def resolve_task_models(
     workspace_id: str,
-    tasks: List[Dict[str, Any]],
+    tasks: list[dict[str, Any]],
     *,
     user_id: str = "",
     org_id: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Resolve display-name model fields in parsed task rows to ``model_id`` UUIDs.
 
     For every agent-actor task with a non-blank ``model`` field the function:
@@ -85,7 +85,7 @@ def resolve_task_models(
     repos = {t["repo"] for t in agent_tasks_with_model if t.get("repo")}
 
     # Step 2: for each repo fetch candidates (one call per unique repo).
-    candidates_by_repo: Dict[str, List[Dict[str, Any]]] = {}
+    candidates_by_repo: dict[str, list[dict[str, Any]]] = {}
     for repo_slug in repos:
         try:
             repo_uuid = run_async(
@@ -123,8 +123,8 @@ def resolve_task_models(
             candidates_by_repo[repo_slug] = []
 
     # Step 3: match each agent task's display name against the candidate list.
-    unresolved: List[Dict[str, Any]] = []
-    resolved_tasks: List[Dict[str, Any]] = []
+    unresolved: list[dict[str, Any]] = []
+    resolved_tasks: list[dict[str, Any]] = []
 
     for task in tasks:
         task_copy = dict(task)
@@ -165,7 +165,7 @@ def resolve_task_models(
     return {"ok": True, "tasks": resolved_tasks}
 
 
-def format_unresolved_error(unresolved: List[Dict[str, Any]]) -> str:
+def format_unresolved_error(unresolved: list[dict[str, Any]]) -> str:
     """Format an unresolved-models failure list into a human-readable message."""
     lines = []
     for u in unresolved:

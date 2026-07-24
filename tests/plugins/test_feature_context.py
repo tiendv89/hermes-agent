@@ -136,7 +136,7 @@ class TestFormatContextBlock:
         ]
 
     def test_lifecycle_section_with_state(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -152,7 +152,7 @@ class TestFormatContextBlock:
         assert "- Owner: alice" in block
 
     def test_lifecycle_section_missing(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -164,7 +164,7 @@ class TestFormatContextBlock:
         assert "(unavailable: workflow-backend unavailable)" in block
 
     def test_lifecycle_without_owner(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -176,7 +176,7 @@ class TestFormatContextBlock:
         assert "Owner" not in block
 
     def test_tasks_section_with_tasks(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -201,7 +201,7 @@ class TestFormatContextBlock:
         assert "https://github.com/pr/1" in block
 
     def test_tasks_section_empty(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -213,7 +213,7 @@ class TestFormatContextBlock:
         assert "No tasks created yet." in block
 
     def test_tasks_section_missing(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -225,7 +225,7 @@ class TestFormatContextBlock:
         assert "(unavailable: workflow-backend unavailable)" in block
 
     def test_blocked_task_shows_reason_and_suggestion(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -246,7 +246,7 @@ class TestFormatContextBlock:
         assert "→ Complete T0 first" in block
 
     def test_product_spec_section(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -260,7 +260,7 @@ class TestFormatContextBlock:
         assert "This is a test spec." in block
 
     def test_product_spec_missing(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -272,7 +272,7 @@ class TestFormatContextBlock:
         assert "(unavailable: no product_spec yet)" in block
 
     def test_technical_design_section(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -285,7 +285,7 @@ class TestFormatContextBlock:
         assert "# Tech Design" in block
 
     def test_footer_present(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -297,7 +297,7 @@ class TestFormatContextBlock:
         assert "Use `get_feature_state`, `get_tasks`, and `read_file`" in block
 
     def test_tasks_without_pr_field(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",
@@ -310,7 +310,7 @@ class TestFormatContextBlock:
         assert "| T1 | No PR | todo | — | — |" in block
 
     def test_tasks_with_unknown_fields_fallback(self):
-        from plugins.feature_context import _Missing, _format_context_block
+        from plugins.feature_context import _format_context_block, _Missing
 
         block = _format_context_block(
             feature_id="feat-1",

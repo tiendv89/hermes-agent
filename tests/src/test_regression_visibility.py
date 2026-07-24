@@ -178,6 +178,7 @@ async def test_regression_stream_workspace_thread_org_member_authorized_and_impl
 async def test_regression_stream_workspace_thread_non_org_member_403():
     """Stream endpoint: workspace thread non-org-member still raises 403."""
     from fastapi import HTTPException
+
     from src.api.routers.stream import stream_thread
 
     ws_thread = _make_session(
@@ -208,14 +209,14 @@ async def test_regression_stream_workspace_thread_non_org_member_403():
             "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=False)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_thread(
-                session_id="sess_wsthread_2",
-                since=None,
-                identity=identity,
-                db=db,
-            )
+        await stream_thread(
+            session_id="sess_wsthread_2",
+            since=None,
+            identity=identity,
+            db=db,
+        )
 
     assert exc_info.value.status_code == 403
     add_member_mock.assert_not_awaited()
@@ -224,7 +225,7 @@ async def test_regression_stream_workspace_thread_non_org_member_403():
 @pytest.mark.asyncio
 async def test_regression_messages_workspace_thread_org_member_gets_implicit_join():
     """Messages endpoint: org member posting to a workspace thread → implicit join."""
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     ws_thread = _make_session(
         session_id="sess_wsthread_3",
@@ -322,8 +323,8 @@ async def test_regression_channel_non_member_rejected_store():
 @pytest.mark.asyncio
 async def test_regression_channel_explicit_member_still_allowed_store():
     """can_view_session: channel with explicit session_members row still allowed."""
-    from src.db.store import can_view_session
     from src.db.models import SessionMember
+    from src.db.store import can_view_session
 
     existing_row = MagicMock(spec=SessionMember)
     db = _mock_db()
@@ -347,6 +348,7 @@ async def test_regression_stream_channel_non_member_403():
     Channel access therefore falls back to is_member → rejected.
     """
     from fastapi import HTTPException
+
     from src.api.routers.stream import stream_thread
 
     channel = _make_session(
@@ -371,14 +373,14 @@ async def test_regression_stream_channel_non_member_403():
             new=AsyncMock(return_value=False),
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_thread(
-                session_id="chan_rg_1",
-                since=None,
-                identity=identity,
-                db=db,
-            )
+        await stream_thread(
+            session_id="chan_rg_1",
+            since=None,
+            identity=identity,
+            db=db,
+        )
 
     assert exc_info.value.status_code == 403
     add_member_mock.assert_not_awaited()  # no implicit join for channels
@@ -444,7 +446,8 @@ async def test_regression_stream_channel_no_implicit_join_for_member():
 async def test_regression_messages_channel_non_member_403():
     """Messages endpoint: channel non-member still rejected after T2/T3."""
     from fastapi import HTTPException
-    from src.api.routers.messages import send_message, SendMessageRequest
+
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     channel = _make_session(
         session_id="chan_rg_3",
@@ -474,15 +477,15 @@ async def test_regression_messages_channel_non_member_403():
             new=AsyncMock(return_value=False),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await send_message(
-                session_id="chan_rg_3",
-                body=SendMessageRequest(content="should fail"),
-                request=request,
-                identity=identity,
-                db=db,
-            )
+        await send_message(
+            session_id="chan_rg_3",
+            body=SendMessageRequest(content="should fail"),
+            request=request,
+            identity=identity,
+            db=db,
+        )
 
     assert exc_info.value.status_code == 403
     add_member_mock.assert_not_awaited()
@@ -495,7 +498,7 @@ async def test_regression_messages_channel_no_implicit_join():
     Authorized channel members can post, but the implicit-join gate must not
     fire for channels — they join via the explicit /join endpoint only.
     """
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     channel = _make_session(
         session_id="chan_rg_4",
@@ -562,8 +565,8 @@ async def test_regression_join_channel_success_unchanged():
     The /join endpoint is the explicit membership path for channels; it must be
     unaffected by the feature-session implicit-join changes in T2.
     """
-    from src.api.routers.channels import join_channel_endpoint
     from src.api.identity import Identity
+    from src.api.routers.channels import join_channel_endpoint
 
     channel = _make_session(session_id="chan_join_1", kind="channel")
     db = _mock_db()
@@ -605,8 +608,8 @@ async def test_regression_join_channel_idempotent_unchanged():
     Re-joining a channel a second time must still return 200 without error —
     the implicit-join path for feature sessions must not have changed this.
     """
-    from src.api.routers.channels import join_channel_endpoint
     from src.api.identity import Identity
+    from src.api.routers.channels import join_channel_endpoint
 
     channel = _make_session(session_id="chan_join_2", kind="channel")
     db = _mock_db()
@@ -706,6 +709,7 @@ async def test_regression_list_member_sessions_feature_session_still_visible():
     A non-member org user with accessible_workspace_ids set sees feature sessions.
     """
     import time
+
     from src.db.store import list_member_sessions
 
     now = time.time()
@@ -743,6 +747,7 @@ async def test_regression_list_member_sessions_own_workspace_thread_still_listed
     regardless of feature_id.
     """
     import time
+
     from src.db.store import list_member_sessions
 
     now = time.time()
@@ -777,6 +782,7 @@ async def test_regression_list_member_sessions_member_of_workspace_thread_still_
     session_members row still sees the workspace thread.
     """
     import time
+
     from src.db.store import list_member_sessions
 
     now = time.time()

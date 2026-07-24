@@ -40,6 +40,11 @@ class CreateSessionRequest(BaseModel):
     user_id: str = ""
     workspace_id: str = ""
     feature_id: str = ""
+    # Optional client tag (e.g. "coding-ide") so a client whose sessions all
+    # share one source can later list just its own via GET /sessions?source=...
+    # without mixing in every other client's sessions for the same
+    # workspace+feature. Defaults to store.create_session's own default.
+    source: str = ""
 
 
 class CreateSessionResponse(BaseModel):
@@ -55,11 +60,13 @@ async def create_session_endpoint(
     user_id = identity.user_id or body.user_id
     if not user_id:
         raise HTTPException(status_code=400, detail="Missing caller identity.")
+    kwargs = {"source": body.source} if body.source else {}
     session_id = await create_session(
         db,
         user_id=user_id,
         workspace_id=body.workspace_id,
         feature_id=body.feature_id,
+        **kwargs,
     )
     logger.info("Created session %s for user %s", session_id, user_id)
     return CreateSessionResponse(session_id=session_id)
@@ -70,13 +77,17 @@ async def list_sessions_endpoint(
     workspace_id: str = Query(..., description="Workspace slug or ID"),
     feature_id: str = Query(..., description="Feature slug or ID"),
     limit: int = Query(50, ge=1, le=200, description="Max sessions to return"),
+    source: str = Query("", description="Restrict to sessions created with this source tag"),
     identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Return the caller's own non-archived sessions for a workspace+feature.
+    """Return non-archived sessions for a workspace+feature.
 
-    Sessions are private single-user agent chats, so the list is scoped to the
-    caller (X-User-Id) — another user's sessions never appear here.
+    Ordinary (web) sessions are org-public, like channels — every workspace
+    member sees every session, regardless of who started it. The IDE's own
+    sessions (source="coding-ide") are the exception: those stay scoped to
+    the caller (X-User-Id), since an IDE session is one developer's local
+    coding session, not a shared team thread — see store.list_sessions.
     """
     sessions = await list_sessions(
         db,
@@ -84,6 +95,7 @@ async def list_sessions_endpoint(
         feature_id=feature_id,
         user_id=identity.user_id or None,
         limit=limit,
+        source=source or None,
     )
     return JSONResponse({"sessions": sessions})
 
@@ -94,10 +106,22 @@ async def get_session_messages_endpoint(
     identity: Identity = Depends(require_identity),
     db: AsyncSession = Depends(get_db),
 ) -> JSONResponse:
-    """Return the full transcript for a session, oldest-first."""
+    """Return the full transcript for a session, oldest-first.
+
+    Ordinary sessions are org-public (any workspace member can open any
+    session's transcript, matching list_sessions' org-public policy), but a
+    "coding-ide" session is one developer's local coding session, not a
+    shared thread — listing already hides other users' IDE sessions (see
+    store.list_sessions), and this guards the same rule against someone
+    fetching a transcript directly by a known/guessed session_id.
+    """
     session = await get_session(db, session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found.")
+    owner_id = getattr(session, "user_id", None) or ""
+    session_source = getattr(session, "source", None) or ""
+    if session_source == "coding-ide" and identity.user_id and owner_id and identity.user_id != owner_id:
+        raise HTTPException(status_code=403, detail="Not your session.")
     messages = await get_session_messages(db, session_id, user_id=identity.user_id)
     workspace_id = getattr(session, "workspace_id", "") or ""
     for m in messages:

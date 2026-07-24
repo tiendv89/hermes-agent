@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import List, Optional, TypedDict
+from typing import TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ class ModelInfo(TypedDict):
     provider: str
 
 
-async def get_active_models(db: AsyncSession) -> List[ModelInfo]:
+async def get_active_models(db: AsyncSession) -> list[ModelInfo]:
     """Return all active catalog models as ModelInfo dicts."""
     rows = await db_store.list_active_catalog_models(db)
     return [{"id": r["model_id"], "label": r["display_name"], "provider": r["provider"]} for r in rows]
@@ -46,8 +46,8 @@ async def is_supported(db: AsyncSession, model_id: str) -> bool:
 class ResolvedModel(TypedDict):
     model: str
     provider: str
-    api_key: Optional[str]
-    base_url: Optional[str]
+    api_key: str | None
+    base_url: str | None
 
 
 async def resolve_model(db: AsyncSession, model_id: str) -> ResolvedModel:

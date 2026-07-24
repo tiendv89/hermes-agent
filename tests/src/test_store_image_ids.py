@@ -54,16 +54,18 @@ async def test_append_message_passes_image_ids_as_a_real_list_not_json_string():
 
     db.flush.side_effect = _flush_set_id
 
-    with patch("src.db.store.mark_session_read", new_callable=AsyncMock):
-        with patch("src.db.store._emit_message_notifications", new_callable=AsyncMock):
-            await append_message(
-                db,
-                session_id="sess-1",
-                role="user",
-                content="what's in this image?",
-                author_id="user-1",
-                image_ids=["img-1", "img-2"],
-            )
+    with (
+        patch("src.db.store.mark_session_read", new_callable=AsyncMock),
+        patch("src.db.store._emit_message_notifications", new_callable=AsyncMock),
+    ):
+        await append_message(
+            db,
+            session_id="sess-1",
+            role="user",
+            content="what's in this image?",
+            author_id="user-1",
+            image_ids=["img-1", "img-2"],
+        )
 
     assert len(captured) == 1
     msg = captured[0]

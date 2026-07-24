@@ -26,7 +26,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from typing import Optional
 
 from plugins.tools.guardrails import INTROSPECTION_PATTERNS
 
@@ -106,7 +105,7 @@ def _enabled() -> bool:
     )
 
 
-def _classifier_model(provider: Optional[str], model: Optional[str]) -> Optional[str]:
+def _classifier_model(provider: str | None, model: str | None) -> str | None:
     """Pick the model used for the IN/OUT classification.
 
     This preflight runs *serialized* in front of every reply, so it must be
@@ -129,10 +128,10 @@ def _classifier_model(provider: Optional[str], model: Optional[str]) -> Optional
 def is_out_of_scope(
     message: str,
     *,
-    provider: Optional[str] = None,
-    model: Optional[str] = None,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
+    provider: str | None = None,
+    model: str | None = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
 ) -> bool:
     """Return True only when *message* is confidently OUT of scope.
 
@@ -173,6 +172,6 @@ def is_out_of_scope(
         if out:
             logger.info("scope_guard: classified OUT of scope: %r", text[:120])
         return out
-    except Exception as exc:  # noqa: BLE001 — fail open on any classifier error
+    except Exception as exc:
         logger.warning("scope_guard: classification failed, allowing through: %s", exc)
         return False

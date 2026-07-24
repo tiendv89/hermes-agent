@@ -9,19 +9,24 @@ agent output, minimal clobber surface compared to a full-rewrite.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
+
+from plugins.clients.storage_service_client import (
+    StorageServiceError,
+    read_document_content,
+    write_document_content,
+)
 
 from ..validation import _validate_id
-from plugins.clients.storage_service_client import StorageServiceError, read_document_content, write_document_content
 
 logger = logging.getLogger(__name__)
 
-_STORAGE_DOC_PATHS: Dict[str, str] = {
+_STORAGE_DOC_PATHS: dict[str, str] = {
     "product_spec": "product_spec.md",
     "technical_design": "tech_design.md",
 }
 
-EDIT_DOCUMENT_SCHEMA: Dict[str, Any] = {
+EDIT_DOCUMENT_SCHEMA: dict[str, Any] = {
     "description": (
         "Make targeted find-and-replace edits to a feature document "
         "(product_spec or technical_design) and write them to storage-service. "
@@ -70,9 +75,9 @@ EDIT_DOCUMENT_SCHEMA: Dict[str, Any] = {
 }
 
 
-def _apply_edits(content: str, edits: List[Dict[str, str]]) -> tuple[str, List[str]]:
+def _apply_edits(content: str, edits: list[dict[str, str]]) -> tuple[str, list[str]]:
     """Apply each replacement in order. Returns (new_content, list_of_warnings)."""
-    warnings: List[str] = []
+    warnings: list[str] = []
     for edit in edits:
         old = edit.get("old_string", "")
         new = edit.get("new_string", "")
@@ -85,11 +90,11 @@ def _apply_edits(content: str, edits: List[Dict[str, str]]) -> tuple[str, List[s
 
 def handle_edit_document(
     document: str,
-    edits: List[Dict[str, str]],
+    edits: list[dict[str, str]],
     workspace_id: str = "",
     feature_id: str = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Apply targeted edits to a document via read + apply + write to storage-service."""
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
@@ -130,7 +135,7 @@ def handle_edit_document(
         logger.warning("edit_document: unexpected error: %s", exc)
         return {"ok": False, "error": str(exc)}
 
-    out: Dict[str, Any] = {
+    out: dict[str, Any] = {
         "ok": True,
         "pr_url": None,
         "commit_sha": None,

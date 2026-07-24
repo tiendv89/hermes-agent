@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -38,14 +38,14 @@ _DEFAULT_ADMIN_ROLES = frozenset({"admin", "owner"})
 # Short TTL cache of org member directories so message-author resolution
 # doesn't hit user-service on every transcript fetch / live message.
 _MEMBERS_TTL_SECONDS = 30.0
-_members_cache: Dict[str, tuple[float, Dict[str, Dict[str, Any]]]] = {}
+_members_cache: dict[str, tuple[float, dict[str, dict[str, Any]]]] = {}
 
 
 class UserServiceError(Exception):
     """Raised when user-service returns an unexpected response."""
 
 
-async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
+async def list_org_members(org_id: str) -> dict[str, dict[str, Any]]:
     """Return ``{user_id: {display_name, email, avatar_url, role}}`` for an org.
 
     Calls user-service's internal org-member directory (service-token auth).
@@ -69,16 +69,15 @@ async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
     url = f"{base_url}/internal/orgs/{org_id}/members"
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "user-service org members lookup %s -> %s", url, resp.status
-                    )
-                    return {}
-                body = await resp.json()
+        async with aiohttp.ClientSession() as session, session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "user-service org members lookup %s -> %s", url, resp.status
+                )
+                return {}
+            body = await resp.json()
     except Exception:
         logger.exception("user-service org members lookup failed for %s", org_id)
         return {}
@@ -86,7 +85,7 @@ async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
     # RespondOK wraps as {"success": true, "data": {"members": [...]}}.
     container = body.get("data", body) if isinstance(body, dict) else {}
     members = container.get("members", []) if isinstance(container, dict) else []
-    out: Dict[str, Dict[str, Any]] = {}
+    out: dict[str, dict[str, Any]] = {}
     for m in members or []:
         uid = m.get("user_id")
         if uid:
@@ -96,10 +95,10 @@ async def list_org_members(org_id: str) -> Dict[str, Dict[str, Any]]:
 
 
 # Short TTL cache of individual user profiles (for author resolution).
-_users_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+_users_cache: dict[str, tuple[float, dict[str, Any]]] = {}
 
 
-async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
+async def list_users_by_ids(user_ids: list[str]) -> dict[str, dict[str, Any]]:
     """Return ``{user_id: {display_name, email, avatar_url}}`` for the given ids.
 
     Resolves any user regardless of org membership (unlike list_org_members).
@@ -110,7 +109,7 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
         return {}
 
     now = time.monotonic()
-    resolved: Dict[str, Dict[str, Any]] = {}
+    resolved: dict[str, dict[str, Any]] = {}
     missing: list[str] = []
     for uid in ids:
         cached = _users_cache.get(uid)
@@ -130,16 +129,15 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
     headers = {"Authorization": f"Bearer {token}"} if token else {}
     url = f"{base_url}/internal/users?ids={','.join(missing)}"
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "user-service users lookup %s -> %s", url, resp.status
-                    )
-                    return resolved
-                body = await resp.json()
+        async with aiohttp.ClientSession() as session, session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "user-service users lookup %s -> %s", url, resp.status
+                )
+                return resolved
+            body = await resp.json()
     except Exception:
         logger.exception("user-service users lookup failed")
         return resolved
@@ -157,7 +155,7 @@ async def list_users_by_ids(user_ids: list[str]) -> Dict[str, Dict[str, Any]]:
 async def get_org_role(
     org_id: str,
     user_id: str,
-) -> Optional[str]:
+) -> str | None:
     """Return the caller's org role string, or None if not a member.
 
     Returns None also when USER_SERVICE_URL is not set (permissive dev mode).
@@ -179,25 +177,24 @@ async def get_org_role(
 
     url = f"{base_url}/internal/org-role"
     params = {"org_id": org_id, "user_id": user_id}
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-            url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-        ) as resp:
-            if resp.status == 404:
-                return None
-            if resp.status != 200:
-                text = await resp.text()
-                raise UserServiceError(
-                    f"user-service returned {resp.status} for {url}: {text[:200]}"
-                )
-            data = await resp.json()
-            return data.get("role")
+    async with aiohttp.ClientSession() as session, session.get(
+        url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+    ) as resp:
+        if resp.status == 404:
+            return None
+        if resp.status != 200:
+            text = await resp.text()
+            raise UserServiceError(
+                f"user-service returned {resp.status} for {url}: {text[:200]}"
+            )
+        data = await resp.json()
+        return data.get("role")
 
 
 async def get_accessible_workspace_ids(
     user_id: str,
     org_id: str,
-) -> List[str]:
+) -> list[str]:
     """Return the workspace IDs accessible to user_id within org_id.
 
     Calls user-service's internal accessible-workspace-ids endpoint
@@ -222,16 +219,15 @@ async def get_accessible_workspace_ids(
     params = {"org_id": org_id, "user_id": user_id}
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "user-service accessible-workspace-ids %s -> %s", url, resp.status
-                    )
-                    return []
-                body = await resp.json()
+        async with aiohttp.ClientSession() as session, session.get(
+            url, params=params, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "user-service accessible-workspace-ids %s -> %s", url, resp.status
+                )
+                return []
+            body = await resp.json()
     except Exception:
         logger.exception(
             "user-service accessible-workspace-ids lookup failed for %s/%s", org_id, user_id
@@ -269,10 +265,10 @@ async def is_org_member(org_id: str, user_id: str) -> bool:
     return role is not None
 
 
-_accessible_orgs_cache: Dict[str, tuple[float, List[str]]] = {}
+_accessible_orgs_cache: dict[str, tuple[float, list[str]]] = {}
 
 
-async def get_accessible_org_ids(user_id: str) -> List[str]:
+async def get_accessible_org_ids(user_id: str) -> list[str]:
     """Return every org_id user_id is a member of.
 
     Calls user-service's ``GET /internal/users/:userId/accessible-orgs``
@@ -299,16 +295,15 @@ async def get_accessible_org_ids(user_id: str) -> List[str]:
     url = f"{base_url}/internal/users/{user_id}/accessible-orgs"
 
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(
-                url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
-            ) as resp:
-                if resp.status != 200:
-                    logger.warning(
-                        "user-service accessible-orgs lookup %s -> %s", url, resp.status
-                    )
-                    return []
-                body = await resp.json()
+        async with aiohttp.ClientSession() as session, session.get(
+            url, headers=headers, timeout=aiohttp.ClientTimeout(total=5)
+        ) as resp:
+            if resp.status != 200:
+                logger.warning(
+                    "user-service accessible-orgs lookup %s -> %s", url, resp.status
+                )
+                return []
+            body = await resp.json()
     except Exception:
         logger.exception("user-service accessible-orgs lookup failed for %s", user_id)
         return []

@@ -23,9 +23,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import List, Optional
-
-from src.db.models import Message as MessageModel
 
 from src.api.agent_dispatch import schedule_agent_turn, try_resolve_pending_clarify
 from src.api.deps import get_db
@@ -49,6 +46,7 @@ from src.db import (
     update_session_model,
 )
 from src.db.models import Message, Session
+from src.db.models import Message as MessageModel
 from src.db.store import append_message, get_thread_reply_summaries
 from src.realtime.bus import get_bus
 from src.services.author_resolver import attach_authors, author_for, mention_candidates
@@ -68,24 +66,24 @@ class SendMessageRequest(BaseModel):
     # Optional: ID of the message this is a direct reply to (G1 inline reply).
     # When set, reply_to_message_id is stored on the persisted message.
     # thread_root_id remains NULL — the reply stays in the main transcript.
-    reply_to_message_id: Optional[str] = None
+    reply_to_message_id: str | None = None
     # IDs of images uploaded to storage-service's images bucket (see
     # storage_service_client.download_image) that the user pasted/attached to
     # this message. hermes-agent downloads them server-side and hands the
     # agent a local file path — see agent_dispatch.py's image handling —
     # rather than a URL, since storage-service is internal-only and the
     # vision tool's SSRF guard would reject fetching it directly.
-    image_ids: List[str] = []
+    image_ids: list[str] = []
 
 
 class ForwardMessageRequest(BaseModel):
-    destination_session_ids: List[str]
+    destination_session_ids: list[str]
     # Optional comment prepended to the forwarded content as:
     # "<comment>\n\n<original content>" in a single message row.
-    comment: Optional[str] = None
+    comment: str | None = None
 
 
-def _image_urls_for(workspace_id: str, image_ids) -> List[str]:
+def _image_urls_for(workspace_id: str, image_ids) -> list[str]:
     """Bare storage-service image ids -> BFF-relative fetch URLs.
 
     Stored as bare ids (see storage_service_client.download_image, used
@@ -255,7 +253,7 @@ async def send_message(
     resolved_mentions = resolve_mentions(handles, await mention_candidates(org_id))
 
     # --- Persist the human message (with author_id) ---
-    reply_to_id: Optional[int] = None
+    reply_to_id: int | None = None
     if body.reply_to_message_id:
         try:
             reply_to_id = int(body.reply_to_message_id)
@@ -518,7 +516,7 @@ async def forward_message(
         raise HTTPException(status_code=400, detail="message_id must be numeric.")
 
     result = await db.execute(
-        select(Message).where(Message.id == src_id, Message.active == True)  # noqa: E712
+        select(Message).where(Message.id == src_id, Message.active == True)
     )
     source_msg = result.scalar_one_or_none()
     if source_msg is None:

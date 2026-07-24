@@ -9,7 +9,7 @@ Endpoints:
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse, Response
@@ -140,9 +140,9 @@ async def list_saved_messages(
     )
 
     rows = result.all()
-    messages: List[Dict[str, Any]] = []
+    messages: list[dict[str, Any]] = []
     for row in rows:
-        entry: Dict[str, Any] = {
+        entry: dict[str, Any] = {
             "id": str(row.id),
             "content": row.content or "",
             "role": row.role,

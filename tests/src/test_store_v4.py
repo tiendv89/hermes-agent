@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -290,8 +289,8 @@ async def test_list_member_sessions_multi_workspace_feature_sessions():
 @pytest.mark.asyncio
 async def test_is_member_true():
     """is_member returns True when the membership row exists."""
-    from src.db.store import is_member
     from src.db.models import SessionMember
+    from src.db.store import is_member
 
     db = _mock_db()
     db.get = AsyncMock(return_value=MagicMock(spec=SessionMember))
@@ -419,8 +418,8 @@ async def test_mark_mentions_read():
 @pytest.mark.asyncio
 async def test_create_channel_returns_session_id():
     """create_channel creates a kind='channel' session and returns its id."""
-    from src.db.store import create_channel
     from src.db.models import Session, SessionMember
+    from src.db.store import create_channel
 
     # Capture the Session object added to track its attributes
     added_objects = []
@@ -462,8 +461,8 @@ async def test_create_channel_returns_session_id():
 @pytest.mark.asyncio
 async def test_create_channel_is_feature_scoped():
     """create_channel stores the feature_id so channels are feature-scoped."""
-    from src.db.store import create_channel
     from src.db.models import Session
+    from src.db.store import create_channel
 
     added_objects = []
 
@@ -493,6 +492,7 @@ async def test_create_channel_is_feature_scoped():
 async def test_create_channel_duplicate_name_raises():
     """create_channel propagates IntegrityError on duplicate channel name."""
     from sqlalchemy.exc import IntegrityError
+
     from src.db.store import create_channel
 
     db = _mock_db()
@@ -505,8 +505,8 @@ async def test_create_channel_duplicate_name_raises():
 @pytest.mark.asyncio
 async def test_create_channel_without_description():
     """create_channel works without an optional description."""
-    from src.db.store import create_channel
     from src.db.models import Session
+    from src.db.store import create_channel
 
     added_sessions = []
 
@@ -555,8 +555,8 @@ async def test_list_channels_returns_non_archived():
 @pytest.mark.asyncio
 async def test_get_channel_found():
     """get_channel returns the session for a valid channel id."""
-    from src.db.store import get_channel
     from src.db.models import Session
+    from src.db.store import get_channel
 
     fake_session = MagicMock(spec=Session)
     result_mock = MagicMock()
@@ -587,8 +587,8 @@ async def test_get_channel_not_found():
 @pytest.mark.asyncio
 async def test_hard_delete_channel_existing():
     """hard_delete_channel deletes the channel session and returns True."""
-    from src.db.store import hard_delete_channel
     from src.db.models import Session
+    from src.db.store import hard_delete_channel
 
     fake_session = MagicMock(spec=Session)
     result_mock = MagicMock()

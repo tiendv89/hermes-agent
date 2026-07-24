@@ -33,11 +33,11 @@ sys.path.insert(0, str(REPO_ROOT))
 @pytest.fixture(autouse=True)
 def _clean_modules():
     """Remove plugins/src modules between tests to avoid cross-test pollution."""
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
 
@@ -309,7 +309,7 @@ class TestGoTasksApproveStepCFailure:
         assert "Step c" in result["error"] or "step c" in result["error"].lower()
 
     def test_step_d_not_called_on_step_c_failure(self, monkeypatch):
-        result, mocks = _run_go_tasks_approve_handle(
+        _result, mocks = _run_go_tasks_approve_handle(
             monkeypatch,
             update_feature_stage_raises=Exception("DB error"),
         )

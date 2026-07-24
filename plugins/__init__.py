@@ -1,43 +1,99 @@
-"""workflow plugin — registers workspace-aware tools for the digital-factory agent."""
+"""workflow plugin — registers workspace-aware tools for the digital-factory agent.
+
+This module provides the shared tool-registration infrastructure used by
+src/tool_setup.py. It calls ``register(ctx, tools=...)`` once per tool set
+(workflow, coding) with its own tool list. The module-level ``_TOOLS`` tuple
+is kept as an empty backward-compatibility fallback; new code should always
+pass ``tools`` explicitly.
+
+Shared utilities:
+- ``_guardrail_wrapper`` — wraps a handler with pre-dispatch guardrail checks
+- ``_json_result_handler`` — wraps a handler for JSON-stringify + sanitization
+- ``_as_tool_content`` — coerces a handler return value to a string
+- ``_unpack_args`` — merges positional + keyword args into a single kwargs dict
+- ``_get_session_context`` — returns the current session's workspace context
+"""
 
 from __future__ import annotations
 
 import functools
 import json
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from src.services.workflow_backend_client import check_workflow_available
-from .hooks import inject_context
-from .tools import guardrails as _guardrails
+
 from .tools import (
-    workspace,
-    feature,
+    approval,
     artifacts,
-    edit as edit_tool,
-    file_ops as file_ops_tool,
-    read as read_tool,
-    read_workspace_file as read_workspace_file_tool,
-    list_documents as list_documents_tool,
-    tasks as tasks_tool,
+    feature,
     gitnexus,
     rag,
-    skills as skills_tool,
-    approval,
+    workspace,
+)
+from .tools import (
     approve as approve_tool,
-    move_feature as move_feature_tool,
-    tasks_write as tasks_write_tool,
-    suggest_next_actions as suggest_next_actions_tool,
-    create_tasks as create_tasks_tool,
-    parse_tasks as parse_tasks_tool,
-    vcs_pr_context as vcs_pr_context_tool,
-    vcs_pr_review as vcs_pr_review_tool,
-    lookup_feature as lookup_feature_tool,
-    init_feature as init_feature_tool,
-    create_pr as create_pr_tool,
-    ensure_branch as ensure_branch_tool,
+)
+from .tools import (
     commit_files as commit_files_tool,
+)
+from .tools import (
+    create_pr as create_pr_tool,
+)
+from .tools import (
+    create_tasks as create_tasks_tool,
+)
+from .tools import (
+    edit as edit_tool,
+)
+from .tools import (
+    ensure_branch as ensure_branch_tool,
+)
+from .tools import (
     feature_context as feature_context_tool,
+)
+from .tools import (
+    file_ops as file_ops_tool,
+)
+from .tools import guardrails as _guardrails
+from .tools import (
+    init_feature as init_feature_tool,
+)
+from .tools import (
+    list_documents as list_documents_tool,
+)
+from .tools import (
+    lookup_feature as lookup_feature_tool,
+)
+from .tools import (
+    move_feature as move_feature_tool,
+)
+from .tools import (
+    parse_tasks as parse_tasks_tool,
+)
+from .tools import (
+    read as read_tool,
+)
+from .tools import (
+    read_workspace_file as read_workspace_file_tool,
+)
+from .tools import (
+    skills as skills_tool,
+)
+from .tools import (
+    suggest_next_actions as suggest_next_actions_tool,
+)
+from .tools import (
+    tasks as tasks_tool,
+)
+from .tools import (
+    tasks_write as tasks_write_tool,
+)
+from .tools import (
+    vcs_pr_context as vcs_pr_context_tool,
+)
+from .tools import (
+    vcs_pr_review as vcs_pr_review_tool,
 )
 
 logger = logging.getLogger(__name__)
@@ -48,7 +104,7 @@ def _as_tool_content(result: Any) -> str:
 
     The agent's tool registry passes a handler's return value straight through
     as the ``tool`` message ``content`` (it only JSON-encodes errors). Our
-    handlers return dicts (``{"ok": True, ...}``). The Anthropic adapter
+    handlers return dicts (``{\"ok\": True, ...}``). The Anthropic adapter
     stringifies dict content, but strict OpenAI-compatible providers (DeepSeek)
     reject it with HTTP 400 "content should be a string or a list". JSON-encode
     here so the wire content is always a string, for every provider.
@@ -77,7 +133,7 @@ def _unpack_args(args: tuple, kwargs: dict) -> dict:
     return {**fn_args, **kwargs}
 
 
-def _get_session_context() -> Optional[dict[str, Any]]:
+def _get_session_context() -> dict[str, Any] | None:
     """Return the current session's workspace context for guardrail G10.
 
     Uses the agent_session_id stored on the thread-local by set_agent_context()
@@ -99,7 +155,7 @@ def _get_session_context() -> Optional[dict[str, Any]]:
             if workspace_id:
                 return {"workspace_id": workspace_id, "feature_id": feature_id}
     except Exception:
-        pass
+        logger.debug("session context lookup failed", exc_info=True)
     return None
 
 
@@ -177,6 +233,10 @@ def _json_result_handler(handler: Any, is_async: bool, tool_name: str = "") -> A
         @functools.wraps(handler)
         async def _async_wrapper(*args: Any, **kwargs: Any) -> str:
             result = await handler(**_unpack_args(args, kwargs))
+            if isinstance(result, dict) and result.get("__deferred__"):
+                # Deferred-execution marker — skip guardrail sanitization
+                # so the IDE extension receives params unmodified.
+                return _as_tool_content(result)
             result = _guardrails.sanitize_result(tool_name, result)
             return _as_tool_content(result)
 
@@ -185,6 +245,10 @@ def _json_result_handler(handler: Any, is_async: bool, tool_name: str = "") -> A
     @functools.wraps(handler)
     def _sync_wrapper(*args: Any, **kwargs: Any) -> str:
         result = handler(**_unpack_args(args, kwargs))
+        if isinstance(result, dict) and result.get("__deferred__"):
+            # Deferred-execution marker — skip guardrail sanitization
+            # so the IDE extension receives params unmodified.
+            return _as_tool_content(result)
         result = _guardrails.sanitize_result(tool_name, result)
         return _as_tool_content(result)
 
@@ -398,9 +462,56 @@ _TOOLS = (
 )
 
 
-def register(ctx: Any) -> None:
-    """Entry point called by PluginManager.discover_and_load."""
-    for t in _TOOLS:
+# ---------------------------------------------------------------------------
+# Tool registration entry point
+# ---------------------------------------------------------------------------
+
+
+def register(
+    ctx: Any,
+    tools: tuple[dict[str, Any], ...] | None = None,
+    toolset: str = "workflow",
+) -> None:
+    """Register a set of tools on the agent context.
+
+    Each tool dict must have: ``name``, ``schema``, ``handler``.
+    Optional keys: ``short_description``, ``check_fn``, ``is_async``.
+
+    Args:
+        ctx: Agent PluginContext with a ``register_tool`` method.
+        tools: Tuple of tool dicts to register. If ``None``, falls back to
+               the module-level ``_TOOLS`` (for backward compatibility).
+        toolset: Toolset label passed to ``ctx.register_tool``. Each profile
+                 must pass its own value (e.g. ``"coding"``) — the vendored
+                 ``ToolRegistry`` is a single flat, name-keyed dict shared by
+                 every profile in the process, and its shadow-protection
+                 guard only rejects a re-registration when the toolset
+                 differs from what's already there. Leaving this hardcoded
+                 let two profiles' same-named-but-different tools silently
+                 overwrite each other with no warning when both were
+                 registered in one process.
+    """
+    global _TOOLS
+
+    if tools is not None:
+        _tools = tools
+        _TOOLS = tools
+    else:
+        _tools = _TOOLS
+        # If _TOOLS is empty and no explicit tools were passed, try
+        # loading the default workflow tools. This preserves backward
+        # compatibility for callers that do plugins.register(ctx) with
+        # no tools argument after the T2 profile split.
+        if not _tools:
+            try:
+                from src.tool_setup import _WORKFLOW_TOOLS
+
+                _tools = _WORKFLOW_TOOLS
+                _TOOLS = _WORKFLOW_TOOLS
+            except ImportError:
+                pass
+
+    for t in _tools:
         is_async = t.get("is_async", False)
         # Apply JSON-result wrapping first, then the pre-dispatch guardrail gate.
         # Order: AIAgent → _guardrail_wrapper → _json_result_handler → handler
@@ -408,13 +519,16 @@ def register(ctx: Any) -> None:
         guarded_handler = _guardrail_wrapper(json_handler, t["name"], is_async)
         ctx.register_tool(
             name=t["name"],
-            toolset="workflow",
+            # A tool dict may pin its own toolset (e.g. "shared" for a
+            # handler both profiles register) to override the call-level
+            # default — see the "shared" entries in _WORKFLOW_TOOLS /
+            # _CODING_TOOLS.
+            toolset=t.get("toolset", toolset),
             schema=t["schema"],
             handler=guarded_handler,
             check_fn=t.get("check_fn"),
             is_async=is_async,
         )
-        logger.debug("workflow plugin: registered tool %s", t["name"])
+        logger.debug("plugins: registered tool %s", t["name"])
 
-    ctx.register_hook("pre_llm_call", inject_context)
-    logger.info("workflow plugin: registered %d tools + pre_llm_call hook", len(_TOOLS))
+    logger.info("plugins: registered %d tools", len(_tools))

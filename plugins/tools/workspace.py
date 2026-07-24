@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from plugins.clients.storage_service_client import (
     StorageServiceError,
@@ -17,7 +17,7 @@ from src.services.workflow_backend_client import get_workspace_context, run_asyn
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Read a workspace's context — its repos, roles, environments and workflow "
         "settings from workflow-backend, plus its workspace-root documents from "
@@ -45,8 +45,8 @@ _SUMMARY_FILENAMES = ("CLAUDE.md", "README.md", "overview.md", "summary.md")
 
 
 def _find_summary_document(
-    documents: List[Dict[str, Any]], wid: str, user_id: str, org_id: str
-) -> Tuple[Optional[str], str]:
+    documents: list[dict[str, Any]], wid: str, user_id: str, org_id: str
+) -> tuple[str | None, str]:
     """Return (path, content) for the first workspace-root doc matching a
     known summary filename, or (None, "") if none exist/are readable."""
     root_docs = {
@@ -68,7 +68,7 @@ def _find_summary_document(
     return None, ""
 
 
-async def _rag_overview_snippets(wid: str, org_id: str) -> List[Dict[str, Any]]:
+async def _rag_overview_snippets(wid: str, org_id: str) -> list[dict[str, Any]]:
     """Best-effort RAG search used only when no static summary doc exists."""
     url = os.environ.get("RAG_MCP_URL", "").strip()
     if not url or not org_id:
@@ -94,7 +94,7 @@ async def _rag_overview_snippets(wid: str, org_id: str) -> List[Dict[str, Any]]:
         return []
 
 
-def handle(workspace_id: str = "", **_: Any) -> Dict[str, Any]:
+def handle(workspace_id: str = "", **_: Any) -> dict[str, Any]:
     from ..context import get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()

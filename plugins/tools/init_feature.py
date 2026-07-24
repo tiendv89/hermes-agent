@@ -6,11 +6,11 @@ The tool always sends owner="go"; the agent/user cannot override it.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Create a new feature in the current workspace. "
         'The feature will be go-owned (owner: "go") — this is the only supported '
@@ -46,13 +46,14 @@ def handle(
     description: str = "",
     start_stage: str = "",
     **_: Any,
-) -> Dict[str, Any]:
-    from ..context import get_org_id, get_user_id, get_workspace_id
+) -> dict[str, Any]:
     from src.services.workflow_backend_client import (
         WorkflowBackendError,
         create_feature,
         run_async,
     )
+
+    from ..context import get_org_id, get_user_id, get_workspace_id
 
     if not name or not name.strip():
         return {"ok": False, "error": "name is required."}

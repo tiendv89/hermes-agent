@@ -7,11 +7,19 @@ import logging
 import pathlib
 import time
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
+
+from src.services.author_resolver import author_for
+from src.services.notification_client import (
+    build_channel_message_payload,
+    build_dm_payload,
+    build_mention_payload,
+    schedule_notifications_bulk,
+)
 
 from .models import (
     Message,
@@ -21,13 +29,6 @@ from .models import (
     Session,
     SessionMember,
     SessionRead,
-)
-from src.services.author_resolver import author_for
-from src.services.notification_client import (
-    build_channel_message_payload,
-    build_dm_payload,
-    build_mention_payload,
-    schedule_notifications_bulk,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,12 +87,13 @@ async def create_session(
     user_id: str = "",
     workspace_id: str = "",
     feature_id: str = "",
-    metadata: Optional[Dict[str, Any]] = None,
+    metadata: dict[str, Any] | None = None,
+    source: str = "hermes-agent",
 ) -> str:
     now = time.time()
     session = Session(
         id=_new_session_id(),
-        source="hermes-agent",
+        source=source,
         user_id=user_id,
         workspace_id=workspace_id,
         feature_id=feature_id,
@@ -104,7 +106,7 @@ async def create_session(
     return session.id
 
 
-async def get_session(db: AsyncSession, session_id: str) -> Optional[Session]:
+async def get_session(db: AsyncSession, session_id: str) -> Session | None:
     result = await db.execute(select(Session).where(Session.id == session_id))
     return result.scalar_one_or_none()
 
@@ -112,11 +114,11 @@ async def get_session(db: AsyncSession, session_id: str) -> Optional[Session]:
 async def touch_session(
     db: AsyncSession,
     session_id: str,
-    user_id: Optional[str] = None,
-    workspace_id: Optional[str] = None,
-    feature_id: Optional[str] = None,
+    user_id: str | None = None,
+    workspace_id: str | None = None,
+    feature_id: str | None = None,
 ) -> None:
-    values: Dict[str, Any] = {"last_active_at": time.time()}
+    values: dict[str, Any] = {"last_active_at": time.time()}
     if user_id:
         values["user_id"] = user_id
     if workspace_id:
@@ -136,17 +138,17 @@ async def update_token_counts(
     cache_write_tokens: int = 0,
     reasoning_tokens: int = 0,
     api_call_count: int = 0,
-    estimated_cost_usd: Optional[float] = None,
-    actual_cost_usd: Optional[float] = None,
-    cost_status: Optional[str] = None,
-    cost_source: Optional[str] = None,
-    pricing_version: Optional[str] = None,
-    billing_provider: Optional[str] = None,
-    billing_base_url: Optional[str] = None,
-    billing_mode: Optional[str] = None,
-    model: Optional[str] = None,
+    estimated_cost_usd: float | None = None,
+    actual_cost_usd: float | None = None,
+    cost_status: str | None = None,
+    cost_source: str | None = None,
+    pricing_version: str | None = None,
+    billing_provider: str | None = None,
+    billing_base_url: str | None = None,
+    billing_mode: str | None = None,
+    model: str | None = None,
 ) -> None:
-    values: Dict[str, Any] = {
+    values: dict[str, Any] = {
         "input_tokens": Session.input_tokens + input_tokens,
         "output_tokens": Session.output_tokens + output_tokens,
         "cache_read_tokens": Session.cache_read_tokens + cache_read_tokens,
@@ -186,7 +188,7 @@ async def update_token_counts(
 async def end_session(db: AsyncSession, session_id: str, end_reason: str) -> None:
     await db.execute(
         update(Session)
-        .where(Session.id == session_id, Session.ended_at == None)  # noqa: E711
+        .where(Session.id == session_id, Session.ended_at == None)
         .values(ended_at=time.time(), end_reason=end_reason)
     )
     await db.commit()
@@ -200,10 +202,10 @@ async def update_session_cwd(db: AsyncSession, session_id: str, cwd: str) -> Non
 async def update_session_meta(
     db: AsyncSession,
     session_id: str,
-    model_config: Optional[str],
-    model: Optional[str] = None,
+    model_config: str | None,
+    model: str | None = None,
 ) -> None:
-    values: Dict[str, Any] = {"model_config": model_config}
+    values: dict[str, Any] = {"model_config": model_config}
     if model is not None:
         values["model"] = model
     await db.execute(update(Session).where(Session.id == session_id).values(**values))
@@ -271,7 +273,7 @@ async def delete_sessions_for_feature(
     db: AsyncSession,
     workspace_id: str,
     feature_id: str,
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
 ) -> int:
     """Hard-delete all of a user's non-channel sessions for a workspace+feature.
 
@@ -315,8 +317,8 @@ async def _emit_message_notifications(
     message_id: int,
     author_id: str,
     content: str = "",
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
 ) -> None:
     """Look up the session kind and emit channel_message or dm notifications.
 
@@ -415,24 +417,24 @@ async def append_message(
     db: AsyncSession,
     session_id: str,
     role: str,
-    content: Optional[str] = None,
-    tool_name: Optional[str] = None,
-    tool_calls: Optional[str] = None,
-    tool_call_id: Optional[str] = None,
-    finish_reason: Optional[str] = None,
-    reasoning: Optional[str] = None,
-    reasoning_content: Optional[str] = None,
-    reasoning_details: Optional[str] = None,
-    codex_reasoning_items: Optional[str] = None,
-    codex_message_items: Optional[str] = None,
-    token_count: Optional[int] = None,
-    platform_message_id: Optional[str] = None,
+    content: str | None = None,
+    tool_name: str | None = None,
+    tool_calls: str | None = None,
+    tool_call_id: str | None = None,
+    finish_reason: str | None = None,
+    reasoning: str | None = None,
+    reasoning_content: str | None = None,
+    reasoning_details: str | None = None,
+    codex_reasoning_items: str | None = None,
+    codex_message_items: str | None = None,
+    token_count: int | None = None,
+    platform_message_id: str | None = None,
     observed: bool = False,
-    author_id: Optional[str] = None,
-    reply_to_message_id: Optional[int] = None,
-    thread_root_id: Optional[int] = None,
-    image_ids: Optional[List[str]] = None,
-    forwarded_from_message_id: Optional[int] = None,
+    author_id: str | None = None,
+    reply_to_message_id: int | None = None,
+    thread_root_id: int | None = None,
+    image_ids: list[str] | None = None,
+    forwarded_from_message_id: int | None = None,
 ) -> int:
     msg = Message(
         session_id=session_id,
@@ -467,7 +469,7 @@ async def append_message(
     db.add(msg)
 
     # Keep session counters in sync.
-    counts: Dict[str, Any] = {"message_count": Session.message_count + 1}
+    counts: dict[str, Any] = {"message_count": Session.message_count + 1}
     if role == "tool" or (role == "assistant" and tool_calls):
         counts["tool_call_count"] = Session.tool_call_count + 1
     await db.execute(update(Session).where(Session.id == session_id).values(**counts))
@@ -501,7 +503,7 @@ async def append_message(
 async def get_message(
     db: AsyncSession,
     message_id: int,
-) -> Optional[Message]:
+) -> Message | None:
     """Return a single Message row by primary key, or None if not found."""
     result = await db.execute(select(Message).where(Message.id == message_id))
     return result.scalar_one_or_none()
@@ -535,11 +537,11 @@ async def soft_delete_message(
 async def get_messages_as_conversation(
     db: AsyncSession,
     session_id: str,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return active messages in OpenAI conversation format, ordered by created_at."""
     result = await db.execute(
         select(Message)
-        .where(Message.session_id == session_id, Message.active == True)  # noqa: E712
+        .where(Message.session_id == session_id, Message.active == True)
         .order_by(Message.created_at)
     )
     messages = []
@@ -549,7 +551,7 @@ async def get_messages_as_conversation(
         # OpenAI-compatible providers (e.g. DeepSeek: "content should be a
         # string or a list"). Anthropic tolerates null, so this was previously
         # latent. Empty string is valid for every provider.
-        entry: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
+        entry: dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
         if msg.tool_call_id:
             entry["tool_call_id"] = msg.tool_call_id
         if msg.tool_name:
@@ -576,7 +578,7 @@ async def get_thread_messages_as_conversation(
     db: AsyncSession,
     session_id: str,
     thread_root_id: int,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return thread messages in OpenAI conversation format for agent context.
 
     Always prepends the root message so the agent knows what thread it is in,
@@ -585,8 +587,8 @@ async def get_thread_messages_as_conversation(
     the initial context to respond to.
     """
 
-    def _to_entry(msg: Message) -> Dict[str, Any]:
-        entry: Dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
+    def _to_entry(msg: Message) -> dict[str, Any]:
+        entry: dict[str, Any] = {"role": msg.role, "content": msg.content or ""}
         if msg.tool_call_id:
             entry["tool_call_id"] = msg.tool_call_id
         if msg.tool_name:
@@ -602,7 +604,7 @@ async def get_thread_messages_as_conversation(
             entry["reasoning"] = msg.reasoning
         return entry
 
-    messages: list[Dict[str, Any]] = []
+    messages: list[dict[str, Any]] = []
 
     root_msg = await get_message(db, thread_root_id)
     if root_msg is not None and root_msg.active:
@@ -613,7 +615,7 @@ async def get_thread_messages_as_conversation(
         .where(
             Message.session_id == session_id,
             Message.thread_root_id == thread_root_id,
-            Message.active == True,  # noqa: E712
+            Message.active == True,
         )
         .order_by(Message.created_at)
     )
@@ -627,7 +629,7 @@ async def get_session_messages(
     db: AsyncSession,
     session_id: str,
     user_id: str = "",
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return messages for a session in UI-friendly form, oldest-first.
 
     Unlike :func:`get_messages_as_conversation` (which builds OpenAI request
@@ -646,7 +648,7 @@ async def get_session_messages(
         select(Message)
         .where(
             Message.session_id == session_id,
-            Message.thread_root_id == None,  # noqa: E711
+            Message.thread_root_id == None,
         )
         .order_by(Message.created_at, Message.id)
     )
@@ -659,7 +661,7 @@ async def get_session_messages(
     messages = []
     for msg in raw_msgs:
         if not msg.active:
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "id": str(msg.id),
                 "role": msg.role,
                 "content": "This message was deleted",
@@ -705,7 +707,7 @@ async def get_messages_since(
     db: AsyncSession,
     session_id: str,
     since_message_id: int,
-) -> list[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return messages with id > since_message_id, oldest-first.
 
     Used by the SSE stream endpoint's ``?since=`` replay to catch up a
@@ -735,7 +737,7 @@ async def get_messages_since(
     messages = []
     for msg in result.scalars().all():
         if not msg.active:
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "id": str(msg.id),
                 "session_id": session_id,
                 "role": msg.role,
@@ -784,8 +786,8 @@ async def get_thread_replies(
     db: AsyncSession,
     session_id: str,
     root_message_id: int,
-    since: Optional[int] = None,
-) -> list[Dict[str, Any]]:
+    since: int | None = None,
+) -> list[dict[str, Any]]:
     """Return replies belonging to the message thread rooted at root_message_id.
 
     Results are ordered oldest-first. When *since* is provided (a message id),
@@ -807,7 +809,7 @@ async def get_thread_replies(
     messages = []
     for msg in result.scalars().all():
         if not msg.active:
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "id": str(msg.id),
                 "session_id": session_id,
                 "role": msg.role,
@@ -851,8 +853,8 @@ async def get_thread_replies(
 async def get_thread_reply_summaries(
     db: AsyncSession,
     session_id: str,
-    root_message_ids: List[int],
-) -> Dict[int, Dict[str, Any]]:
+    root_message_ids: list[int],
+) -> dict[int, dict[str, Any]]:
     """Return reply count and recent repliers for each root message id.
 
     Executes a single grouped query (no N+1). Returns a dict keyed by
@@ -870,11 +872,11 @@ async def get_thread_reply_summaries(
         .where(
             Message.session_id == session_id,
             Message.thread_root_id.in_(root_message_ids),
-            Message.active == True,  # noqa: E712
+            Message.active == True,
         )
         .group_by(Message.thread_root_id)
     )
-    counts: Dict[int, int] = {
+    counts: dict[int, int] = {
         row.thread_root_id: row.reply_count for row in result.all()
     }
 
@@ -887,19 +889,19 @@ async def get_thread_reply_summaries(
         .where(
             Message.session_id == session_id,
             Message.thread_root_id.in_(root_message_ids),
-            Message.active == True,  # noqa: E712
-            Message.author_id != None,  # noqa: E711
+            Message.active == True,
+            Message.author_id != None,
         )
         .order_by(Message.thread_root_id, Message.id.desc())
     )
 
-    recent_repliers: Dict[int, list] = {}
+    recent_repliers: dict[int, list] = {}
     for thread_root_id, author_id in replier_result.all():
         seen = recent_repliers.setdefault(thread_root_id, [])
         if author_id not in seen and len(seen) < 3:
             seen.append(author_id)
 
-    summaries: Dict[int, Dict[str, Any]] = {}
+    summaries: dict[int, dict[str, Any]] = {}
     for root_id in root_message_ids:
         if root_id in counts:
             summaries[root_id] = {
@@ -921,7 +923,7 @@ async def _last_assistant_excerpt(db: AsyncSession, session_id: str) -> str:
         .where(
             Message.session_id == session_id,
             Message.role == "assistant",
-            Message.active == True,  # noqa: E712
+            Message.active == True,
             Message.content.isnot(None),
         )
         .order_by(Message.created_at.desc())
@@ -937,9 +939,10 @@ async def list_sessions(
     db: AsyncSession,
     workspace_id: str,
     feature_id: str,
-    user_id: Optional[str] = None,
+    user_id: str | None = None,
     limit: int = 50,
-) -> list[Dict[str, Any]]:
+    source: str | None = None,
+) -> list[dict[str, Any]]:
     """Return non-archived agent-chat sessions for a workspace+feature, newest-first.
 
     Excludes channels (kind='channel'), which are feature-scoped sessions surfaced
@@ -949,14 +952,30 @@ async def list_sessions(
     non-archived session for the workspace+feature is returned regardless of
     who created it, matching can_view_session's org-public policy for
     kind='thread' sessions. ``user_id`` is accepted for interface stability but
-    no longer filters the result.
+    otherwise no longer filters the result — EXCEPT for ``source="coding-ide"``
+    sessions (below), which stay creator-only.
+
+    ``source`` is optional and, when given, scopes the list to one session
+    source (e.g. the IDE's own chats, tagged ``"coding-ide"`` at creation —
+    see ``create_session``) so a client whose sessions all share one source
+    doesn't see every other client's sessions mixed in.
+
+    An IDE session is one developer's local coding session, never a shared
+    team thread — unlike ordinary web sessions, the org-public policy above
+    does NOT apply to ``source="coding-ide"``: it stays scoped to its creator
+    (``user_id``) so other workspace members never see each other's IDE chats
+    (which can reference local file paths/code not meant for the whole team).
     """
     conditions = [
         Session.workspace_id == workspace_id,
         Session.feature_id == feature_id,
         Session.kind != "channel",
-        Session.archived == False,  # noqa: E712
+        Session.archived == False,
     ]
+    if source:
+        conditions.append(Session.source == source)
+    if source == "coding-ide" and user_id:
+        conditions.append(Session.user_id == user_id)
 
     result = await db.execute(
         select(
@@ -990,7 +1009,7 @@ async def list_sessions(
 async def get_latest_assistant_message_id(
     db: AsyncSession,
     session_id: str,
-) -> Optional[int]:
+) -> int | None:
     """Return the id of the most recently created assistant message for session_id."""
     result = await db.execute(
         select(Message.id)
@@ -1024,9 +1043,9 @@ async def update_message_cta_suggestions(
 
 async def get_reactions_for_messages(
     db: AsyncSession,
-    message_ids: List[int],
+    message_ids: list[int],
     user_id: str = "",
-) -> Dict[int, List[Dict[str, Any]]]:
+) -> dict[int, list[dict[str, Any]]]:
     """Return aggregated reactions for a set of messages in one query (no N+1).
 
     Returns a dict keyed by message_id. Each value is a list of
@@ -1051,7 +1070,7 @@ async def get_reactions_for_messages(
         .order_by(MessageReaction.message_id, func.min(MessageReaction.created_at))
     )
 
-    reactions_by_msg: Dict[int, List[Dict[str, Any]]] = {}
+    reactions_by_msg: dict[int, list[dict[str, Any]]] = {}
     for row in result.all():
         mid = int(row.message_id)
         reactions_by_msg.setdefault(mid, []).append(
@@ -1070,7 +1089,7 @@ async def toggle_message_reaction(
     message_id: int,
     user_id: str,
     emoji: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Toggle a per-user emoji reaction on a message.
 
     Inserts a new ``MessageReaction`` row if one doesn't exist for
@@ -1123,7 +1142,7 @@ async def add_member(
     session_id: str,
     user_id: str,
     added_by: str,
-    role_label: Optional[str] = None,
+    role_label: str | None = None,
 ) -> None:
     """Add user_id to session_id's member set (idempotent — upsert on conflict)."""
     stmt = (
@@ -1159,7 +1178,7 @@ async def remove_member(
 async def list_members(
     db: AsyncSession,
     session_id: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return all human members of a session, ordered by added_at."""
     result = await db.execute(
         select(SessionMember)
@@ -1228,8 +1247,8 @@ async def list_member_sessions(
     user_id: str,
     limit: int = 50,
     *,
-    accessible_workspace_ids: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
+    accessible_workspace_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Return non-archived threads the caller owns, is a member of, or can see
     as an org member (feature sessions only).
 
@@ -1266,7 +1285,7 @@ async def list_member_sessions(
             Session.kind,
         )
         .where(
-            Session.archived == False,  # noqa: E712
+            Session.archived == False,
             Session.kind == "thread",
             or_(
                 # Branch 1: sessions the caller owns (scoped to current workspace).
@@ -1314,9 +1333,9 @@ async def persist_mentions(
     db: AsyncSession,
     message_id: int,
     session_id: str,
-    mentions: List[Dict[str, str]],
+    mentions: list[dict[str, str]],
     content: str = "",
-    author_id: Optional[str] = None,
+    author_id: str | None = None,
 ) -> None:
     """Persist resolved mentions for a message.
 
@@ -1368,7 +1387,7 @@ async def persist_mentions(
 async def resolve_mentions(
     db: AsyncSession,
     message_id: int,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return all resolved mentions for a message."""
     result = await db.execute(
         select(MessageMention).where(MessageMention.message_id == message_id)
@@ -1397,7 +1416,7 @@ async def get_unread_mention_count(
             MessageMention.session_id == session_id,
             MessageMention.mentioned_id == user_id,
             MessageMention.mentioned_kind == "user",
-            MessageMention.read_at == None,  # noqa: E711
+            MessageMention.read_at == None,
         )
     )
     return result.scalar_one() or 0
@@ -1416,7 +1435,7 @@ async def mark_mentions_read(
             MessageMention.session_id == session_id,
             MessageMention.mentioned_id == user_id,
             MessageMention.mentioned_kind == "user",
-            MessageMention.read_at == None,  # noqa: E711
+            MessageMention.read_at == None,
         )
         .values(read_at=now)
     )
@@ -1427,7 +1446,7 @@ async def get_unread_mentions_by_session(
     db: AsyncSession,
     workspace_id: str,
     user_id: str,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Return unread mention counts for user_id keyed by session id, scoped to a
     workspace. Used by GET /unread to render per-channel/thread badges."""
     result = await db.execute(
@@ -1437,7 +1456,7 @@ async def get_unread_mentions_by_session(
             Session.workspace_id == workspace_id,
             MessageMention.mentioned_id == user_id,
             MessageMention.mentioned_kind == "user",
-            MessageMention.read_at == None,  # noqa: E711
+            MessageMention.read_at == None,
         )
         .group_by(MessageMention.session_id)
     )
@@ -1478,7 +1497,7 @@ async def get_unread_message_counts_by_session(
     db: AsyncSession,
     workspace_id: str,
     user_id: str,
-) -> Dict[str, int]:
+) -> dict[str, int]:
     """Return unread message counts keyed by session id, for every channel/DM/
     thread user_id participates in. Unlike mention counts, this reflects ANY
     new message since the user's last-read cursor, not just @mentions."""
@@ -1490,7 +1509,7 @@ async def get_unread_message_counts_by_session(
         )
         .where(
             Session.workspace_id == workspace_id,
-            Session.archived == False,  # noqa: E712
+            Session.archived == False,
             Session.kind.in_(("channel", "dm", "thread")),
             or_(
                 Session.user_id == user_id,
@@ -1502,7 +1521,7 @@ async def get_unread_message_counts_by_session(
             ),
         )
     )
-    counts: Dict[str, int] = {}
+    counts: dict[str, int] = {}
     for session_id, message_count, last_read in result.all():
         unread = (message_count or 0) - (last_read or 0)
         if unread > 0:
@@ -1521,7 +1540,7 @@ async def create_channel(
     name: str,
     creator_user_id: str,
     feature_id: str = "",
-    description: Optional[str] = None,
+    description: str | None = None,
 ) -> str:
     """Create a new public channel (kind='channel' session) scoped to a feature.
 
@@ -1530,7 +1549,7 @@ async def create_channel(
     (workspace, feature) pair.
     """
     now = time.time()
-    metadata: Dict[str, Any] = {}
+    metadata: dict[str, Any] = {}
     if description:
         metadata["description"] = description
 
@@ -1564,9 +1583,9 @@ async def create_channel(
 async def list_channels(
     db: AsyncSession,
     workspace_id: str,
-    feature_id: Optional[str] = None,
+    feature_id: str | None = None,
     limit: int = 100,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return non-archived channels for a workspace, newest-first.
 
     When ``feature_id`` is provided, only channels for that feature are
@@ -1575,7 +1594,7 @@ async def list_channels(
     conditions = [
         Session.workspace_id == workspace_id,
         Session.kind == "channel",
-        Session.archived == False,  # noqa: E712
+        Session.archived == False,
     ]
     if feature_id is not None:
         conditions.append(Session.feature_id == feature_id)
@@ -1611,13 +1630,13 @@ async def list_channels(
 async def get_channel(
     db: AsyncSession,
     channel_id: str,
-) -> Optional[Session]:
+) -> Session | None:
     """Return the Session row for channel_id if it is a non-archived channel."""
     result = await db.execute(
         select(Session).where(
             Session.id == channel_id,
             Session.kind == "channel",
-            Session.archived == False,  # noqa: E712
+            Session.archived == False,
         )
     )
     return result.scalar_one_or_none()
@@ -1648,8 +1667,8 @@ async def create_workspace_thread(
     db: AsyncSession,
     workspace_id: str,
     creator_user_id: str,
-    title: Optional[str] = None,
-    members: Optional[List[str]] = None,
+    title: str | None = None,
+    members: list[str] | None = None,
 ) -> str:
     """Create a workspace-level team thread (kind='thread', feature_id='').
 
@@ -1705,7 +1724,7 @@ async def list_workspace_threads(
     workspace_id: str,
     user_id: str,
     limit: int = 50,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return workspace-level threads for the workspace, newest-first.
 
     Workspace threads are kind='thread' rows with feature_id=''. They are
@@ -1714,6 +1733,15 @@ async def list_workspace_threads(
     can_view_session's org-public policy for kind='thread' sessions.
     ``user_id`` is accepted for interface stability but no longer filters the
     result.
+
+    Also scoped to source='hermes-agent' (create_workspace_thread's own
+    hardcoded value) — without this, an IDE coding session (source=
+    'coding-ide') incidentally satisfies the same kind='thread'/feature_id=''
+    shape (the VS Code extension's POST /session never sets a feature_id, and
+    every session defaults to kind='thread'), so it would otherwise show up
+    in the browser's workspace-threads sidebar as an empty, unopenable
+    "thread" — it's a real session, just not one the web UI's message-loading
+    path understands.
     """
     result = await db.execute(
         select(
@@ -1727,9 +1755,10 @@ async def list_workspace_threads(
         )
         .where(
             Session.workspace_id == workspace_id,
-            Session.archived == False,  # noqa: E712
+            Session.archived == False,
             Session.kind == "thread",
             Session.feature_id == "",
+            Session.source == "hermes-agent",
         )
         .order_by(Session.last_active_at.desc())
         .limit(limit)
@@ -1772,7 +1801,7 @@ async def create_dm(
         .where(
             Session.workspace_id == workspace_id,
             Session.kind == "dm",
-            Session.archived == False,  # noqa: E712
+            Session.archived == False,
             Session.id.in_(
                 select(SessionMember.session_id).where(
                     SessionMember.user_id == member_a
@@ -1823,7 +1852,7 @@ async def list_dms(
     workspace_id: str,
     user_id: str,
     limit: int = 50,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return non-archived DM sessions the user is a member of, newest-first.
 
     Each entry includes ``other_member_id`` (the DM peer's user id, resolved
@@ -1842,7 +1871,7 @@ async def list_dms(
         )
         .where(
             Session.workspace_id == workspace_id,
-            Session.archived == False,  # noqa: E712
+            Session.archived == False,
             Session.kind == "dm",
             Session.id.in_(
                 select(SessionMember.session_id).where(SessionMember.user_id == user_id)
@@ -1854,7 +1883,7 @@ async def list_dms(
     rows = result.all()
     session_ids = [row.id for row in rows]
 
-    other_member_by_session: Dict[str, str] = {}
+    other_member_by_session: dict[str, str] = {}
     if session_ids:
         member_result = await db.execute(
             select(SessionMember.session_id, SessionMember.user_id).where(
@@ -1885,23 +1914,23 @@ async def list_dms(
 # ---------------------------------------------------------------------------
 
 
-async def list_catalog_models(db: AsyncSession) -> List[Dict[str, Any]]:
+async def list_catalog_models(db: AsyncSession) -> list[dict[str, Any]]:
     """Return all model_catalog rows ordered by display_name."""
     result = await db.execute(select(ModelCatalog).order_by(ModelCatalog.display_name))
     return [_catalog_row(m) for m in result.scalars().all()]
 
 
-async def list_active_catalog_models(db: AsyncSession) -> List[Dict[str, Any]]:
+async def list_active_catalog_models(db: AsyncSession) -> list[dict[str, Any]]:
     """Return only active model_catalog rows ordered by display_name."""
     result = await db.execute(
         select(ModelCatalog)
-        .where(ModelCatalog.is_active == True)  # noqa: E712
+        .where(ModelCatalog.is_active == True)
         .order_by(ModelCatalog.display_name)
     )
     return [_catalog_row(m) for m in result.scalars().all()]
 
 
-async def get_catalog_model(db: AsyncSession, model_id: str) -> Optional[ModelCatalog]:
+async def get_catalog_model(db: AsyncSession, model_id: str) -> ModelCatalog | None:
     """Return a single ModelCatalog row or None."""
     result = await db.execute(
         select(ModelCatalog).where(ModelCatalog.model_id == model_id)
@@ -1909,12 +1938,12 @@ async def get_catalog_model(db: AsyncSession, model_id: str) -> Optional[ModelCa
     return result.scalar_one_or_none()
 
 
-async def get_default_catalog_model(db: AsyncSession) -> Optional[ModelCatalog]:
+async def get_default_catalog_model(db: AsyncSession) -> ModelCatalog | None:
     """Return the row with is_default=True (at most one, enforced by the unique index)."""
     result = await db.execute(
         select(ModelCatalog).where(
-            ModelCatalog.is_default == True,  # noqa: E712
-            ModelCatalog.is_active == True,  # noqa: E712
+            ModelCatalog.is_default == True,
+            ModelCatalog.is_active == True,
         )
     )
     return result.scalar_one_or_none()
@@ -1946,10 +1975,10 @@ async def update_catalog_model(
     db: AsyncSession,
     model_id: str,
     *,
-    display_name: Optional[str] = None,
-    is_active: Optional[bool] = None,
-    is_default: Optional[bool] = None,
-) -> Optional[ModelCatalog]:
+    display_name: str | None = None,
+    is_active: bool | None = None,
+    is_default: bool | None = None,
+) -> ModelCatalog | None:
     """Patch a model_catalog row.
 
     Setting is_default=True clears any previous default in the same transaction
@@ -1974,7 +2003,7 @@ async def update_catalog_model(
     if is_default is True:
         await db.execute(
             update(ModelCatalog)
-            .where(ModelCatalog.is_default == True)  # noqa: E712
+            .where(ModelCatalog.is_default == True)
             .values(is_default=False)
         )
 
@@ -1990,7 +2019,7 @@ async def update_catalog_model(
     return row
 
 
-def _catalog_row(m: ModelCatalog) -> Dict[str, Any]:
+def _catalog_row(m: ModelCatalog) -> dict[str, Any]:
     return {
         "model_id": m.model_id,
         "display_name": m.display_name,

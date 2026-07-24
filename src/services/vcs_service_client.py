@@ -62,7 +62,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import aiohttp
 
@@ -110,7 +110,7 @@ def _resolve_config() -> tuple[str, str]:
     return base_url, token
 
 
-async def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+async def _post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     """Shared HTTP plumbing for the vcs-service endpoints in this module.
 
     Returns the parsed JSON response body on success.
@@ -126,28 +126,27 @@ async def _post(path: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         "Content-Type": "application/json",
     }
 
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            url,
-            headers=headers,
-            json=payload,
-            timeout=aiohttp.ClientTimeout(total=30),
-        ) as resp:
-            try:
-                data = await resp.json(content_type=None)
-            except Exception:
-                data = {"raw": await resp.text()}
+    async with aiohttp.ClientSession() as session, session.post(
+        url,
+        headers=headers,
+        json=payload,
+        timeout=aiohttp.ClientTimeout(total=30),
+    ) as resp:
+        try:
+            data = await resp.json(content_type=None)
+        except Exception:
+            data = {"raw": await resp.text()}
 
-            if 200 <= resp.status < 300:
-                return data
+        if 200 <= resp.status < 300:
+            return data
 
-            error_message = data.get("error") if isinstance(data, dict) else None
-            msg = (
-                f"vcs-service returned HTTP {resp.status} for {url}: "
-                f"{error_message or str(data)[:300]}"
-            )
-            logger.warning(msg)
-            raise VCSServiceError(msg, status=resp.status)
+        error_message = data.get("error") if isinstance(data, dict) else None
+        msg = (
+            f"vcs-service returned HTTP {resp.status} for {url}: "
+            f"{error_message or str(data)[:300]}"
+        )
+        logger.warning(msg)
+        raise VCSServiceError(msg, status=resp.status)
 
 
 async def create_pr(
@@ -159,9 +158,9 @@ async def create_pr(
     *,
     body: str = "",
     draft: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a pull request via POST {VCS_SERVICE_URL}/api/vcs/pr/create."""
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "owner": owner,
         "repo": repo,
         "title": title,
@@ -182,7 +181,7 @@ async def ensure_branch(
     repo: str,
     branch: str,
     base_branch: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create `branch` from `base_branch` if it doesn't already exist, via
     POST {VCS_SERVICE_URL}/api/vcs/repo/ensure_branch.
     """
@@ -204,14 +203,14 @@ async def commit_files(
     repo: str,
     branch: str,
     message: str,
-    files: Dict[str, str],
+    files: dict[str, str],
     *,
     base_branch: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Commit `files` (path -> content) directly to `branch` via GitHub's
     Contents API, via POST {VCS_SERVICE_URL}/api/vcs/repo/commit_files.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "owner": owner,
         "repo": repo,
         "branch": branch,
@@ -237,12 +236,12 @@ async def get_pr_diff(owner: str, repo: str, number: int) -> str:
     return data.get("diff", "")
 
 
-async def get_pr_files(owner: str, repo: str, number: int) -> Dict[str, Any]:
+async def get_pr_files(owner: str, repo: str, number: int) -> dict[str, Any]:
     """Return the changed-file list via POST {VCS_SERVICE_URL}/api/vcs/pr/files."""
     return await _post("/api/vcs/pr/files", {"owner": owner, "repo": repo, "number": number})
 
 
-async def get_file_at_ref(owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:
+async def get_file_at_ref(owner: str, repo: str, path: str, ref: str) -> dict[str, Any]:
     """Return a file's content at a ref via POST {VCS_SERVICE_URL}/api/vcs/repo/file_content.
 
     vcs-service decodes GitHub's base64 content server-side, so the returned
@@ -253,31 +252,31 @@ async def get_file_at_ref(owner: str, repo: str, path: str, ref: str) -> Dict[st
     )
 
 
-async def get_pr_metadata(owner: str, repo: str, number: int) -> Dict[str, Any]:
+async def get_pr_metadata(owner: str, repo: str, number: int) -> dict[str, Any]:
     """Return PR metadata via POST {VCS_SERVICE_URL}/api/vcs/pr/metadata."""
     return await _post("/api/vcs/pr/metadata", {"owner": owner, "repo": repo, "number": number})
 
 
-async def get_pr_comments(owner: str, repo: str, number: int) -> Dict[str, Any]:
+async def get_pr_comments(owner: str, repo: str, number: int) -> dict[str, Any]:
     """Return issue-level and review-level comments via POST /api/vcs/pr/comments."""
     return await _post("/api/vcs/pr/comments", {"owner": owner, "repo": repo, "number": number})
 
 
-async def get_pr_reviews(owner: str, repo: str, number: int) -> Dict[str, Any]:
+async def get_pr_reviews(owner: str, repo: str, number: int) -> dict[str, Any]:
     """Return PR review history via POST {VCS_SERVICE_URL}/api/vcs/pr/review_history."""
     return await _post(
         "/api/vcs/pr/review_history", {"owner": owner, "repo": repo, "number": number}
     )
 
 
-async def get_pr_commits(owner: str, repo: str, number: int) -> Dict[str, Any]:
+async def get_pr_commits(owner: str, repo: str, number: int) -> dict[str, Any]:
     """Return PR commits via POST {VCS_SERVICE_URL}/api/vcs/pr/commits."""
     return await _post("/api/vcs/pr/commits", {"owner": owner, "repo": repo, "number": number})
 
 
 async def get_check_runs(
     owner: str, repo: str, head_sha: str, *, poll_timeout_seconds: int = 60
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return CI check-run results via POST {VCS_SERVICE_URL}/api/vcs/pr/checks.
 
     vcs-service performs the bounded poll server-side (blocking up to
@@ -302,9 +301,9 @@ async def list_prs(
     head: str = "",
     base: str = "",
     per_page: int = 30,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List PRs for a repo via POST {VCS_SERVICE_URL}/api/vcs/pr/list."""
-    payload: Dict[str, Any] = {"owner": owner, "repo": repo, "state": state, "per_page": per_page}
+    payload: dict[str, Any] = {"owner": owner, "repo": repo, "state": state, "per_page": per_page}
     if head:
         payload["head"] = head
     if base:
@@ -312,7 +311,7 @@ async def list_prs(
     return await _post("/api/vcs/pr/list", payload)
 
 
-async def compare_refs(owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
+async def compare_refs(owner: str, repo: str, base: str, head: str) -> dict[str, Any]:
     """Compare two refs via POST {VCS_SERVICE_URL}/api/vcs/repo/compare."""
     return await _post(
         "/api/vcs/repo/compare", {"owner": owner, "repo": repo, "base": base, "head": head}
@@ -327,8 +326,8 @@ async def review_and_comment(
     event: str,
     *,
     commit_id: str = "",
-    comments: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    comments: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Post the two-call PR review narrative pattern via POST
     {VCS_SERVICE_URL}/api/vcs/pr/review_and_comment.
 
@@ -338,7 +337,7 @@ async def review_and_comment(
     restriction) comes back as a 200 with self_review_skipped=true rather
     than an error.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "owner": owner,
         "repo": repo,
         "number": number,

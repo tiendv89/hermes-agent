@@ -11,7 +11,7 @@ user-service).
 
 from __future__ import annotations
 
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import JSONResponse
@@ -63,13 +63,13 @@ class CreateModelRequest(BaseModel):
 
 
 class PatchModelRequest(BaseModel):
-    display_name: Optional[str] = None
-    is_active: Optional[bool] = None
-    is_default: Optional[bool] = None
+    display_name: str | None = None
+    is_active: bool | None = None
+    is_default: bool | None = None
 
     @field_validator("display_name")
     @classmethod
-    def validate_display_name(cls, v: Optional[str]) -> Optional[str]:
+    def validate_display_name(cls, v: str | None) -> str | None:
         if v is not None:
             v = v.strip()
             if not v:
@@ -77,7 +77,7 @@ class PatchModelRequest(BaseModel):
         return v
 
 
-def _model_row(row: Any) -> Dict[str, Any]:
+def _model_row(row: Any) -> dict[str, Any]:
     if isinstance(row, dict):
         return row
     return {

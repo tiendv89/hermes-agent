@@ -461,19 +461,22 @@ class TestInjectContextLookupHint:
 
 
 class TestToolsRegistration:
+    @staticmethod
+    def _get_tools():
+        """Return the workflow tool list from the profile setup module."""
+        from src.tool_setup import _WORKFLOW_TOOLS
+        return _WORKFLOW_TOOLS
+
     def test_workflow_lookup_feature_in_tools(self):
-        plugins = _load_plugins_init()
-        names = [t["name"] for t in plugins._TOOLS]
+        names = [t["name"] for t in self._get_tools()]
         assert "workflow_lookup_feature" in names
 
     def test_workflow_lookup_feature_has_check_fn(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_lookup_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_lookup_feature")
         assert callable(tool.get("check_fn"))
 
     def test_workflow_lookup_feature_check_fn_returns_false_without_db(self):
-        plugins = _load_plugins_init()
-        tool = next(t for t in plugins._TOOLS if t["name"] == "workflow_lookup_feature")
+        tool = next(t for t in self._get_tools() if t["name"] == "workflow_lookup_feature")
         import plugins.context as ctx
 
         ctx.set_context("sess-reg-1", "ws-1", "")
@@ -490,17 +493,13 @@ class TestToolsRegistration:
         """
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
-        plugins = _load_plugins_init()
-        import plugins.context as ctx
-
-        ctx.set_context("sess-reg-2", "ws-1", "")
 
         lookup_tool = next(
-            t for t in plugins._TOOLS if t["name"] == "workflow_lookup_feature"
+            t for t in self._get_tools() if t["name"] == "workflow_lookup_feature"
         )
         write_tools = [
             t
-            for t in plugins._TOOLS
+            for t in self._get_tools()
             if t["name"]
             in (
                 "write_product_spec",
@@ -521,12 +520,11 @@ class TestToolsRegistration:
     def test_lookup_tool_check_fn_false_when_feature_scoped(self, monkeypatch):
         monkeypatch.setenv("WORKFLOW_BACKEND_URL", "http://backend:8080")
         monkeypatch.setenv("WORKFLOW_BACKEND_SERVICE_TOKEN", "tok")
-        plugins = _load_plugins_init()
         import plugins.context as ctx
 
         ctx.set_context("sess-reg-3", "ws-1", "active-feature")
 
         lookup_tool = next(
-            t for t in plugins._TOOLS if t["name"] == "workflow_lookup_feature"
+            t for t in self._get_tools() if t["name"] == "workflow_lookup_feature"
         )
         assert lookup_tool["check_fn"]() is False

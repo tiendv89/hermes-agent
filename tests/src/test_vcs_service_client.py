@@ -272,9 +272,11 @@ class TestCreatePRErrors:
         fake_session = _FakeSession(
             _FakeResponse(422, {"error": "owner, repo, title, head, and base are required"})
         )
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.VCSServiceError) as exc_info:
-                await mod.create_pr("acme", "widgets", "Title", "feature", "main")
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.VCSServiceError) as exc_info,
+        ):
+            await mod.create_pr("acme", "widgets", "Title", "feature", "main")
 
         assert exc_info.value.status == 422
         assert "required" in str(exc_info.value)
@@ -286,9 +288,11 @@ class TestCreatePRErrors:
         mod = _import_client()
 
         fake_session = _FakeSession(_FakeResponse(500, {"error": "create PR: internal error"}))
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.VCSServiceError) as exc_info:
-                await mod.create_pr("acme", "widgets", "Title", "feature", "main")
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.VCSServiceError) as exc_info,
+        ):
+            await mod.create_pr("acme", "widgets", "Title", "feature", "main")
 
         assert exc_info.value.status == 500
 
@@ -349,9 +353,11 @@ class TestEnsureBranch:
         fake_session = _FakeSession(
             _FakeResponse(400, {"error": "owner, repo, branch, and base_branch are required"})
         )
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.VCSServiceError) as exc_info:
-                await mod.ensure_branch("acme", "widgets", "feature", "main")
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.VCSServiceError) as exc_info,
+        ):
+            await mod.ensure_branch("acme", "widgets", "feature", "main")
 
         assert exc_info.value.status == 400
         assert "required" in str(exc_info.value)
@@ -442,11 +448,13 @@ class TestCommitFiles:
                 400, {"error": "owner, repo, branch, message, and files are required"}
             )
         )
-        with patch("aiohttp.ClientSession", return_value=fake_session):
-            with pytest.raises(mod.VCSServiceError) as exc_info:
-                await mod.commit_files(
-                    "acme", "widgets", "feature", "test commit", {"README.md": "test"}
-                )
+        with (
+            patch("aiohttp.ClientSession", return_value=fake_session),
+            pytest.raises(mod.VCSServiceError) as exc_info,
+        ):
+            await mod.commit_files(
+                "acme", "widgets", "feature", "test commit", {"README.md": "test"}
+            )
 
         assert exc_info.value.status == 400
         assert "required" in str(exc_info.value)

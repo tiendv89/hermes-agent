@@ -175,22 +175,22 @@ async def _run_turn(
     translator.on_delta = MagicMock()
     translator.done = MagicMock()
 
-    ctx = dict(
-        run_id=f"run-{session_id}",
-        session_id=session_id,
-        message="@agent help",
-        history=[],
-        workspace_id=workspace_id,
-        feature_id=feature_id,
-        user_id=user_id,
-        model="test-model",
-        provider=None,
-        api_key=None,
-        base_url=None,
-        db_factory=_db_factory,
-        loop=loop,
-        translator=translator,
-    )
+    ctx = {
+        "run_id": f"run-{session_id}",
+        "session_id": session_id,
+        "message": "@agent help",
+        "history": [],
+        "workspace_id": workspace_id,
+        "feature_id": feature_id,
+        "user_id": user_id,
+        "model": "test-model",
+        "provider": None,
+        "api_key": None,
+        "base_url": None,
+        "db_factory": _db_factory,
+        "loop": loop,
+        "translator": translator,
+    }
 
     patches: list = []
     if check_quota_fn is not None:
@@ -199,9 +199,6 @@ async def _run_turn(
         patches.append(patch.object(agent_dispatch, "emit_turn_cost", emit_cost_fn))
 
     if patches:
-        combined = patches[0]
-        for p in patches[1:]:
-            combined = combined
         # Apply all patches
         import contextlib
 
@@ -328,6 +325,7 @@ async def test_dm_and_feature_thread_check_quota_same_call_shape():
     ft_quota_calls: list = []
 
     import run_agent as _stub
+
     from src.api import agent_dispatch
 
     loop = asyncio.get_event_loop()
@@ -339,17 +337,17 @@ async def test_dm_and_feature_thread_check_quota_same_call_shape():
         t.done = MagicMock()
         return t
 
-    base_kwargs = dict(
-        message="@agent help",
-        history=[],
-        workspace_id="ws-parity",
-        model="test-model",
-        provider=None,
-        api_key=None,
-        base_url=None,
-        db_factory=_db_factory,
-        loop=loop,
-    )
+    base_kwargs = {
+        "message": "@agent help",
+        "history": [],
+        "workspace_id": "ws-parity",
+        "model": "test-model",
+        "provider": None,
+        "api_key": None,
+        "base_url": None,
+        "db_factory": _db_factory,
+        "loop": loop,
+    }
 
     _stub.AIAgent = MagicMock(return_value=_make_fake_agent())
     with (
@@ -463,6 +461,7 @@ async def test_dm_and_feature_thread_emit_cost_with_same_shape():
     ft_costs: list = []
 
     import run_agent as _stub
+
     from src.api import agent_dispatch
 
     loop = asyncio.get_event_loop()
@@ -474,17 +473,17 @@ async def test_dm_and_feature_thread_emit_cost_with_same_shape():
         t.done = MagicMock()
         return t
 
-    base_kwargs = dict(
-        message="@agent help",
-        history=[],
-        workspace_id="ws-cost-parity",
-        model="claude-sonnet-4-6",
-        provider=None,
-        api_key=None,
-        base_url=None,
-        db_factory=_db_factory,
-        loop=loop,
-    )
+    base_kwargs = {
+        "message": "@agent help",
+        "history": [],
+        "workspace_id": "ws-cost-parity",
+        "model": "claude-sonnet-4-6",
+        "provider": None,
+        "api_key": None,
+        "base_url": None,
+        "db_factory": _db_factory,
+        "loop": loop,
+    }
 
     _stub.AIAgent = MagicMock(return_value=_make_fake_agent(200, 50))
     with (
@@ -654,13 +653,19 @@ async def test_lookup_tool_session_emits_turn_cost():
 
 
 def test_check_quota_called_only_from_run_agent_turn():
-    """check_quota is called exclusively from _run_agent_turn.
+    """check_quota is called only from _run_agent_turn and _run_opencode_turn.
 
-    No new parallel function was introduced that dispatches DM or lookup-tool
-    turns while bypassing the pre-turn quota gate.
+    _run_agent_turn      → the Hermes AIAgent path's pre-turn quota gate.
+    _run_opencode_turn   → the opencode-backed coding-verdict path for an
+                           IDE-originated /chat turn (see _run_agent_turn's
+                           coding-triage branch); it bypasses AIAgent
+                           entirely so it needs its own gate, not a bypass.
+
+    No other new parallel function may dispatch a turn while bypassing the
+    pre-turn quota gate.
 
     We inspect the agent_dispatch module source and verify that every call site
-    of check_quota is within the _run_agent_turn function body.
+    of check_quota is within one of these two function bodies.
     """
     # Import without triggering the full stub setup — just need source analysis.
     import ast
@@ -683,21 +688,27 @@ def test_check_quota_called_only_from_run_agent_turn():
         if "emit_turn_cost" in func_source:
             funcs_calling_emit_turn_cost.append(node.name)
 
-    # check_quota must only appear inside _run_agent_turn (the pre-turn gate).
-    assert funcs_calling_check_quota == ["_run_agent_turn"], (
-        "check_quota must be called only from _run_agent_turn — no new parallel "
-        "dispatch path may bypass the pre-turn quota gate. "
-        f"Functions calling check_quota: {funcs_calling_check_quota}"
+    # check_quota must only appear inside these two known turn-gates.
+    expected = {"_run_agent_turn", "_run_opencode_turn"}
+    actual = set(funcs_calling_check_quota)
+    unexpected = actual - expected
+    assert not unexpected, (
+        f"check_quota must only be called from {expected}. "
+        f"Unexpected callers found: {unexpected}. "
+        "A new caller may bypass the pre-turn quota gate."
     )
 
 
 def test_emit_turn_cost_called_only_from_expected_functions():
-    """emit_turn_cost is called only from _run_agent_turn and _run_agent_turn_async.
+    """emit_turn_cost is called only from these three known functions.
 
-    _run_agent_turn  → post-turn cost emission (successful/failed turns)
+    _run_agent_turn       → post-turn cost emission (successful/failed turns)
     _run_agent_turn_async → stopped-turn cost emission (CancelledError path)
+    _run_opencode_turn    → post-turn cost emission for an opencode-backed
+                            coding-verdict turn (bypasses AIAgent entirely,
+                            so it needs its own emission, not a bypass)
 
-    No new third function was introduced that accounts for cost separately
+    No other new function was introduced that accounts for cost separately
     (which would create a second accounting path violating G6).
     """
     import ast
@@ -715,7 +726,7 @@ def test_emit_turn_cost_called_only_from_expected_functions():
         if "emit_turn_cost" in func_source:
             funcs_calling_emit.append(node.name)
 
-    expected = {"_run_agent_turn", "_run_agent_turn_async"}
+    expected = {"_run_agent_turn", "_run_agent_turn_async", "_run_opencode_turn"}
     actual = set(funcs_calling_emit)
     unexpected = actual - expected
     assert not unexpected, (

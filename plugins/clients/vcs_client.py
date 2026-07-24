@@ -18,7 +18,7 @@ import logging
 import os
 import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import requests
 
@@ -34,7 +34,7 @@ def _base_url() -> str:
     return os.environ.get("VCS_SERVICE_URL", _DEFAULT_BASE_URL).rstrip("/")
 
 
-def _headers() -> Dict[str, str]:
+def _headers() -> dict[str, str]:
     token = os.environ.get("VCS_SERVICE_TOKEN", "")
     if not token:
         raise RuntimeError(
@@ -43,7 +43,7 @@ def _headers() -> Dict[str, str]:
     return {"Authorization": f"Bearer {token}"}
 
 
-def _post(path: str, payload: Dict[str, Any]) -> requests.Response:
+def _post(path: str, payload: dict[str, Any]) -> requests.Response:
     """POST *payload* as JSON to vcs-service; raises on HTTP errors."""
     url = f"{_base_url()}{path}"
     resp = requests.post(
@@ -61,7 +61,7 @@ def _post(path: str, payload: Dict[str, Any]) -> requests.Response:
 # ---------------------------------------------------------------------------
 
 
-def parse_pr_url(pr_url: str) -> Tuple[str, str, int]:
+def parse_pr_url(pr_url: str) -> tuple[str, str, int]:
     """Extract (owner, repo, pull_number) from a GitHub PR URL.
 
     Raises ValueError when the URL does not match the expected pattern.
@@ -90,7 +90,7 @@ def get_pr_diff(owner: str, repo: str, pull_number: int) -> str:
     return data.get("diff", resp.text)
 
 
-def get_pr_files(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]]:
+def get_pr_files(owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
     """Return the list of files changed in the PR."""
     resp = _post(
         "/api/vcs/pr/files",
@@ -99,7 +99,7 @@ def get_pr_files(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]
     return resp.json().get("files", resp.json())
 
 
-def get_pr_metadata(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
+def get_pr_metadata(owner: str, repo: str, pull_number: int) -> dict[str, Any]:
     """Return PR metadata: title, body, author, branches, state, labels, etc.
 
     The vcs-service may return either a flat representation (already
@@ -138,7 +138,7 @@ def get_pr_metadata(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
     }
 
 
-def get_pr_comments(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
+def get_pr_comments(owner: str, repo: str, pull_number: int) -> dict[str, Any]:
     """Return issue-level and review-level comments on the PR."""
     resp = _post(
         "/api/vcs/pr/comments",
@@ -147,7 +147,7 @@ def get_pr_comments(owner: str, repo: str, pull_number: int) -> Dict[str, Any]:
     return resp.json()
 
 
-def get_pr_reviews(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]]:
+def get_pr_reviews(owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
     """Return review history for the PR."""
     resp = _post(
         "/api/vcs/pr/reviews/list",
@@ -156,7 +156,7 @@ def get_pr_reviews(owner: str, repo: str, pull_number: int) -> List[Dict[str, An
     return resp.json().get("reviews", resp.json())
 
 
-def get_pr_commits(owner: str, repo: str, pull_number: int) -> List[Dict[str, Any]]:
+def get_pr_commits(owner: str, repo: str, pull_number: int) -> list[dict[str, Any]]:
     """Return the commits in the PR."""
     resp = _post(
         "/api/vcs/pr/commits",
@@ -169,8 +169,8 @@ def get_check_runs(
     owner: str,
     repo: str,
     head_sha: str,
-    poll_timeout_seconds: Optional[int] = None,
-) -> Dict[str, Any]:
+    poll_timeout_seconds: int | None = None,
+) -> dict[str, Any]:
     """Return CI check-run results for *head_sha*, with optional bounded poll.
 
     When *poll_timeout_seconds* is set (> 0), polls every 15 seconds until all
@@ -232,7 +232,7 @@ def get_check_runs(
         time.sleep(min(_POLL_INTERVAL, remaining))
 
 
-def compare_refs(owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
+def compare_refs(owner: str, repo: str, base: str, head: str) -> dict[str, Any]:
     """Compare two refs/branches/commits."""
     resp = _post(
         "/api/vcs/repo/compare",
@@ -241,7 +241,7 @@ def compare_refs(owner: str, repo: str, base: str, head: str) -> Dict[str, Any]:
     return resp.json()
 
 
-def get_file_at_ref(owner: str, repo: str, path: str, ref: str) -> Dict[str, Any]:
+def get_file_at_ref(owner: str, repo: str, path: str, ref: str) -> dict[str, Any]:
     """Return the content of a file at a given ref/commit/branch.
 
     If the response contains base64-encoded content we decode it before
@@ -286,10 +286,10 @@ def list_open_prs(
     owner: str,
     repo: str,
     state: str = "open",
-    head: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    head: str | None = None,
+) -> list[dict[str, Any]]:
     """List PRs for a repo."""
-    payload: Dict[str, Any] = {"owner": owner, "repo": repo, "state": state}
+    payload: dict[str, Any] = {"owner": owner, "repo": repo, "state": state}
     if head:
         payload["head"] = head
     resp = _post("/api/vcs/pr/list", payload)
@@ -303,7 +303,7 @@ def list_open_prs(
 
 def post_issue_comment(
     owner: str, repo: str, issue_number: int, body: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Post *body* as an issue comment on PR *issue_number*."""
     resp = _post(
         "/api/vcs/pr/issues/comments",
@@ -324,14 +324,14 @@ def post_pr_review(
     pull_number: int,
     event: str,
     body: str,
-    comments: Optional[List[Dict[str, Any]]] = None,
+    comments: list[dict[str, Any]] | None = None,
 ) -> requests.Response:
     """Post a formal review event on PR *pull_number*.
 
     Returns the raw ``requests.Response`` so callers can check the status code
     (201 success vs 422 self-review restriction) without raising.
     """
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "owner": owner,
         "repo": repo,
         "pull_number": pull_number,

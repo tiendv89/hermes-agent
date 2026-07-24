@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -73,7 +73,7 @@ async def test_create_workspace_thread_creates_session_and_joins_creator():
     from src.db.store import create_workspace_thread
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     # Simulate flush populating session.id
@@ -116,7 +116,7 @@ async def test_create_workspace_thread_adds_initial_members():
     from src.db.store import create_workspace_thread
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     async def _flush():
@@ -144,11 +144,11 @@ async def test_create_workspace_thread_adds_initial_members():
 @pytest.mark.asyncio
 async def test_create_workspace_thread_optional_title():
     """create_workspace_thread stores title when provided, None when omitted."""
-    from src.db.store import create_workspace_thread
     from src.db.models import Session
+    from src.db.store import create_workspace_thread
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     async def _flush():
@@ -198,6 +198,31 @@ async def test_list_workspace_threads_untitled_fallback():
 
 
 @pytest.mark.asyncio
+async def test_list_workspace_threads_scopes_to_hermes_agent_source():
+    """An IDE coding session (source='coding-ide') has the same kind='thread'/
+    feature_id='' shape as a genuine web workspace thread (the VS Code
+    extension's POST /session never sets a feature_id, and every session
+    defaults to kind='thread') — without an explicit source filter it would
+    leak into the browser's workspace-threads sidebar as an empty,
+    unopenable "thread". Asserts the query Session.execute() actually
+    receives includes a source='hermes-agent' predicate, not just that the
+    (mocked, source-blind) row mapping still works."""
+    from src.db.store import list_workspace_threads
+
+    db = _mock_db()
+    result_mock = MagicMock()
+    result_mock.all.return_value = []
+    db.execute = AsyncMock(return_value=result_mock)
+
+    await list_workspace_threads(db, workspace_id="ws_1", user_id="user_a")
+
+    statement = db.execute.call_args[0][0]
+    compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+    assert "source" in compiled
+    assert "hermes-agent" in compiled
+
+
+@pytest.mark.asyncio
 async def test_list_member_sessions_includes_workspace_threads():
     """list_member_sessions returns both feature threads and workspace threads (no feature_id filter)."""
     from src.db.store import list_member_sessions
@@ -224,9 +249,10 @@ async def test_list_member_sessions_includes_workspace_threads():
 def _make_app():
     """Build a minimal FastAPI test app with the threads router."""
     from fastapi import FastAPI
-    from src.api.routers.threads import router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.threads import router
 
     async def _override_db():
         yield _mock_db()
@@ -263,7 +289,7 @@ async def test_create_thread_success_201():
 @pytest.mark.asyncio
 async def test_create_thread_with_members():
     """POST /threads with members list passes them to store."""
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     async def _mock_create(db, workspace_id, creator_user_id, title, members):
         captured["members"] = members

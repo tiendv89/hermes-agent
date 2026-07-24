@@ -7,6 +7,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import importlib.util
 import sys
@@ -14,8 +15,6 @@ import types
 from contextlib import ExitStack
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-
-import asyncio
 
 import pytest
 
@@ -44,11 +43,11 @@ def _make_feature_detail(owner: str = "go"):
 
 @pytest.fixture(autouse=True)
 def _clean_modules():
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
     yield
-    keys = [k for k in sys.modules if k.startswith("plugins") or k.startswith("src")]
+    keys = [k for k in sys.modules if k.startswith(("plugins", "src"))]
     for k in keys:
         del sys.modules[k]
 
@@ -201,25 +200,28 @@ class TestReadFile:
 
 
 class TestToolRegistrationNames:
-    """Verify plugins/__init__.py registers read_file only — read_document is gone."""
+    """Verify src/tool_setup.py registers read_file — read_document is gone.
+
+    The tool list lives in src/tool_setup.py, not plugins/__init__.py.
+    """
 
     def test_read_file_in_registry(self):
-        init_path = REPO_ROOT / "plugins" / "__init__.py"
-        text = init_path.read_text(encoding="utf-8")
+        setup_path = REPO_ROOT / "src" / "tool_setup.py"
+        text = setup_path.read_text(encoding="utf-8")
         assert '"read_file"' in text, "read_file must be registered"
 
     def test_read_document_not_in_registry(self):
-        init_path = REPO_ROOT / "plugins" / "__init__.py"
-        text = init_path.read_text(encoding="utf-8")
+        setup_path = REPO_ROOT / "src" / "tool_setup.py"
+        text = setup_path.read_text(encoding="utf-8")
         assert '"read_document"' not in text, (
             "read_document must be fully removed from the tool registry"
         )
 
     def test_read_file_entry_uses_canonical_handler(self):
-        init_path = REPO_ROOT / "plugins" / "__init__.py"
-        text = init_path.read_text(encoding="utf-8")
+        setup_path = REPO_ROOT / "src" / "tool_setup.py"
+        text = setup_path.read_text(encoding="utf-8")
         idx = text.find('"read_file"')
-        assert idx != -1, "read_file must be in __init__.py"
+        assert idx != -1, "read_file must be in setup.py"
         block = text[idx:idx + 400]
         assert "handle_read_file" in block, (
             "read_file entry must reference handle_read_file"

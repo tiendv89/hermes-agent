@@ -26,7 +26,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -64,7 +63,7 @@ def _sse_frame(event: str, data: dict) -> str:
 @router.get("/threads/{session_id}/stream")
 async def stream_thread(
     session_id: str,
-    since: Optional[str] = Query(
+    since: str | None = Query(
         default=None, description="Replay messages with id > since"
     ),
     identity: Identity = Depends(require_identity),
@@ -103,7 +102,7 @@ async def stream_thread(
         await add_member(db, session_id, user_id, added_by=user_id)
 
     # Parse the since cursor (treat as message integer id; ignore if non-numeric).
-    since_id: Optional[int] = None
+    since_id: int | None = None
     if since:
         try:
             since_id = int(since)
@@ -138,7 +137,7 @@ async def stream_thread(
             while True:
                 try:
                     bus_event = await asyncio.wait_for(queue.get(), _KEEPALIVE_SECONDS)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
                     continue
 

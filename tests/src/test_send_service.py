@@ -111,6 +111,44 @@ def test_mentions_agent_false():
 
 
 # ---------------------------------------------------------------------------
+# canonical <p:handle> tag form (workflow-extension/digital-factory-ui's
+# people-mention picker inserts this now, not bare @handle) — both forms
+# must keep working since digital-factory-ui's own "auto-tag @agent for a
+# channel message" convenience logic still produces the bare form.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_handles_tag_form():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("Hello <p:agent>, cc <p:alice>!") == ["agent", "alice"]
+
+
+def test_parse_handles_mixed_bare_and_tag_form():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("<p:agent> please loop in @bob") == ["agent", "bob"]
+
+
+def test_parse_handles_tag_form_deduped_with_bare_form():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("@agent <p:agent> @agent") == ["agent"]
+
+
+def test_parse_handles_tag_form_case_insensitive():
+    from src.api.mentions import parse_mention_handles
+
+    assert parse_mention_handles("<p:Agent> says hi") == ["agent"]
+
+
+def test_mentions_agent_true_via_tag_form():
+    from src.api.mentions import mentions_agent
+
+    assert mentions_agent("Hey <p:agent>, help!") is True
+
+
+# ---------------------------------------------------------------------------
 # mention resolution tests
 # ---------------------------------------------------------------------------
 
@@ -231,6 +269,7 @@ def _make_app(session_mock=None, member_check=True):
     """Minimal FastAPI app wired to the messages router."""
     _inject_stub_modules()
     from fastapi import FastAPI
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -252,6 +291,7 @@ async def test_send_message_explicit_agent_triggers(tmp_path):
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -322,6 +362,7 @@ async def test_send_message_forwards_image_ids_to_schedule_agent_turn():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -380,6 +421,7 @@ async def test_send_message_without_image_ids_defaults_to_empty_list():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -437,6 +479,7 @@ async def test_send_message_channel_bare_no_agent():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -488,6 +531,7 @@ async def test_send_message_feature_thread_bare_triggers():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -546,6 +590,7 @@ async def test_send_message_not_member_returns_403():
     _inject_stub_modules()
     from fastapi import FastAPI, HTTPException
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -588,6 +633,7 @@ async def test_send_message_unknown_thread_returns_404():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -772,6 +818,7 @@ async def test_send_message_dm_bare_no_agent():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -823,6 +870,7 @@ async def test_send_message_dm_explicit_agent_triggers():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -964,6 +1012,7 @@ async def test_send_message_channel_top_level_agent_mention_opens_thread():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -1025,6 +1074,7 @@ async def test_send_message_dm_top_level_agent_mention_opens_thread():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()
@@ -1086,6 +1136,7 @@ async def test_send_message_feature_thread_top_level_agent_stays_flat():
     _inject_stub_modules()
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
+
     from src.api.routers.messages import router as messages_router
 
     app = FastAPI()

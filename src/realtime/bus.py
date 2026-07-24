@@ -14,8 +14,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, List
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +27,9 @@ class SessionBus:
     """Per-process in-memory pub/sub bus keyed by session id."""
 
     def __init__(self) -> None:
-        self._topics: Dict[str, List[asyncio.Queue]] = {}
+        self._topics: dict[str, list[asyncio.Queue]] = {}
 
-    def publish(self, session_id: str, event: Dict[str, Any]) -> None:
+    def publish(self, session_id: str, event: dict[str, Any]) -> None:
         """Publish an event to all current subscribers of ``session_id``.
 
         Non-blocking: subscribers that have not drained their queue will miss

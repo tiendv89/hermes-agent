@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pathlib
 
-
 _MIGRATIONS_DIR = pathlib.Path(__file__).resolve().parents[2] / "migrations"
 _MIGRATION_FILE = _MIGRATIONS_DIR / "006_model_catalog.sql"
 

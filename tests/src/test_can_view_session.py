@@ -244,10 +244,9 @@ async def test_is_org_member_exception_propagates():
         patch(
             "src.services.user_service_client.get_org_role",
             new=AsyncMock(side_effect=Exception("connection refused")),
-        ),
+        ),pytest.raises(Exception, match="connection refused")
     ):
-        with pytest.raises(Exception, match="connection refused"):
-            await is_org_member("org-1", "user-a")
+        await is_org_member("org-1", "user-a")
 
 
 # ---------------------------------------------------------------------------
@@ -321,6 +320,7 @@ async def test_stream_feature_session_org_member_authorized_and_implicit_join():
 async def test_stream_feature_session_non_org_member_rejected():
     """Non-org-member calling the stream handler → HTTPException 403."""
     from fastapi import HTTPException
+
     from src.api.routers.stream import stream_thread
 
     feature_session = _make_session(
@@ -349,15 +349,14 @@ async def test_stream_feature_session_non_org_member_rejected():
         ),
         patch(
             "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=False)
-        ),
+        ),pytest.raises(HTTPException) as exc_info
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_thread(
-                session_id="sess_feat_2",
-                since=None,
-                identity=identity,
-                db=db,
-            )
+        await stream_thread(
+            session_id="sess_feat_2",
+            since=None,
+            identity=identity,
+            db=db,
+        )
     assert exc_info.value.status_code == 403
 
 
@@ -366,8 +365,9 @@ async def test_authorize_thread_access_lookup_error_raises_502_not_403():
     """A workflow-backend/user-service failure must not be conflated with a
     genuine 'not a member' — it should surface as a distinct 502 so a caller
     who IS a member isn't told they aren't because of a transient outage."""
-    from src.api.thread_authz import authorize_thread_access
     from fastapi import HTTPException
+
+    from src.api.thread_authz import authorize_thread_access
 
     session = _make_session(user_id="owner", kind="thread", feature_id="feat-1")
     db = _mock_db()
@@ -375,9 +375,8 @@ async def test_authorize_thread_access_lookup_error_raises_502_not_403():
     with patch(
         "src.api.thread_authz.get_workspace_organization_id",
         new=AsyncMock(side_effect=Exception("workflow-backend unreachable")),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await authorize_thread_access(db, session, "some_user", "org-1")
+    ), pytest.raises(HTTPException) as exc_info:
+        await authorize_thread_access(db, session, "some_user", "org-1")
 
     assert exc_info.value.status_code == 502
 
@@ -387,8 +386,9 @@ async def test_authorize_thread_access_no_owning_org_raises_502_not_403():
     """workflow-backend resolving no owning org for the workspace (e.g. the
     workspace row isn't found) is ambiguous, not a confirmed non-membership —
     must not be silently coerced into org_id="" and a misleading 403."""
-    from src.api.thread_authz import authorize_thread_access
     from fastapi import HTTPException
+
+    from src.api.thread_authz import authorize_thread_access
 
     session = _make_session(user_id="owner", kind="thread", feature_id="feat-1")
     db = _mock_db()
@@ -396,9 +396,8 @@ async def test_authorize_thread_access_no_owning_org_raises_502_not_403():
     with patch(
         "src.api.thread_authz.get_workspace_organization_id",
         new=AsyncMock(return_value=None),
-    ):
-        with pytest.raises(HTTPException) as exc_info:
-            await authorize_thread_access(db, session, "some_user", "org-1")
+    ), pytest.raises(HTTPException) as exc_info:
+        await authorize_thread_access(db, session, "some_user", "org-1")
 
     assert exc_info.value.status_code == 502
 
@@ -407,6 +406,7 @@ async def test_authorize_thread_access_no_owning_org_raises_502_not_403():
 async def test_stream_workspace_thread_non_member_no_implicit_join():
     """Workspace thread (feature_id='') non-member raises 403; add_member not called."""
     from fastapi import HTTPException
+
     from src.api.routers.stream import stream_thread
 
     ws_thread = _make_session(
@@ -435,14 +435,14 @@ async def test_stream_workspace_thread_non_member_no_implicit_join():
             "src.api.thread_authz.can_view_session", new=AsyncMock(return_value=False)
         ),
         patch("src.api.routers.stream.add_member", new=add_member_mock),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await stream_thread(
-                session_id="sess_ws_1",
-                since=None,
-                identity=identity,
-                db=db,
-            )
+        await stream_thread(
+            session_id="sess_ws_1",
+            since=None,
+            identity=identity,
+            db=db,
+        )
     assert exc_info.value.status_code == 403
     add_member_mock.assert_not_awaited()
 
@@ -455,7 +455,7 @@ async def test_stream_workspace_thread_non_member_no_implicit_join():
 @pytest.mark.asyncio
 async def test_send_message_feature_session_org_member_gets_implicit_join():
     """Org member posting to a feature session → implicit session_members insert."""
-    from src.api.routers.messages import send_message, SendMessageRequest
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     feature_session = _make_session(
         session_id="sess_feat_3",
@@ -526,7 +526,8 @@ async def test_send_message_feature_session_org_member_gets_implicit_join():
 async def test_send_message_workspace_thread_non_member_rejected():
     """Workspace thread (feature_id='') non-member posting → HTTPException 403."""
     from fastapi import HTTPException
-    from src.api.routers.messages import send_message, SendMessageRequest
+
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     ws_thread = _make_session(
         session_id="sess_ws_2",
@@ -557,15 +558,15 @@ async def test_send_message_workspace_thread_non_member_rejected():
             new=AsyncMock(return_value=False),
         ),
         patch("src.api.routers.messages.add_member", new=add_member_mock),
+        pytest.raises(HTTPException) as exc_info,
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await send_message(
-                session_id="sess_ws_2",
-                body=SendMessageRequest(content="try to post"),
-                request=request,
-                identity=identity,
-                db=db,
-            )
+        await send_message(
+            session_id="sess_ws_2",
+            body=SendMessageRequest(content="try to post"),
+            request=request,
+            identity=identity,
+            db=db,
+        )
 
     assert exc_info.value.status_code == 403
     add_member_mock.assert_not_awaited()
@@ -575,7 +576,8 @@ async def test_send_message_workspace_thread_non_member_rejected():
 async def test_send_message_feature_session_non_org_member_rejected():
     """Non-org-member posting to a feature session → HTTPException 403."""
     from fastapi import HTTPException
-    from src.api.routers.messages import send_message, SendMessageRequest
+
+    from src.api.routers.messages import SendMessageRequest, send_message
 
     feature_session = _make_session(
         session_id="sess_feat_4",
@@ -606,15 +608,14 @@ async def test_send_message_feature_session_non_org_member_rejected():
         patch(
             "src.api.thread_authz.can_view_session",
             new=AsyncMock(return_value=False),
-        ),
+        ),pytest.raises(HTTPException) as exc_info
     ):
-        with pytest.raises(HTTPException) as exc_info:
-            await send_message(
-                session_id="sess_feat_4",
-                body=SendMessageRequest(content="should fail"),
-                request=request,
-                identity=identity,
-                db=db,
-            )
+        await send_message(
+            session_id="sess_feat_4",
+            body=SendMessageRequest(content="should fail"),
+            request=request,
+            identity=identity,
+            db=db,
+        )
 
     assert exc_info.value.status_code == 403

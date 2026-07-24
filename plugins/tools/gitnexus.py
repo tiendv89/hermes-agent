@@ -25,7 +25,7 @@ import json
 import logging
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from plugins.clients.mcp_client import call_mcp_tool, coerce_text
 
@@ -34,12 +34,12 @@ logger = logging.getLogger(__name__)
 _REPO_CACHE_TTL = float(os.environ.get("GITNEXUS_REPO_CACHE_TTL", "600"))
 # Keyed by workspace_id (workflow-backend's workspaces.id, a UUID — no
 # slug resolution; matches rag-service's convention).
-_repo_cache: Dict[str, Dict[str, Any]] = {}
+_repo_cache: dict[str, dict[str, Any]] = {}
 
 # Operations exposed by the wrapper, mapped to live GitNexus MCP tools.
 _TOOLS = ("query", "context", "impact", "detect_changes", "list_repos")
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Query the code-structure index (GitNexus) for symbol definitions, call graphs, "
         "and impact/blast-radius. Call this before answering 'where is X defined', 'what "
@@ -113,7 +113,7 @@ def check_available(**_: Any) -> bool:
 
 def _build_arguments(
     tool: str, query: str, repo: str, direction: str
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Map the wrapper inputs to the live GitNexus MCP per-tool argument shape.
 
     Argument names are pinned to the live ``gitnexus`` MCP contract (see module
@@ -122,7 +122,7 @@ def _build_arguments(
     if tool == "list_repos":
         return {}
 
-    args: Dict[str, Any]
+    args: dict[str, Any]
     if tool == "context":
         args = {"name": query}
     elif tool == "impact":
@@ -144,18 +144,17 @@ async def handle(
     direction: str = "upstream",
     feature_id: Any = "",
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     query = coerce_text(query)
     repo = coerce_text(repo)
     if tool not in _TOOLS:
         return {
             "ok": False,
-            "error": "unknown GitNexus tool %r; expected one of %s."
-            % (tool, ", ".join(_TOOLS)),
+            "error": "unknown GitNexus tool {!r}; expected one of {}.".format(tool, ", ".join(_TOOLS)),
         }
     # query/context/impact need a target; detect_changes and list_repos do not.
     if not query and tool not in ("list_repos", "detect_changes"):
-        return {"ok": False, "error": "query is required for GitNexus tool %r." % tool}
+        return {"ok": False, "error": f"query is required for GitNexus tool {tool!r}."}
     url = os.environ.get("GITNEXUS_MCP_URL", "").strip()
     if not url:
         return {"ok": False, "error": "GITNEXUS_MCP_URL is not configured."}
@@ -228,9 +227,9 @@ def _loads_leading_json(text: str) -> Any:
         return None
 
 
-def _parse_repo_names(results: Any) -> List[str]:
+def _parse_repo_names(results: Any) -> list[str]:
     """Extract repo names from a list_repos MCP result (list of content dicts)."""
-    names: List[str] = []
+    names: list[str] = []
     for item in results or []:
         text = item.get("text") if isinstance(item, dict) else None
         if not text:
@@ -259,10 +258,10 @@ def _run_coro_sync(coro: Any) -> Any:
 
 def list_indexed_repos(
     use_cache: bool = True,
-    timeout: Optional[float] = None,
+    timeout: float | None = None,
     workspace_id: str = "",
     organization_id: str = "",
-) -> Optional[List[str]]:
+) -> list[str] | None:
     """Best-effort, synchronous list of GitNexus-indexed repo names.
 
     Returns the repo names (e.g. ['voyager-interface', ...]); ``None`` when

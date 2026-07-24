@@ -1,8 +1,9 @@
 -include .env
 export
-PORT   ?= 8000
+PORT ?= 8000
 
-.PHONY: help submodules update-submodules install lint test run dev
+.PHONY: help submodules update-submodules install lint test run dev \
+	install-opencode opencode-serve
 help:
 	@echo "Usage: make <target>"
 	@echo ""
@@ -11,8 +12,13 @@ help:
 	@echo "  install            Install dependencies (gateway + vendored hermes-agent)"
 	@echo "  lint               Run ruff over the project (vendor excluded)"
 	@echo "  test               Run the test suite"
-	@echo "  dev                Start with auto-reload"
-	@echo "  run                Start in production mode"
+	@echo "  dev                Start with auto-reload (PORT=$(PORT); override e.g. PORT=8010 make dev)"
+	@echo "  run                Start in production mode (same PORT override)"
+	@echo "  install-opencode   Install the pinned opencode server (vendor/opencode, pnpm)"
+	@echo "  opencode-serve     Run the opencode server on 0.0.0.0:4096 (non-Docker dev)"
+	@echo ""
+	@echo "One process serves both the workflow (web chat) and coding (IDE)"
+	@echo "profiles — see src/app.py. There is no more per-profile split."
 
 lint:
 	uvx ruff check .
@@ -43,3 +49,9 @@ dev:
 
 run:
 	uv run uvicorn src.app:app --host 0.0.0.0 --port $(PORT)
+
+install-opencode:
+	cd vendor/opencode && pnpm install
+
+opencode-serve:
+	cd vendor/opencode && pnpm exec opencode serve --hostname 0.0.0.0 --port 4096 --print-logs

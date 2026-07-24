@@ -10,12 +10,12 @@ when user-service is unavailable.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from src.services.user_service_client import list_org_members, list_users_by_ids
 
 
-def _display_name(info: Dict[str, Any]) -> Optional[str]:
+def _display_name(info: dict[str, Any]) -> str | None:
     """Prefer the set display name, else the email's local part, else None."""
     name = (info.get("display_name") or "").strip()
     if name:
@@ -25,7 +25,7 @@ def _display_name(info: Dict[str, Any]) -> Optional[str]:
     return local or None
 
 
-def _author_obj(user_id: str, info: Dict[str, Any]) -> Dict[str, Any]:
+def _author_obj(user_id: str, info: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": user_id,
         "name": _display_name(info),
@@ -34,7 +34,7 @@ def _author_obj(user_id: str, info: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-async def attach_authors(workspace_id: str, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+async def attach_authors(workspace_id: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Attach an ``author`` object to each user-role message (in place).
 
     Resolves authors by user-id (not workspace membership), so users who posted
@@ -50,7 +50,7 @@ async def attach_authors(workspace_id: str, messages: List[Dict[str, Any]]) -> L
     return messages
 
 
-async def author_for(workspace_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+async def author_for(workspace_id: str, user_id: str) -> dict[str, Any] | None:
     """Return a single author object for user_id, resolved by id."""
     if not user_id:
         return None
@@ -58,7 +58,7 @@ async def author_for(workspace_id: str, user_id: str) -> Optional[Dict[str, Any]
     return _author_obj(user_id, users.get(user_id) or {})
 
 
-def handle_for(info: Dict[str, Any]) -> str:
+def handle_for(info: dict[str, Any]) -> str:
     """Derive a stable @mention handle from a member: email local-part, else a
     display-name slug. MUST match the FE's deriveHandle so @tokens resolve."""
     email = (info.get("email") or "").strip()
@@ -69,7 +69,7 @@ def handle_for(info: Dict[str, Any]) -> str:
     return re.sub(r"[^a-z0-9._-]+", "", (info.get("display_name") or "").lower())
 
 
-async def mention_candidates(organization_id: str) -> List[Dict[str, str]]:
+async def mention_candidates(organization_id: str) -> list[dict[str, str]]:
     """Return ``[{user_id, handle}]`` for all org members, so any of them can be
     @mentioned (not just current channel members). Returns ``[]`` when the
     workspace's organization_id couldn't be resolved (e.g. workflow-backend
@@ -77,7 +77,7 @@ async def mention_candidates(organization_id: str) -> List[Dict[str, str]]:
     if not organization_id:
         return []
     members = await list_org_members(organization_id)
-    out: List[Dict[str, str]] = []
+    out: list[dict[str, str]] = []
     for uid, info in members.items():
         h = handle_for(info)
         if h:

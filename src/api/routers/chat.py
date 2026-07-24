@@ -1,6 +1,9 @@
 """Streaming chat route.
 
-POST /chat — run one agent turn and stream the reply back as SSE
+POST /chat — run one agent turn and stream the reply back as SSE. Serves
+both the browser (no ide_context) and the IDE extension (ide_context set) —
+see agent_dispatch.py's per-turn triage for how a CODING verdict is handled
+differently depending on which one sent the turn.
 """
 
 from __future__ import annotations
@@ -8,7 +11,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from typing import List
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -17,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.agent_dispatch import (
     ActiveRun,
+    IDEContext,
     _active_runs,
     _active_runs_lock,
     _run_agent_turn_async,
@@ -51,7 +54,14 @@ class StreamChatRequest(BaseModel):
     # file path — see agent_dispatch.py's image handling — rather than a URL,
     # since storage-service is internal-only and the vision tool's SSRF guard
     # would reject fetching it directly.
-    image_ids: List[str] = []
+    image_ids: list[str] = []
+    # Set only by the IDE extension (active file, selection, git status,
+    # diagnostics). Its mere presence is what tells agent_dispatch.py this
+    # turn came from a client with local file/git/terminal access — a DOC
+    # verdict ignores it beyond building the system-prompt context block, a
+    # CODING verdict uses it to dispatch to opencode instead of redirecting
+    # to "use your IDE" the way a browser-originated coding turn still does.
+    ide_context: IDEContext | None = None
 
 
 def _derive_title(message: str) -> str:
@@ -157,6 +167,7 @@ async def chat(
             loop=loop,
             translator=translator,
             cancel_event=cancel_event,
+            ide_context=body.ide_context,
         )
     )
     # Replace the sentinel with the real ActiveRun (task is now known).
@@ -170,3 +181,35 @@ async def chat(
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
+
+
+# ---------------------------------------------------------------------------
+# Deferred tool-result reporting (opencode-backed IDE coding turns only)
+# ---------------------------------------------------------------------------
+
+
+class ToolResultRequest(BaseModel):
+    """Request body for POST /coding/sessions/{session_id}/tool-result."""
+
+    call_id: str
+    result: dict = {}
+
+
+@router.post("/coding/sessions/{session_id}/tool-result")
+async def coding_tool_result(
+    session_id: str,
+    body: ToolResultRequest,
+    identity: Identity = Depends(require_identity),
+) -> dict:
+    """Resolve a pending deferred MCP tool call with the IDE's real result.
+
+    An MCP tool call made by opencode (see
+    ``src/mcp/coding_bridge_server.py``, ``src/services/deferred_tool_gateway.py``)
+    blocks synchronously inside a still-in-flight /chat turn and needs its
+    result delivered here, out of band, as soon as the IDE extension
+    finishes executing the ``hermes.tool.deferred`` event.
+    """
+    from src.services.deferred_tool_gateway import resolve
+
+    resolved = resolve(body.call_id, body.result, session_key=session_id)
+    return {"resolved": resolved}

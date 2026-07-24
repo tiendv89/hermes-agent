@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import requests
 
@@ -36,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 _EVENTS = ("APPROVE", "REQUEST_CHANGES")
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Post a GitHub PR review using the two-call pattern: first posts the full "
         "narrative as an issue comment (always visible, not subject to self-review "
@@ -118,9 +118,9 @@ def handle(
     pr_url: str = "",
     event: str = "",
     body: str = "",
-    comments: Optional[List[Dict[str, Any]]] = None,
+    comments: list[dict[str, Any]] | None = None,
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if not pr_url:
         return {"ok": False, "error": "pr_url is required."}
     if event not in _EVENTS:

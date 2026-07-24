@@ -1,0 +1,113 @@
+name: 'Hermes Agent Opencode: Production'
+
+permissions:
+  contents: write
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (e.g. 0.1.0)"
+        type: string
+        required: true
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version_tag: ${{ steps.version_tag.outputs.value }}
+      version_raw: ${{ steps.version_tag.outputs.raw }}
+    steps:
+      - name: Format version tag
+        id: version_tag
+        env:
+          INPUT_TAG: ${{ inputs.version }}
+        run: |
+          TAG=${INPUT_TAG#v}
+          # Prefixed distinctly from the main hermes-agent release's own
+          # "v<version>" tags (release.yaml) — both live in this same repo,
+          # so an unprefixed tag could collide with (or be confused for) an
+          # unrelated main-app release that happens to share a version number.
+          echo "value=opencode-v$TAG" >> "$GITHUB_OUTPUT"
+          echo "raw=$TAG" >> "$GITHUB_OUTPUT"
+
+  docker:
+    needs:
+      - prepare
+    runs-on: ubuntu-latest
+    env:
+      VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
+      VERSION_RAW: ${{ needs.prepare.outputs.version_raw }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set image name
+        id: set_image
+        run: |
+          REPO_LOWER=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')
+          IMAGE_BASE="${{ env.REGISTRY }}/${REPO_LOWER}-opencode"
+          echo "IMAGE_BASE=$IMAGE_BASE" >> "$GITHUB_ENV"
+          echo "IMAGE_NAME=${IMAGE_BASE}:${VERSION_RAW}" >> "$GITHUB_ENV"
+          echo "IMAGE_LATEST=${IMAGE_BASE}:latest" >> "$GITHUB_ENV"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: vendor/opencode
+          file: vendor/opencode/Dockerfile
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ env.IMAGE_NAME }}
+            ${{ env.IMAGE_LATEST }}
+          cache-from: type=gha,scope=opencode-release
+          cache-to: type=gha,mode=max,scope=opencode-release
+
+  release:
+    needs:
+      - prepare
+      - docker
+    runs-on: ubuntu-latest
+    env:
+      VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Git
+        run: |
+          git config user.name "$GITHUB_ACTOR"
+          git config user.email "$GITHUB_ACTOR@users.noreply.github.com"
+
+      - name: Create tag
+        run: |
+          git tag -d "$VERSION_TAG" 2> /dev/null || echo "Release tag '$VERSION_TAG' does NOT exist"
+          git tag --annotate --message "hermes-agent-opencode $VERSION_TAG" "$VERSION_TAG"
+          git push --force origin "refs/tags/$VERSION_TAG"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: ${{ env.VERSION_TAG }}
+          prerelease: false
+          name: 'hermes-agent-opencode ${{ env.VERSION_TAG }}'

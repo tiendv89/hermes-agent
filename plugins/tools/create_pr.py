@@ -8,11 +8,11 @@ GITHUB_TOKEN — only VCS_SERVICE_URL / VCS_SERVICE_TOKEN.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Create a pull request via vcs-service. Opens a PR from `head` into "
         "`base` on the given GitHub repo. Returns the PR number and html_url "
@@ -71,7 +71,7 @@ def handle(
     body: str = "",
     draft: bool = False,
     **_: Any,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from src.services.vcs_service_client import VCSServiceError, create_pr, run_async
 
     if not owner:

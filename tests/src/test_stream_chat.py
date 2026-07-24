@@ -127,6 +127,7 @@ def stream_chat_app():
     from contextlib import asynccontextmanager
 
     from fastapi import FastAPI
+
     from src.api.router import router
 
     app = FastAPI()
@@ -218,6 +219,7 @@ async def test_stream_chat_rejects_concurrent_run(stream_chat_app):
     """A second stream_chat for a session already running returns 409 — this is
     what stops the transcript from being double-persisted on reconnect."""
     from httpx import ASGITransport, AsyncClient
+
     from src.api import router as router_mod
 
     session_mock = MagicMock()

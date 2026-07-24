@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -51,7 +51,7 @@ def _scalar_result(value):
     return r
 
 
-def _rows_result(rows: List[Any]):
+def _rows_result(rows: list[Any]):
     """Return a mock execute result whose all() returns rows."""
     r = MagicMock()
     r.all.return_value = rows
@@ -60,7 +60,7 @@ def _rows_result(rows: List[Any]):
 
 def _make_dm_row(
     id: str = "sess_dm1",
-    title: str = None,
+    title: str | None = None,
     feature_id: str = "",
     started_at: float = 1000.0,
     last_active_at: float = 1001.0,
@@ -103,11 +103,11 @@ async def test_create_dm_returns_existing_if_found():
 @pytest.mark.asyncio
 async def test_create_dm_creates_new_session_when_none_exists():
     """create_dm creates a new kind='dm', feature_id='' session when no existing DM is found."""
-    from src.db.store import create_dm
     from src.db.models import Session, SessionMember
+    from src.db.store import create_dm
 
     db = _mock_db()
-    captured_adds: List[Any] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     # First call: no existing DM; second call would be for members (no execute call)
@@ -148,13 +148,13 @@ async def test_create_dm_idempotent_same_pair_same_workspace():
     First call creates a new session (execute returns None); second call finds the
     existing session via execute and returns its id without creating a new row.
     """
-    from src.db.store import create_dm
     from src.db.models import Session
+    from src.db.store import create_dm
 
     db = _mock_db()
 
-    created_ids: List[str] = []
-    captured_adds: List[Any] = []
+    created_ids: list[str] = []
+    captured_adds: list[Any] = []
     db.add = MagicMock(side_effect=lambda obj: captured_adds.append(obj))
 
     call_count = 0
@@ -193,11 +193,11 @@ async def test_create_dm_idempotent_same_pair_same_workspace():
 @pytest.mark.asyncio
 async def test_create_dm_pair_unique_per_workspace():
     """create_dm creates separate sessions for the same pair in different workspaces."""
-    from src.db.store import create_dm
     from src.db.models import Session
+    from src.db.store import create_dm
 
     db_ws1 = _mock_db()
-    captured_ws1: List[Any] = []
+    captured_ws1: list[Any] = []
     db_ws1.add = MagicMock(side_effect=lambda obj: captured_ws1.append(obj))
     db_ws1.execute = AsyncMock(return_value=_scalar_result(None))
 
@@ -209,7 +209,7 @@ async def test_create_dm_pair_unique_per_workspace():
     db_ws1.flush = AsyncMock(side_effect=_flush_ws1)
 
     db_ws2 = _mock_db()
-    captured_ws2: List[Any] = []
+    captured_ws2: list[Any] = []
     db_ws2.add = MagicMock(side_effect=lambda obj: captured_ws2.append(obj))
     db_ws2.execute = AsyncMock(return_value=_scalar_result(None))
 
@@ -282,9 +282,10 @@ async def test_list_dms_scoped_to_caller():
 def _make_dms_app():
     """Build a minimal FastAPI test app with the dms router."""
     from fastapi import FastAPI
-    from src.api.routers.dms import router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.dms import router
 
     async def _override_db():
         yield _mock_db()

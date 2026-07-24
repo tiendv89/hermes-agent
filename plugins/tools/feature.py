@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from src.services.workflow_backend_client import get_feature_detail, run_async
 
 logger = logging.getLogger(__name__)
 
-SCHEMA: Dict[str, Any] = {
+SCHEMA: dict[str, Any] = {
     "description": (
         "Return full feature metadata (title, stage, status, next_action). "
         "Omit workspace_id/feature_id to use the current feature from context."
@@ -32,7 +32,7 @@ SCHEMA: Dict[str, Any] = {
 }
 
 
-def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> Dict[str, Any]:
+def handle(workspace_id: str = "", feature_id: str = "", **_: Any) -> dict[str, Any]:
     from ..context import get_feature_id, get_org_id, get_user_id, get_workspace_id
 
     wid = workspace_id or get_workspace_id()

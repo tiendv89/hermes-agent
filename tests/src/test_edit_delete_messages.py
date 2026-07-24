@@ -22,11 +22,10 @@ from __future__ import annotations
 import sys
 import time
 import types
-from typing import Any, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Stub heavyweight deps not present in the test environment
@@ -345,27 +344,30 @@ async def test_get_messages_as_conversation_excludes_inactive():
 async def test_edit_message_endpoint_non_author_returns_403():
     """Non-author edit attempt is rejected with 403."""
     from fastapi import HTTPException
-    from src.api.routers.messages import edit_message_endpoint, EditMessageRequest
+
+    from src.api.routers.messages import EditMessageRequest, edit_message_endpoint
 
     db = _mock_db()
     msg_mock = _make_message(id=99, author_id="user_a")
     identity = MagicMock(user_id="user_b")
 
-    with patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)):
-        with pytest.raises(HTTPException) as exc_info:
-            await edit_message_endpoint(
-                message_id="99",
-                body=EditMessageRequest(content="hacked"),
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await edit_message_endpoint(
+            message_id="99",
+            body=EditMessageRequest(content="hacked"),
+            identity=identity,
+            db=db,
+        )
     assert exc_info.value.status_code == 403
 
 
 @pytest.mark.asyncio
 async def test_edit_message_endpoint_author_updates_content():
     """Author can edit their own message — edit_message and get_message are called."""
-    from src.api.routers.messages import edit_message_endpoint, EditMessageRequest
+    from src.api.routers.messages import EditMessageRequest, edit_message_endpoint
 
     db = _mock_db()
     now = time.time()
@@ -374,20 +376,22 @@ async def test_edit_message_endpoint_author_updates_content():
     updated.session_id = "sess_1"
     identity = MagicMock(user_id="user_a")
 
-    get_msg_calls: List[Any] = []
+    get_msg_calls: list[Any] = []
 
     async def _get_message_stub(db_, message_id):
         get_msg_calls.append(message_id)
         return original if len(get_msg_calls) == 1 else updated
 
-    with patch("src.api.routers.messages.get_message", side_effect=_get_message_stub):
-        with patch("src.api.routers.messages.edit_message", new=AsyncMock()) as mock_edit:
-            resp = await edit_message_endpoint(
-                message_id="5",
-                body=EditMessageRequest(content="new content"),
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", side_effect=_get_message_stub),
+        patch("src.api.routers.messages.edit_message", new=AsyncMock()) as mock_edit,
+    ):
+        resp = await edit_message_endpoint(
+            message_id="5",
+            body=EditMessageRequest(content="new content"),
+            identity=identity,
+            db=db,
+        )
 
     body = resp.body
     import json as _json
@@ -402,19 +406,22 @@ async def test_edit_message_endpoint_author_updates_content():
 async def test_edit_message_endpoint_message_not_found_returns_404():
     """Edit of a non-existent message returns 404."""
     from fastapi import HTTPException
-    from src.api.routers.messages import edit_message_endpoint, EditMessageRequest
+
+    from src.api.routers.messages import EditMessageRequest, edit_message_endpoint
 
     db = _mock_db()
     identity = MagicMock(user_id="user_a")
 
-    with patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc_info:
-            await edit_message_endpoint(
-                message_id="999",
-                body=EditMessageRequest(content="x"),
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=None)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await edit_message_endpoint(
+            message_id="999",
+            body=EditMessageRequest(content="x"),
+            identity=identity,
+            db=db,
+        )
     assert exc_info.value.status_code == 404
 
 
@@ -422,7 +429,8 @@ async def test_edit_message_endpoint_message_not_found_returns_404():
 async def test_edit_message_endpoint_empty_content_returns_400():
     """Edit with blank content string is rejected with 400."""
     from fastapi import HTTPException
-    from src.api.routers.messages import edit_message_endpoint, EditMessageRequest
+
+    from src.api.routers.messages import EditMessageRequest, edit_message_endpoint
 
     db = _mock_db()
     identity = MagicMock(user_id="user_a")
@@ -446,19 +454,22 @@ async def test_edit_message_endpoint_empty_content_returns_400():
 async def test_delete_message_endpoint_non_author_returns_403():
     """Non-author delete attempt is rejected with 403."""
     from fastapi import HTTPException
+
     from src.api.routers.messages import delete_message_endpoint
 
     db = _mock_db()
     msg_mock = _make_message(id=10, author_id="user_a")
     identity = MagicMock(user_id="user_b")
 
-    with patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)):
-        with pytest.raises(HTTPException) as exc_info:
-            await delete_message_endpoint(
-                message_id="10",
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await delete_message_endpoint(
+            message_id="10",
+            identity=identity,
+            db=db,
+        )
     assert exc_info.value.status_code == 403
 
 
@@ -471,13 +482,15 @@ async def test_delete_message_endpoint_author_sets_active_false():
     msg_mock = _make_message(id=11, author_id="user_a", active=True)
     identity = MagicMock(user_id="user_a")
 
-    with patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)):
-        with patch("src.api.routers.messages.soft_delete_message", new=AsyncMock()) as mock_delete:
-            resp = await delete_message_endpoint(
-                message_id="11",
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)),
+        patch("src.api.routers.messages.soft_delete_message", new=AsyncMock()) as mock_delete,
+    ):
+        resp = await delete_message_endpoint(
+            message_id="11",
+            identity=identity,
+            db=db,
+        )
 
     import json as _json
     data = _json.loads(resp.body)
@@ -490,6 +503,7 @@ async def test_delete_message_endpoint_author_sets_active_false():
 async def test_delete_message_endpoint_missing_identity_returns_400():
     """Empty user_id (missing X-User-Id) returns 400."""
     from fastapi import HTTPException
+
     from src.api.routers.messages import delete_message_endpoint
 
     db = _mock_db()
@@ -508,6 +522,7 @@ async def test_delete_message_endpoint_missing_identity_returns_400():
 async def test_delete_message_endpoint_non_numeric_id_returns_400():
     """Non-numeric message_id path param returns 400."""
     from fastapi import HTTPException
+
     from src.api.routers.messages import delete_message_endpoint
 
     db = _mock_db()
@@ -526,18 +541,21 @@ async def test_delete_message_endpoint_non_numeric_id_returns_400():
 async def test_delete_message_endpoint_not_found_returns_404():
     """Delete of a non-existent message returns 404."""
     from fastapi import HTTPException
+
     from src.api.routers.messages import delete_message_endpoint
 
     db = _mock_db()
     identity = MagicMock(user_id="user_a")
 
-    with patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=None)):
-        with pytest.raises(HTTPException) as exc_info:
-            await delete_message_endpoint(
-                message_id="999",
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=None)),
+        pytest.raises(HTTPException) as exc_info,
+    ):
+        await delete_message_endpoint(
+            message_id="999",
+            identity=identity,
+            db=db,
+        )
     assert exc_info.value.status_code == 404
 
 
@@ -550,13 +568,15 @@ async def test_delete_message_idempotent():
     msg_mock = _make_message(id=12, author_id="user_a", active=False)
     identity = MagicMock(user_id="user_a")
 
-    with patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)):
-        with patch("src.api.routers.messages.soft_delete_message", new=AsyncMock()) as mock_delete:
-            resp = await delete_message_endpoint(
-                message_id="12",
-                identity=identity,
-                db=db,
-            )
+    with (
+        patch("src.api.routers.messages.get_message", new=AsyncMock(return_value=msg_mock)),
+        patch("src.api.routers.messages.soft_delete_message", new=AsyncMock()) as mock_delete,
+    ):
+        resp = await delete_message_endpoint(
+            message_id="12",
+            identity=identity,
+            db=db,
+        )
 
     import json as _json
     data = _json.loads(resp.body)

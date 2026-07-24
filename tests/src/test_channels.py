@@ -125,10 +125,12 @@ async def test_is_org_admin_admin_role():
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}):
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            from src.services import user_service_client
-            result = await user_service_client.is_org_admin("org_1", "user_a")
+    with (
+        patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}),
+        patch("aiohttp.ClientSession", return_value=mock_session),
+    ):
+        from src.services import user_service_client
+        result = await user_service_client.is_org_admin("org_1", "user_a")
     assert result is True
 
 
@@ -146,10 +148,12 @@ async def test_is_org_admin_member_role():
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}):
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            from src.services import user_service_client
-            result = await user_service_client.is_org_admin("org_1", "user_b")
+    with (
+        patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}),
+        patch("aiohttp.ClientSession", return_value=mock_session),
+    ):
+        from src.services import user_service_client
+        result = await user_service_client.is_org_admin("org_1", "user_b")
     assert result is False
 
 
@@ -166,10 +170,12 @@ async def test_get_org_role_404_returns_none():
     mock_session.__aenter__ = AsyncMock(return_value=mock_session)
     mock_session.__aexit__ = AsyncMock(return_value=False)
 
-    with patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}):
-        with patch("aiohttp.ClientSession", return_value=mock_session):
-            from src.services import user_service_client
-            role = await user_service_client.get_org_role("org_1", "user_x")
+    with (
+        patch.dict("os.environ", {"USER_SERVICE_URL": "http://us:8080"}),
+        patch("aiohttp.ClientSession", return_value=mock_session),
+    ):
+        from src.services import user_service_client
+        role = await user_service_client.get_org_role("org_1", "user_x")
     assert role is None
 
 
@@ -181,9 +187,10 @@ async def test_get_org_role_404_returns_none():
 def _make_app():
     """Build a minimal FastAPI test app with the channels router."""
     from fastapi import FastAPI
-    from src.api.routers.channels import router
+
     from src.api.deps import get_db
-    from src.api.identity import require_identity, Identity
+    from src.api.identity import Identity, require_identity
+    from src.api.routers.channels import router
 
     async def _override_db():
         yield _mock_db()
